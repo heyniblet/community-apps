@@ -147,7 +147,7 @@ def render_stats_row(data):
         ],
     )
 
-def get_data(ttl_seconds = 60 * 60 * 6):
+def get_data(ttl_seconds = 600):
     url = "https://mempool.space/api/v1/difficulty-adjustment"
     response = http.get(url = url, ttl_seconds = ttl_seconds)
     if response.status_code != 200:
