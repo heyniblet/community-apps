@@ -1,19 +1,16 @@
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", r = "render")
 load("time.star", "time")
 
+URL = "https://ssd-api.jpl.nasa.gov/cad.api"
+LUNAR_DISTANCE_AU = 0.00256955529
+HEADERS = {"User-Agent": "Niblet/1.0 support@heyniblet.com"}
+
 def main():
-    res = http.get("https://h3eypycsyiyi5pyun5svwvlri40rltki.lambda-url.us-east-2.on.aws", ttl_seconds = 15)
-
-    if res.status_code != 200:
-        return r.Text(content = "HTTP error")
-
-    decoded = json.decode(res.body())
-    if not decoded or len(decoded) == 0:
+    neos = get_neos()
+    if len(neos) == 0:
         return r.Text(content = "No NEOs")
 
-    neos = decoded[:10]
     index = time.now().second % len(neos)
     neo = neos[index]
 
@@ -21,23 +18,10 @@ def main():
     if len(name) > 20:
         name = name[:17] + "..."
 
-    # img = http.get("https://upload.wikimedia.org/wikipedia/commons/f/ff/Vesta_Rotation.gif").body()
-
-    raw_date = neo.get("date", "N/A")
-    parts = raw_date.split("-")
-    if len(parts) == 3:
-        month = str(int(parts[1]))
-        day = str(int(parts[2]))
-        date = month + "/" + day
-    else:
-        date = raw_date  # fallback
-
-    lunar = str(int(neo.get("miss_distance_lunar", 0) * 100 + 0.5) / 100.0)
-    speed = str(int(neo.get("velocity_kph", 0)))
-
-    #speed_mph = int(neo.get("velocity_mph", 0))
-    hazard = "!" if neo.get("is_hazardous", False) else ""
-    #nyc_la_trips = str(int(neo.get("miss_distance_nyc_to_la_trips", 0)))
+    approach = time.from_timestamp(neo["approach"])
+    date = str(approach.month) + "/" + str(approach.day)
+    lunar = str(int(neo["distance_au"] / LUNAR_DISTANCE_AU * 100 + 0.5) / 100.0)
+    speed = str(int(neo["velocity_km_s"] * 3600))
 
     return r.Root(
         child = r.Stack(
@@ -48,8 +32,7 @@ def main():
                     children = [
                         r.Row(
                             children = [
-                                #r.Image(src = img, width = 9, height = 9),
-                                r.Text(content = " " + hazard + name, color = "#8093f1", height = 10),
+                                r.Text(content = " " + name, color = "#8093f1", height = 10),
                             ],
                         ),
                         #r.Box(width=64, height = 1),
@@ -63,3 +46,53 @@ def main():
             ],
         ),
     )
+
+def get_neos():
+    response = http.get(
+        URL,
+        params = {
+            "date-min": "now",
+            "date-max": "+8",
+            "dist-max": "0.2",
+            "fullname": "true",
+            "limit": "50",
+            "sort": "dist",
+        },
+        headers = HEADERS,
+        ttl_seconds = 3600,
+    )
+    if response.status_code != 200:
+        return []
+    payload = response.json()
+    if type(payload) != "dict" or type(payload.get("signature")) != "dict" or payload["signature"].get("version") != "1.5":
+        return []
+    fields = payload.get("fields")
+    rows = payload.get("data")
+    if type(fields) != "list" or type(rows) != "list":
+        return []
+    positions = {field: index for index, field in enumerate(fields)}
+    required = ["des", "cd", "dist", "v_rel"]
+    if len([field for field in required if field not in positions]) > 0:
+        return []
+
+    now = time.now().unix
+    result = []
+    for row in rows:
+        if type(row) != "list" or len(row) != len(fields):
+            continue
+        values = [row[positions[field]] for field in required]
+        if len([value for value in values if type(value) != "string" or value.strip() == ""]) > 0:
+            continue
+        approach = time.parse_time(row[positions["cd"]], "2006-Jan-02 15:04", "UTC").unix
+        if approach < now:
+            continue
+        name = row[positions["fullname"]] if "fullname" in positions else row[positions["des"]]
+        result.append({
+            "approach": approach,
+            "distance_au": float(row[positions["dist"]]),
+            "name": name.strip(),
+            "velocity_km_s": float(row[positions["v_rel"]]),
+        })
+        if len(result) == 10:
+            break
+    return result
