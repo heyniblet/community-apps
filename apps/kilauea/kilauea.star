@@ -93,6 +93,7 @@ def main(config):
                     pad = (0, text_y, 0, 0),
                     child = render.Text("Kilauea", font = "tb-8", color = color_hex) if show_label else render.Box(),
                 ),
+                render.Text("USGS", font = "tom-thumb", color = "#ffffff"),
             ],
         ),
     )
@@ -102,13 +103,19 @@ def extract_status(text):
     if idx == -1:
         return None, None
 
-    start = text.find("<volcano:alertlevel>", idx) + len("<volcano:alertlevel>")
+    start = text.find("<volcano:alertlevel>", idx)
+    if start == -1:
+        return None, None
+    start += len("<volcano:alertlevel>")
     end = text.find("<", start)
     if end <= start:
         return None, None
     alert_level = text[start:end].strip()
 
-    color_start = text.find("<volcano:colorcode>", idx) + len("<volcano:colorcode>")
+    color_start = text.find("<volcano:colorcode>", idx)
+    if color_start == -1:
+        return None, None
+    color_start += len("<volcano:colorcode>")
     color_end = text.find("<", color_start)
     if color_end <= color_start:
         return None, None

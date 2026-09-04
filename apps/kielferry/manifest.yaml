@@ -7,7 +7,7 @@ author: hloeding
 fileName: kiel_ferry.star
 packageName: kielferry
 broken: true
-brokenReason: The community Deutsche Bahn transport.rest endpoint fails TLS connections; migrate to an authorized DB or Schleswig-Holstein transit feed.
+brokenReason: The community Deutsche Bahn transport.rest backend is retired; the official DB API requires credentials and no renderable NAH.SH realtime feed is published.
 recommendedInterval: 5
 category: transit
 tags:

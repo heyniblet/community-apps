@@ -23,6 +23,8 @@ def main(config):
 
     #open csv file
     league_champs = filter_data(config, get_data())
+    if len(league_champs) == 0:
+        return render.Root(child = render.Text("No champions", font = "5x8"))
 
     #choose random line for number of champions
     index = random.number(0, len(league_champs) - 1)
@@ -67,7 +69,7 @@ def get_data():
     # If we don't have a cached version, fetch the data now
     request = http.get(CSV_ENDPOINT, ttl_seconds = CACHE_TTL)
     if request.status_code != 200:
-        print("Unexpected status code: " + request.status_code)
+        print("Unexpected status code: %d" % request.status_code)
         return []
 
     league_champs = request.body()
