@@ -10,7 +10,6 @@ Author: ndlybarger
 load("images/the_icon.png", THE_ICON_ASSET = "file")
 load("random.star", "random")
 load("render.star", "render")
-load("time.star", "time")
 
 THE_ICON = THE_ICON_ASSET.readall()
 
