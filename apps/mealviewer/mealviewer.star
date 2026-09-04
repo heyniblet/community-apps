@@ -19,9 +19,13 @@ def get_next_lunch(school_name):
     }
 
     response = http.get(url, headers = headers, ttl_seconds = 3600)
+    if response.status_code != 200:
+        return "ERROR", "MealViewer unavailable"
+
     data = response.json()
 
-    num_schedules = len(data["menuSchedules"])
+    schedules = data.get("menuSchedules", [])
+    num_schedules = len(schedules)
 
     if (num_schedules == 0):
         return "ERROR", "Invalid school ID"
@@ -30,11 +34,23 @@ def get_next_lunch(school_name):
         if i == 0 and start.hour >= 12:
             pass
         else:
-            schedule = data["menuSchedules"][i]
+            schedule = schedules[i]
             title = "LUNCH TODAY" if i == 0 else "LUNCH TOMORROW" if i == 1 else "LUNCH " + schedule["dateInformation"]["weekDayName"].upper()
-            if (len(schedule["menuBlocks"]) >= 2):
-                lunch = schedule["menuBlocks"][1]["cafeteriaLineList"]["data"][0]["foodItemList"]["data"][0]
-                name = lunch["item_Name"] if lunch["item_Type"] == "Entrée" else lunch["item_Type"]
+            blocks = schedule.get("menuBlocks", [])
+            if len(blocks) < 2:
+                continue
+
+            lines = blocks[1].get("cafeteriaLineList", {}).get("data", [])
+            if len(lines) == 0:
+                continue
+
+            items = lines[0].get("foodItemList", {}).get("data", [])
+            if len(items) == 0:
+                continue
+
+            lunch = items[0]
+            name = lunch.get("item_Name") or lunch.get("item_Type")
+            if name:
                 return title, name
 
     return "NEXT LUNCH", "No upcoming lunch"

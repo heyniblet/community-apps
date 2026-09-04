@@ -22,8 +22,9 @@ DEFAULT_FONT = "tb-8"
 SMALL_FONT = "tom-thumb"
 EMPTY = ""
 CACHE_TIME = 86460
+MAX_FALLBACK_MINUTES = 10
 
-def get_data(fileTime, config):
+def get_data(fileTime, config, fallback_minutes = 0):
     file = JSON_ENDPOINT
     if fileTime.hour < 10:
         file += "0"
@@ -32,17 +33,18 @@ def get_data(fileTime, config):
         file += "0"
     file += str(fileTime.minute) + ".json"
 
-    # check if quotes request succeeded, else one min back
     request = http.get(file, ttl_seconds = CACHE_TIME)
     if request.status_code != 200:
-        quotes = get_data(fileTime - time.minute, config)
-    else:
-        quotes = request.json()
+        if fallback_minutes >= 1:
+            return []
+        return get_data(fileTime - time.minute, config, fallback_minutes + 1)
+
+    quotes = request.json()
 
     if config.bool("sfw"):
         quotes = filter_sfw(quotes)
-        if len(quotes) == 0:
-            quotes = get_data(fileTime - time.minute, config)
+        if len(quotes) == 0 and fallback_minutes < MAX_FALLBACK_MINUTES:
+            return get_data(fileTime - time.minute, config, fallback_minutes + 1)
 
     return quotes
 
@@ -62,6 +64,16 @@ def main(config):
     fileTime = time.now().in_location(timezone)
 
     quotes = get_data(fileTime, config)
+
+    if len(quotes) == 0:
+        return render.Root(
+            child = render.WrappedText(
+                content = "Quote unavailable",
+                width = 64,
+                align = "center",
+                color = "#ff0000",
+            ),
+        )
 
     # select a random quote from file
     index = random.number(0, len(quotes) - 1)

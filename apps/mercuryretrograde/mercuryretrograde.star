@@ -14,15 +14,19 @@ DEFAULT_COLOR = "#ffffff"
 DEFAULT_COLOR_FALSE = "#00ff00"
 DEFAULT_COLOR_TRUE = "#ff0000"
 PADDING = 1
-TTL_SECONDS = 60 * 60 * 24
+TTL_SECONDS = 60 * 60
 
 def main(config):
     color = DEFAULT_COLOR
     message = ""
     response = http.get(API_URL, ttl_seconds = TTL_SECONDS)
 
-    if response:
-        if response.json().get("is_retrograde"):
+    if response.status_code == 200:
+        retrograde = response.json().get("is_retrograde")
+        if retrograde == None:
+            return []
+
+        if retrograde:
             text = ""
             color = config.get("color_true", DEFAULT_COLOR_TRUE)
         else:
