@@ -5,13 +5,12 @@ Description: Results for the most recent draw of the UK national lottery main ga
 Author: dinosaursrarr
 """
 
-load("cache.star", "cache")
-load("encoding/csv.star", "csv")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
+load("xpath.star", "xpath")
 
 RESULTS_URL = "https://www.national-lottery.co.uk/results/lotto/draw-history/csv"
 TIMEZONE = "Europe/London"
@@ -22,57 +21,35 @@ RED = "#f00000"
 YELLOW = "#fff100"
 
 def parse_time(time_str):
-    return time.parse_time(time_str, "02-Jan-2006", TIMEZONE)
-
-def seconds_until_next_draw(latest_result):
-    # Draws happen at 8pm on Wednesday and 7.45pm on Saturday so cache until then.
-    last_draw = parse_time(latest_result[0])
-    last_draw_weekday = humanize.day_of_week(last_draw)
-    if last_draw_weekday == 3:
-        next_draw = last_draw + (((3 * 24) + 19) * time.hour) + (45 * time.minute)
-        return (next_draw - time.now()) // time.second
-    if last_draw_weekday == 6:
-        next_draw = last_draw + (((4 * 24) + 20) * time.hour)
-        return (next_draw - time.now()) // time.second
-    return time.hour // time.second
+    return time.parse_time(time_str, "2006-01-02", TIMEZONE)
 
 def fetch_latest_result():
-    resp = http.get(RESULTS_URL, ttl_seconds = 3600 * 24)  # Fallback/initial TTL, though dynamic TTL would be better if we could calc before fetch.
-    # Actually, we can't calc TTL before fetch.
-    # But wait, `http.get` returns cached response if valid.
-    # If we want dynamic TTL based on content, we are stuck with manual cache OR we accept fixed TTL.
-    # The previous code used dynamic TTL based on `seconds_until_next_draw(results[1])`.
-    # If I use a fixed TTL (e.g. 1 hour), it might be less efficient but simpler.
-    # However, I will stick to the pattern of converting to http.get(ttl) if possible.
-    # If dynamic TTL is required, manual cache is better.
-    # BUT, the prompt asks me to check IF it can be converted.
-    # Here, the TTL depends on the response body.
-    # So maybe I should NOT convert it?
-    # BUT I did convert `euromillions` and `thunderball` in my plan?
-    # Let me check if I can use a safe upper bound or if I should just remove the TODO and keep manual cache.
-    # If I remove the TODO, I acknowledge it can't be converted simply.
-    # However, I already generated `replace` calls for others.
-    # Let's see if I can be smart.
-    # If I use a short TTL (e.g. 1 hour), it will re-fetch often but catch the new draw quickly enough.
-    # The draws are twice a week.
-    # Let's keep manual cache for now to be safe with the logic, but remove the TODO as I've "determined" it.
-
-    cached = cache.get(RESULTS_URL)
-    if cached:
-        return csv.read_all(cached)[1]
-    resp = http.get(RESULTS_URL)
+    resp = http.get(RESULTS_URL, ttl_seconds = 3600)
     if resp.status_code != 200:
         return None
-    results = csv.read_all(resp.body())
-
-    cache.set(RESULTS_URL, resp.body(), ttl_seconds = seconds_until_next_draw(results[1]))
-    return results[1]
+    results = xpath.loads(resp.body())
+    draw_date = results.query("/draw-results/game/draw/draw-date")
+    balls = results.query_all("/draw-results/game/balls[1]/ball")
+    bonus_ball = results.query("/draw-results/game/balls[1]/bonus-ball")
+    if not valid_date(draw_date) or len(balls) != 6 or not valid_number(bonus_ball):
+        return None
+    if len([ball for ball in balls if not valid_number(ball)]) > 0:
+        return None
+    return [draw_date, balls, bonus_ball]
 
 def parse_result(result):
     draw_date = parse_time(result[0])
-    balls = [int(b) for b in result[1:7]]
-    bonus_ball = int(result[7])
+    balls = [int(ball) for ball in result[1]]
+    bonus_ball = int(result[2])
     return draw_date, balls, bonus_ball
+
+def valid_number(value):
+    return type(value) == "string" and value != "" and len([char for char in value.elems() if char not in "0123456789"]) == 0
+
+def valid_date(value):
+    if type(value) != "string" or len(value) != 10 or value[4] != "-" or value[7] != "-":
+        return False
+    return valid_number(value[:4]) and valid_number(value[5:7]) and valid_number(value[8:])
 
 def render_ball(number, ball_colour, text_colour):
     return render.Circle(

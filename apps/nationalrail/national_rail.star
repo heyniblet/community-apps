@@ -2658,23 +2658,27 @@ STATIONS = {
 def darwin_app_key(config):
     return config.get("darwin_token", "")
 
+def xml_escape(value):
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;")
+
 def fetch_departures(config, station, via):
+    if station not in STATIONS or (via != "" and via not in STATIONS):
+        return None
     if len(via) > 0:
-        filter = DEPARTURES_FILTER % via
+        filter = DEPARTURES_FILTER % xml_escape(via)
     else:
         filter = ""
 
     app_key = darwin_app_key(config)
-    if not app_key:
+    if type(app_key) != "string" or app_key == "" or len(app_key) > 200:
         return None
-    request = DEPARTURES_REQUEST % (app_key, station, filter)
+    request = DEPARTURES_REQUEST % (xml_escape(app_key), xml_escape(station), filter)
     resp = http.post(
         url = DARWIN_SOAP_URL,
         body = request,
         headers = {
             "Content-Type": "application/soap+xml; charset=utf-8",
         },
-        ttl_seconds = 60,
     )
     if resp.status_code != 200:
         return None
@@ -2697,22 +2701,21 @@ def render_error(error):
     )
 
 def render_title(name):
+    titles = [
+        render.Marquee(
+            width = 62,
+            align = "center",
+            child = render.WrappedText(content = text, height = 6, align = "center", font = FONT),
+        )
+        for text in [name, "Powered by National Rail Enquiries"]
+    ]
     return render.Box(
         width = 64,
         height = 7,
         color = BLUE,
         child = render.Padding(
             pad = (1, 1, 1, 0),
-            child = render.Marquee(
-                width = 62,
-                align = "center",
-                child = render.WrappedText(
-                    content = name,
-                    height = 6,
-                    align = "center",
-                    font = FONT,
-                ),
-            ),
+            child = render.Animation(children = [titles[0]] * INFO_TOGGLE_FRAMES + [titles[1]] * INFO_TOGGLE_FRAMES),
         ),
     )
 
@@ -2792,7 +2795,9 @@ def render_detailed_train(scheduled, expected, operator, destination, length, pl
         messages.append("with %s carriages" % length)
     if platform:
         messages.append("on platform %s" % platform)
-    messages.append("calling at " + " and ".join(", ".join(calling_at).rsplit(", ", 1)))
+    calling_at = [stop for stop in calling_at if type(stop) == "string" and stop != ""]
+    if len(calling_at) > 0:
+        messages.append("calling at " + " and ".join(", ".join(calling_at).rsplit(", ", 1)))
     message = " ".join(messages)
     # message = "Platform %s to %s" % (platform, calling)
 
@@ -2829,10 +2834,10 @@ def render_compact_train(scheduled, expected, destination):
     )
 
 def render_train(train, display_mode):
-    scheduled = train.query("/lt4:std")
-    expected = train.query("/lt4:etd")
+    scheduled = train.query("/lt4:std") or "--:--"
+    expected = train.query("/lt4:etd") or "Unknown"
     destination_crs = train.query("/lt5:destination/lt4:location/lt4:crs")
-    destination = STATIONS[destination_crs]
+    destination = STATIONS.get(destination_crs, {"name": destination_crs or "Unknown"})
 
     if display_mode == DISPLAY_DETAILED:
         platform = train.query("/lt4:platform")
@@ -2844,19 +2849,27 @@ def render_train(train, display_mode):
     if display_mode == DISPLAY_COMPACT:
         return render_compact_train(scheduled, expected, destination)
 
-    fail("Invalid display mode: %s" % display_mode)
+    return render_compact_train(scheduled, expected, destination)
 
 def main(config):
     origin_station = STATIONS["KGX"]
     if ORIGIN_STATION in config:
-        origin_station = json.decode(json.decode(config[ORIGIN_STATION])["value"])
+        selection = json.decode(config[ORIGIN_STATION])
+        if type(selection) == "dict" and type(selection.get("value")) == "string":
+            selected_station = json.decode(selection["value"])
+            if type(selected_station) == "dict" and selected_station.get("crs") in STATIONS:
+                origin_station = STATIONS[selected_station["crs"]]
 
     filter_crs = ""
     destination_station = config.get(DESTINATION_STATION)
     if destination_station:
-        destination_station_value = json.decode(destination_station)["value"]
-        if destination_station_value != NO_DESTINATION:
-            filter_crs = json.decode(destination_station_value)["crs"]
+        selection = json.decode(destination_station)
+        if type(selection) == "dict":
+            destination_station_value = selection.get("value")
+            if type(destination_station_value) == "string" and destination_station_value != NO_DESTINATION:
+                selected_station = json.decode(destination_station_value)
+                if type(selected_station) == "dict" and selected_station.get("crs") in STATIONS:
+                    filter_crs = selected_station["crs"]
 
     display_mode = config.get(DISPLAY_MODE) or DISPLAY_DETAILED
     if display_mode == DISPLAY_DETAILED:
@@ -2864,7 +2877,8 @@ def main(config):
     elif display_mode == DISPLAY_COMPACT:
         max_trains = 4
     else:
-        fail("Invalid display mode %s" % display_mode)
+        display_mode = DISPLAY_DETAILED
+        max_trains = 2
 
     resp = fetch_departures(config, origin_station["crs"], filter_crs)
     if not resp:
