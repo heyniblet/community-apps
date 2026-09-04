@@ -49,9 +49,12 @@ def main():
                     children = [
                         render.Padding(
                             pad = (0, 2, 0, 0),
-                            child = render.Text(
-                                content = "Fear & Greed",
-                                font = "tom-thumb",
+                            child = render.Marquee(
+                                width = 64,
+                                child = render.Text(
+                                    content = "Fear & Greed · alternative.me",
+                                    font = "tom-thumb",
+                                ),
                             ),
                         ),
                     ],
