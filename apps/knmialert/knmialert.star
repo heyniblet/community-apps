@@ -16,7 +16,7 @@ COLOR_CODES = {
 }
 
 def get_page(ttl_seconds = 60 * 5):
-    url = "https://knmi.nl/home"
+    url = "https://www.knmi.nl/home"
     response = http.get(url = url, ttl_seconds = ttl_seconds)
     if response.status_code != 200:
         fail("KNMI request failed with status %d @ %s", response.status_code, url)

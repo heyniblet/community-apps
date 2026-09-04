@@ -90,30 +90,26 @@ def main():
     jplay = http.get(url = KEXP_PLAY, ttl_seconds = 120)
     jshow = http.get(url = KEXP_SHOW, ttl_seconds = 120)
 
-    if (jplay.status_code or jshow.status_code) != 200:
+    if jplay.status_code != 200 or jshow.status_code != 200:
         return api_error()
 
-    playtype = jplay.json()["results"][0]["play_type"]
+    plays = jplay.json().get("results", [])
+    shows = jshow.json().get("results", [])
+    if len(plays) == 0 or len(shows) == 0:
+        return api_error()
 
-    host = jshow.json()["results"][0]["hosts"][0].get("name", "")
-    if host == "":
-        host = "KEXP DJ"
+    playtype = plays[0]["play_type"]
 
-    song = jplay.json()["results"][0].get("song", host)
-    artist = jplay.json()["results"][0].get("artist", "Airbreak")
+    hosts = shows[0].get("hosts", [])
+    host = hosts[0].get("name", "KEXP DJ") if len(hosts) > 0 else "KEXP DJ"
+
+    song = plays[0].get("song", host)
+    artist = plays[0].get("artist", "Airbreak")
 
     if playtype == "airbreak":
-        hostimg = jshow.json()["results"][0]["hosts"][0].get("newimageuri", "")
-        if hostimg == "":
-            album = KEXP_MIC
-        else:
-            album = http.get(hostimg).body()
+        album = KEXP_MIC
     elif playtype == "trackplay":
-        thumbnail = jplay.json()["results"][0].get("thumbnail_uri", "")
-        if thumbnail == "":
-            album = KEXP_VINYL
-        else:
-            album = http.get(thumbnail).body()
+        album = KEXP_VINYL
     else:
         song = "- - - - -"
         artist = "- - - -"

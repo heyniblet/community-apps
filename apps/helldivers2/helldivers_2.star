@@ -14,7 +14,7 @@ H2_LOGO = H2_LOGO_ASSET.readall()
 H2_URL = "https://api.live.prod.thehelldiversgame.com/api/WarSeason/801/Status"
 
 def main():
-    res = http.get(H2_URL, ttl_seconds = 900)
+    res = http.get(H2_URL, headers = {"Accept-Language": "en-US"}, ttl_seconds = 900)
 
     # handle api errors
     if res.status_code != 200:

@@ -17,7 +17,7 @@ COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/coins/{}?localization=fa
 
 NO_DATA = "---------- "
 
-HEX_LIVE_DATA_URL = "https://hexdailystats.com/livedata"
+HEX_DAILY_DATA_URL = "https://hexstats.today/fulldata"
 
 def main():
     # Get coin data for selected coin from CoinGecko
@@ -44,8 +44,9 @@ def main():
 
     hex_price = str("$%f" % float(coin_data["market_data"]["current_price"]["usd"]))
 
-    # Get HEX live data
-    live_data = get_json_from_cache_or_http(HEX_LIVE_DATA_URL, ttl_seconds = 600)
+    # Use the latest complete daily row while the provider's live endpoint is unavailable.
+    daily_data = get_json_from_cache_or_http(HEX_DAILY_DATA_URL, ttl_seconds = 3600)
+    live_data = daily_data[0] if type(daily_data) == "list" and len(daily_data) > 0 else None
 
     payout_per_tshare = NO_DATA
     share_rate = NO_DATA
@@ -53,6 +54,8 @@ def main():
     if live_data != None:
         # Payout
         payout = live_data.get("payoutPerTshare")
+        if payout == None:
+            payout = live_data.get("payoutPerTshareHEX")
         if payout == None:
             payout = live_data.get("payoutPerTshare_Pulsechain")
 
