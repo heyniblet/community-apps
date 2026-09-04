@@ -21,7 +21,7 @@ def getData(config):
     params = {
         "limit": "500",
     }
-    res = http.get(NPS_URL, headers = {"X-Api-Key": api_key}, ttl_seconds = 3600, params = params)
+    res = http.get(NPS_URL, headers = {"X-Api-Key": api_key}, params = params)
     if res.status_code != 200:
         return None
     data = res.json()
