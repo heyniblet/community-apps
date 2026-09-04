@@ -6,7 +6,7 @@ desc: NASA's Astronomy Picture of the Day, edge to edge, with the title on a tra
 author: nsluke
 fileName: apod.star
 packageName: apod
-recommendedInterval: 240
+recommendedInterval: 5
 category: science
 tags:
   - space

@@ -79,12 +79,6 @@ SHADE = "#000000C0"
 NIGHT = "#00000E"
 
 def main(config):
-    # api/proxy are hidden test hooks, deliberately NOT schema fields: they
-    # point the app at a local stub and there is nothing here a user should
-    # be typing into.
-    api_conf = url_conf(config, "api")
-    base = api_conf if api_conf else API_BASE
-    proxy = url_conf(config, "proxy") or PROXY_BASE
     key = (config.get("api_key") or "").strip() or DEMO_KEY
     show_title = config.bool("show_title", True)
     show_date = config.bool("show_date", False)
@@ -93,11 +87,11 @@ def main(config):
     # The first renders after a cold cache stay off the network entirely -
     # see the docstring. Cached work is still served, so on a server that has
     # run before this costs nothing at all.
-    live = api_conf != None or not boot_holding()
+    live = not boot_holding()
 
     today = nasa_today()
-    apod = get_apod(base, key, live, today)
-    img = get_art(proxy, apod, live, w, h)
+    apod = get_apod(API_BASE, key, live, today)
+    img = get_art(PROXY_BASE, apod, live, w, h)
 
     if apod != None and apod["date"] != "" and apod["date"] != today:
         # A picture up to STALE_TTL old must never pass for today's. The chip
@@ -131,18 +125,6 @@ def panel():
     if is_square(w, h):
         return w, h
     return 64, 32
-
-def url_conf(config, field):
-    """A hidden hook's value, but only if it is an absolute http(s) URL.
-    Anything else is ignored rather than handed to http.get, where a bad
-    scheme is a transport error - an abort, not something catchable."""
-    v = config.get(field)
-    if v == None:
-        return None
-    v = v.strip()
-    if v.startswith("http://") or v.startswith("https://"):
-        return v
-    return None
 
 def nasa_today():
     """Today by APOD's own clock, so the staleness chip means the same thing
@@ -241,6 +223,7 @@ def extract_apod(d):
         src = strv(d, "url")
     elif media == "video":
         src = strv(d, "thumbnail_url")
+
     if len(title) > 110:
         title = title[0:107] + "..."
     if title == "" and src == "":
@@ -296,6 +279,8 @@ def get_art(proxy, apod, live, w, h):
         src = src[8:]
     elif src.startswith("http://"):
         src = src[7:]
+    else:
+        return None
     resp = http.get(
         proxy,
         params = {
@@ -408,19 +393,30 @@ def picture_view(img, apod, show_title, show_date, w, h):
     design: a square one simply holds a taller crop of the same photograph
     under the same strip. The furniture is pinned to the edges rather than to
     a row number, so it lands the same way on either."""
-    layers = [img]
+    layers = [img, source_chip(w)]
     if show_date:
         ds = fmt_date(apod["date"])
         if ds != "":
             layers.append(date_chip(ds))
     if apod["media"] == "video":
         layers.append(render.Padding(
-            pad = (w - 10, 1, 0, 0),
+            pad = (w - 10, 9, 0, 0),
             child = render.Box(width = 9, height = 7, color = SHADE, child = play_glyph()),
         ))
     if show_title and apod["title"] != "":
         layers.append(title_bar(apod["title"], False, w, h))
     return render.Stack(children = layers)
+
+def source_chip(w):
+    return render.Padding(
+        pad = (w - 18, 1, 0, 0),
+        child = render.Box(
+            width = 17,
+            height = 7,
+            color = SHADE,
+            child = render.Text("NASA", font = "tom-thumb", color = DIM),
+        ),
+    )
 
 def date_chip(ds):
     return render.Padding(
@@ -561,6 +557,7 @@ def get_schema():
                 desc = "Optional. The shared DEMO_KEY works out of the box; grab a free key at api.nasa.gov if you run several devices.",
                 icon = "key",
                 default = "",
+                secret = True,
             ),
             schema.Toggle(
                 id = "show_title",

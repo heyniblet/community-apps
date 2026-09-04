@@ -5,14 +5,17 @@ Description: Cycles through and displays information about random Magic: The Gat
 Author: Staghouse
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
-load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
-ONE_DAY_TTL = 60 * 10 * 24
 ONE_MIN_TTL = 60
 APP_FONT = "tb-8"
+SCRYFALL_HEADERS = {
+    "Accept": "application/json;q=0.9,*/*;q=0.8",
+    "User-Agent": "Niblet/1.0 (+https://heyniblet.com)",
+}
 
 # Main application function
 def main(config):
@@ -98,7 +101,7 @@ def render_line_break(color = "#333", padding = (0, 1, 0, 1)):
 def render_creature_properties(card):
     creature_properties = None
 
-    if card["power"] or card["toughness"]:
+    if card["power"] != "" or card["toughness"] != "":
         creature_properties = render.WrappedText(
             font = APP_FONT,
             content = "(" + card["power"] + "/" + card["toughness"] + ")",
@@ -110,13 +113,13 @@ def render_creature_properties(card):
 def render_card_name_cost(card):
     card_name_cost = []
 
-    for src in card["mana_cost"]:
+    if card["mana_cost"] != "":
         card_name_cost.append(
             render.Padding(
                 pad = (0, 1, 2, 0),
-                child = render.Image(
-                    src = src,
-                    height = 10,
+                child = render.Text(
+                    content = card["mana_cost"],
+                    font = "tom-thumb",
                 ),
             ),
         )
@@ -265,27 +268,6 @@ def render_rarity(rarity, show):
     else:
         return None
 
-# Render card text
-def render_text(card):
-    card_text = []
-
-    for item in card["text"]:
-        if "<svg" in item:
-            card_text.append(
-                render.Image(
-                    src = item,
-                    height = 8,
-                ),
-            )
-        else:
-            card_text.append(
-                render.Text(
-                    content = item,
-                ),
-            )
-
-    return card_text
-
 # Fetch a random card from Scryfall and return wanted data
 def get_scryfall_card():
     text = ""
@@ -297,103 +279,53 @@ def get_scryfall_card():
     price_usd_foil = None
     price_usd_etched = None
 
-    response = http.get("https://api.scryfall.com/cards/random", ttl_seconds = ONE_MIN_TTL)
+    response = http.get("https://api.scryfall.com/cards/random", headers = SCRYFALL_HEADERS, ttl_seconds = ONE_MIN_TTL)
 
     if response.status_code != 200:
         return False
 
-    card = response.json()
+    card = json.decode(response.body(), None)
+    if type(card) != "dict" or card.get("object") != "card":
+        return False
 
-    if "oracle_text" in card:
+    if type(card.get("oracle_text")) == "string":
         text = card["oracle_text"]
 
-    if "type_line" in card:
+    if type(card.get("type_line")) == "string":
         type_line = card["type_line"]
 
-    if "mana_cost" in card:
+    if type(card.get("mana_cost")) == "string":
         mana_cost = card["mana_cost"]
 
-    if "power" in card:
+    if type(card.get("power")) == "string":
         power = card["power"]
 
-    if "toughness" in card:
+    if type(card.get("toughness")) == "string":
         toughness = card["toughness"]
 
-    if card["prices"]["usd"]:
-        price_usd = "$" + card["prices"]["usd"]
+    prices = card.get("prices") if type(card.get("prices")) == "dict" else {}
+    if type(prices.get("usd")) == "string" and prices["usd"] != "":
+        price_usd = "$" + prices["usd"]
 
-    if card["prices"]["usd_foil"]:
-        price_usd_foil = "$" + card["prices"]["usd_foil"]
+    if type(prices.get("usd_foil")) == "string" and prices["usd_foil"] != "":
+        price_usd_foil = "$" + prices["usd_foil"]
 
-    if card["prices"]["usd_etched"] != None:
-        price_usd_etched = "$" + card["prices"]["usd_etched"]
+    if type(prices.get("usd_etched")) == "string" and prices["usd_etched"] != "":
+        price_usd_etched = "$" + prices["usd_etched"]
 
     return {
-        "name": card["name"],
+        "name": card.get("name") if type(card.get("name")) == "string" else "Unknown card",
         "type": type_line,
         "text": text,
-        "rarity": card["rarity"],
-        "set": card["set_name"],
+        "rarity": card.get("rarity") if type(card.get("rarity")) == "string" else "unknown",
+        "set": card.get("set_name") if type(card.get("set_name")) == "string" else "Unknown set",
         "power": power,
         "toughness": toughness,
         "price": price_usd,
         "price_foil": price_usd_foil,
         "price_etched": price_usd_etched,
-        "mana_cost": transform_mana_cost(mana_cost),
+        "mana_cost": mana_cost,
     }
-
-# Transform card text in to text and images
-def transform_text(text):
-    text_with_lines = text.splitlines()
-    all_symbols = re.findall(r"{.*?}", text)
-    clean_lines = []
-
-    for line in text_with_lines:
-        subbed_line = re.sub(r"{.*?}", "_mana$", line)
-        split_line = subbed_line.split("$")
-
-        if len(all_symbols) > 0:
-            for line_idx, line in enumerate(split_line):
-                if "_mana" in line:
-                    manaless_line = line.split("_mana")[0]
-
-                    if len(manaless_line) > 0:
-                        clean_lines.append(manaless_line)
-
-                    mana_line = transform_mana_cost(all_symbols[line_idx])[0]
-                    clean_lines.append(mana_line)
-
-                else:
-                    clean_lines.append(line)
-
-        else:
-            clean_lines.append(text)
-
-    return clean_lines
-
-# Transform mana cost in to images
-def transform_mana_cost(mana_cost):
-    mana_symbols = re.findall(r"{.*?}", mana_cost)
-    mana_symbols_svgs = []
-
-    response = http.get("https://api.scryfall.com/symbology", ttl_seconds = ONE_DAY_TTL)
-
-    if response.status_code != 200:
-        return mana_symbols_svgs
-
-    response_data = response.json()["data"]
-    symbol_map = {obj["symbol"]: obj["svg_uri"] for obj in response_data}
-
-    for symbol in mana_symbols:
-        if symbol in symbol_map:
-            svg_response = http.get(symbol_map[symbol], ttl_seconds = ONE_DAY_TTL)
-
-            if svg_response.status_code != 200:
-                return mana_symbols_svgs
-
-            mana_symbols_svgs.append(svg_response.body())
-
-    return mana_symbols_svgs
 
 # Schema config for the application
 def get_schema():

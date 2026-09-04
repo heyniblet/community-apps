@@ -2,7 +2,7 @@
 id: mvv
 name: MVV
 summary: MVV departures (Munich)
-desc: Departure times for the Münchner Verkehrsverbund (MVV).
+desc: Departure times for the Münchner Verkehrsverbund (MVV). Stop data is provided by MVV under CC BY; live departures use MVV's website service.
 author: Robin Sommer
 fileName: mvv.star
 packageName: mvv

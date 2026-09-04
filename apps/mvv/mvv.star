@@ -112,10 +112,8 @@ def get_schema():
 
 def request(url, params):
     res = http.get(url = url, params = params, ttl_seconds = 60)
-    print("url", res.url)
-
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (res.url, res.status_code, res.body()))
+        return None
 
     return res.body()
 
@@ -127,8 +125,13 @@ def fetchLines(stop):
             "stop_id": stop,
         },
     )
-
-    return {l["stateless"]: l["number"] for l in json.decode(lines)["lines"]}
+    payload = json.decode(lines, None) if lines != None else None
+    rows = payload.get("lines") if type(payload) == "dict" and type(payload.get("lines")) == "list" else []
+    return {
+        l["stateless"]: l["number"]
+        for l in rows
+        if type(l) == "dict" and type(l.get("stateless")) == "string" and type(l.get("number")) == "string"
+    }
 
 def filterLines(lines, filters):
     want_lines = {}
@@ -154,14 +157,19 @@ def fetchDepartures(stop, lines, now):
             "lines": base64.encode(lines),
         },
     )
-
-    return json.decode(departures)["departures"]
+    payload = json.decode(departures, None) if departures != None else None
+    rows = payload.get("departures") if type(payload) == "dict" else None
+    return rows if type(rows) == "list" else []
 
 def parseTime(t, now):
-    if t.find(":") < 0:
+    if type(t) != "string":
         return None
-
-    (hour, minute) = t.split(":")
+    parts = t.split(":")
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    hour, minute = parts
+    if int(hour) > 23 or int(minute) > 59:
+        return None
     t = time.time(year = now.year, month = now.month, day = now.day, hour = int(hour), minute = int(minute), location = "Europe/Berlin")
 
     if t < now - 12 * time.hour:  # enough slack to be certain
@@ -227,14 +235,16 @@ def clipDirection(d, type, abbreviate):
 def filterDepartures(departures, now, filters):
     want_departures = {}
     for d in departures:
-        if not "line" in d:
+        if type(d) != "dict" or type(d.get("line")) != "dict":
             continue
 
-        number = d["line"].get("number", "")
-        track = d.get("track", "")
-        direction = d.get("direction", "")
-        type = d["line"].get("name", "")
-        stateless = d["line"]["stateless"]
+        number = str(d["line"].get("number") or "")
+        track = str(d.get("track") or "")
+        direction = str(d.get("direction") or "")
+        line_type = str(d["line"].get("name") or "")
+        stateless = d["line"].get("stateless")
+        if type(stateless) != "string":
+            continue
 
         planned = parseTime(d.get("departurePlanned", "00:00"), now)
         actual = parseTime(d.get("departureLive", "00:00"), now)
@@ -265,7 +275,7 @@ def filterDepartures(departures, now, filters):
                 "track": track,
                 "direction": direction,
                 "departures": [],
-                "type": type,
+                "type": line_type,
             }
 
         # It can happen that a line is listed multiple times (e.g., when an S-Bahn will be split).
@@ -364,54 +374,47 @@ def renderDeparture(departure, alternate_style, abbreviate):
 
 def main(config):
     stop = config.get("stop")
-    line = config.get("line") or ""
+    line = config.str("line", "")
     alternate_style = config.bool("alternate_style")
     abbreviate = config.bool("abbreviate")
 
     filters = []
     for i in line.split():
         if "#" in i:
-            (i, track) = i.split("#")
-            filters.append((i.strip(), track.strip()))
+            parts = i.split("#")
+            filters.append((parts[0].strip(), "#".join(parts[1:]).strip()))
         else:
             filters.append((i.strip(), ""))
 
     if not filters:
         filters = [("", "")]  # Match-all filter
 
-    print("stop", stop)
-    print("line", line)
-    print("alternate_style", alternate_style)
-    print("abbreviate", abbreviate)
-    print("filters", filters)
-
+    now = time.now()
     if stop:
-        now = time.now()
-        stop = json.decode(stop)["value"]
+        selection = json.decode(stop, None)
+        stop = selection.get("value") if type(selection) == "dict" else None
+        if stop not in Stops:
+            stop = None
+    if stop:
         lines = fetchLines(stop)
-        print("lines", lines)
 
         lines = filterLines(lines, filters)
-        print("filtered lines", lines)
 
         if lines or not filters:
             departures = fetchDepartures(stop, lines, now)
-            print("#departures", len(departures))
 
             departures = filterDepartures(departures, now, filters)
-            print("#processed", len(departures))
-            print(departures)
         else:
-            print("#departures", "no filter match")
             departures = []
 
         children = [renderDeparture(l, alternate_style, abbreviate) for l in departures][0:2]
+        if len(children) == 0:
+            children = [render.Text("No departures", font = Font, color = ColorDirection)]
 
     else:
         text = ["", "  -== MVV -==", "", "Set a station to ", "show departures."]
         children = [render.Text(t, font = Font, color = ColorDirection) for t in text]
 
-    print("-- done --")
     return render.Root(child = render.Column(expanded = True, main_align = "space_evenly", children = children))
 
 # Source for the following data: Münchner Verkehrs- und Tarifverbund GmbH (MVV)
