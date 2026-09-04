@@ -17,7 +17,8 @@ NASA_LOGO = NASA_LOGO_ASSET.readall()
 APOD_URL = "https://api.nasa.gov/planetary/apod"
 DEMO_API_KEY = "DEMO_KEY"
 
-# Register with NASA for a key to encrypt for prod: https://api.nasa.gov
+# DEMO_KEY is suitable for the shared hourly catalog cache; register a key if
+# the deployment needs more than NASA's evaluation quota: https://api.nasa.gov
 
 TTL_SECONDS = 3600
 
@@ -107,7 +108,10 @@ def get_apod(url, api_key, ttl_seconds):
     if response.status_code != 200:
         fail("status %d from %s: %s" % (response.status_code, url, response.body()))
     apod = response.json()
-    apod["image_src"] = base64.encode(get_image_src(apod["url"], ttl_seconds))
+    image_url = apod.get("thumbnail_url") if apod.get("media_type") == "video" else apod.get("url")
+    if not image_url:
+        fail("NASA APOD response did not include a displayable image")
+    apod["image_src"] = base64.encode(get_image_src(image_url, ttl_seconds))
 
     return apod
 
