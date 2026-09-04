@@ -72,15 +72,19 @@ def main():
 
 def get_random_quote():
     quotes = get_all_quotes()
-    random_num = random.number(0, 99)
+    if len(quotes) == 0:
+        return ["", "Movie quotes are unavailable", "Please try again later", ""]
+    random_num = random.number(0, len(quotes) - 1)
     return quotes[random_num]
 
 def get_all_quotes():
-    movie_csv_raw = http.get("https://raw.githubusercontent.com/wcmbishop/time-travel-movie-club/master/data-raw/afi-top-100-quotes.csv", ttl_seconds = 604800)
+    movie_csv_raw = http.get("https://raw.githubusercontent.com/wcmbishop/time-travel-movie-club/master/data-raw/afi-top-100-quotes.csv", ttl_seconds = 3600)
+    if movie_csv_raw.status_code != 200:
+        return []
     movie_csv_str = movie_csv_raw.body()
 
     quotes = csv.read_all(movie_csv_str, skip = 1)
-    return quotes
+    return [quote for quote in quotes if len(quote) >= 4]
 
 def get_schema():
     return schema.Schema(

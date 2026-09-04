@@ -6,6 +6,8 @@ desc: Be sure to read the README.md which will walk you through the setup proces
 author: bsbishop
 fileName: mongodb_notify.star
 packageName: mongodbnotify
+broken: true
+brokenReason: MongoDB Atlas Data API reached end of life on September 30, 2025; the app also accepts arbitrary endpoint hosts and remote render-widget trees, which Niblet cannot execute safely.
 category: smart-home
 tags:
   - smart-home

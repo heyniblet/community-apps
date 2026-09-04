@@ -9,6 +9,7 @@ Author: Kevin Eder
 
 load("animation.star", "animation")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("images/bus_image_base_64.png", BUS_IMAGE_BASE_64_ASSET = "file")
 load("math.star", "math")
 load("render.star", "render")
@@ -23,14 +24,18 @@ BUSTIME_URL = "https://bustime.mta.info/api/siri/stop-monitoring.json?key={key}&
 BUS_ANIMATION_DURATION = 200
 
 def main(config):
-    is_key_set = "key" in config
-    is_stop_set = "stop" in config
+    is_key_set = bool(config.get("key"))
+    is_stop_set = bool(config.get("stop"))
     bus_name = "Bus"
     response_was_error = False
     api_key = config.get("key")
     stop = config.str("stop") or ""
 
-    visits, response_was_error = get_visits(api_key, stop)
+    visits = []
+    if is_key_set and is_stop_set and len(stop) == 6 and stop.isdigit():
+        visits, response_was_error = get_visits(api_key, stop)
+    elif is_key_set and is_stop_set:
+        response_was_error = True
 
     # Try to determine bus line name.
     if len(visits) > 0:
@@ -85,14 +90,19 @@ def get_visits(api_key, stop):
     delivery = dict()
 
     if not response_was_error:
-        delivery = response.json()["Siri"]["ServiceDelivery"]["StopMonitoringDelivery"][0]
+        siri = response.json().get("Siri") or {}
+        service = siri.get("ServiceDelivery") or {}
+        deliveries = service.get("StopMonitoringDelivery") or []
+        if len(deliveries) == 0:
+            return [], True
+        delivery = deliveries[0]
 
     visits = delivery["MonitoredStopVisit"] if "MonitoredStopVisit" in delivery else []
 
     return visits, response_was_error
 
 def get_url(key, stop):
-    return BUSTIME_URL.format(key = key, stop = stop)
+    return BUSTIME_URL.format(key = humanize.url_encode(key), stop = humanize.url_encode(stop))
 
 def get_wait_time_rows(visits, is_key_set, is_stop_set, response_was_error):
     result = list()
@@ -193,7 +203,8 @@ def get_unknown_time_row():
     )
 
 def get_expected_arrival(visit):
-    return visit["MonitoredVehicleJourney"]["MonitoredCall"].get("ExpectedArrivalTime", None)
+    journey = visit.get("MonitoredVehicleJourney") or {}
+    return (journey.get("MonitoredCall") or {}).get("ExpectedArrivalTime")
 
 def get_schema():
     return schema.Schema(
