@@ -60,7 +60,7 @@ def main(config):
         relCount = 4
         clubCount = 20
 
-    TABLE_URL = "http://api.football-data.org/v4/competitions/" + leagueCode + "/standings"
+    TABLE_URL = "https://api.football-data.org/v4/competitions/" + leagueCode + "/standings"
     header = {"X-Auth-Token": "65e34372b55c43178a93468a09dbcd17"}
     rep = http.get(TABLE_URL, ttl_seconds = 1800, headers = header)  # cache for 30 minutes
     if rep.status_code != 200:

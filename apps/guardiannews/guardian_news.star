@@ -31,7 +31,7 @@ def main(config):
     blurbstripedit = ""
 
     if edition == "uk":
-        GET_GUARDIAN = http.get("http://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=2f517de6-c7e1-4c67-b79f-0c857fb7494a&show-fields=trailText", ttl_seconds = 900)
+        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=2f517de6-c7e1-4c67-b79f-0c857fb7494a&show-fields=trailText", ttl_seconds = 900)
         if GET_GUARDIAN.status_code != 200:
             return connectionError()
         GET_UKHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]
@@ -51,7 +51,7 @@ def main(config):
         blurbstripopit = blurbstripedbo.replace("<i>", "")
         blurbstripedit = blurbstripopit.replace("</i>", "")
     if edition == "us":
-        GET_GUARDIAN = http.get("http://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
+        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
         if GET_GUARDIAN.status_code != 200:
             return connectionError()
         GET_USHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]
@@ -71,7 +71,7 @@ def main(config):
         blurbstripopit = blurbstripedbo.replace("<i>", "")
         blurbstripedit = blurbstripopit.replace("</i>", "")
     if edition == "au":
-        GET_GUARDIAN = http.get("http://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
+        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
         if GET_GUARDIAN.status_code != 200:
             return connectionError()
         GET_AUHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]
@@ -91,7 +91,7 @@ def main(config):
         blurbstripopit = blurbstripedbo.replace("<i>", "")
         blurbstripedit = blurbstripopit.replace("</i>", "")
     if edition == "international":
-        GET_GUARDIAN = http.get("http://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
+        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
         if GET_GUARDIAN.status_code != 200:
             return connectionError()
         GET_INTLHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]

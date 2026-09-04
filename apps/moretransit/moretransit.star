@@ -19,7 +19,7 @@ SAMPLE_TITLE = "Manhattan"
 # TransSee Service
 # StopTag
 # Route
-BASE_URL = "http://transsee.ca/publicJSONFeed?command=predictions&premium={}&a={}&s={}&r={}"
+BASE_URL = "https://transsee.ca/publicJSONFeed?command=predictions&premium={}&a={}&s={}&r={}"
 
 # If no configuration is provided, then default to using some subways
 # near DUMBO, Brooklyn.

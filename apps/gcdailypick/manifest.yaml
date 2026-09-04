@@ -7,6 +7,7 @@ author: Bennett Schoonerman
 fileName: gc_daily_pick.star
 packageName: gcdailypick
 broken: true
+brokenReason: Guitar Center's WAF terminates Pixlet requests before returning the Daily Pick page; an approved feed or operator proxy is required.
 recommendedInterval: 5
 category: utilities
 tags:

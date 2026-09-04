@@ -4,21 +4,13 @@ load("render.star", "render")
 
 POKT_ICON = POKT_ICON_ASSET.readall()
 
-COINSTATS_PRICE_URL = "https://api.coinstats.app/public/v1/coins/pocket-network"
-PNI_HEIGHT_URL = "https://supply.research.pokt.network:8192/height"
+PRICE_URL = "https://api.coingecko.com/api/v3/simple/price?ids=pocket-network&vs_currencies=usd"
 
 def main():
-    print("calling coinstats API")
-    rep = http.get(COINSTATS_PRICE_URL, ttl_seconds = 7200)
+    rep = http.get(PRICE_URL, ttl_seconds = 7200)
     if rep.status_code != 200:
-        fail("Coinstats request failed with status %d", rep.status_code)
-    price = rep.json().get("coin", {}).get("price", "0.00")
-
-    print("calling PNI API")
-    rep = http.get(PNI_HEIGHT_URL, ttl_seconds = 600)
-    if rep.status_code != 200:
-        fail("PNI Height request failed with status %d", rep.status_code)
-    height = rep.body()
+        fail("Price request failed with status %d", rep.status_code)
+    price = rep.json().get("pocket-network", {}).get("usd", "0.00")
 
     return render.Root(
         child = render.Box(
@@ -40,7 +32,7 @@ def main():
                         children = [
                             render.Text(content = "POKT", font = "Dina_r400-6"),
                             render.Text("$%s" % price),
-                            render.Text("%s" % height),
+                            render.Text("USD"),
                         ],
                     ),
                 ],

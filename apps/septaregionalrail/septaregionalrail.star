@@ -178,8 +178,8 @@ def regional_rail_station_options():
         )
     return station_options
 
-API_BASE = "https://www3.septa.org/api"
-API_SCHEDULE = API_BASE + "/Arrivals"
+API_BASE = "https://api.septa.org/api"
+API_SCHEDULE = API_BASE + "/Arrivals/"
 DEFAULT_STATION = "Wayne Junction"
 DEFAULT_DIRECTION = "S"
 

@@ -29,6 +29,8 @@ TERRAIN_URL_STUB = "the-mountain/mountain-conditions/terrain-and-lift-status.asp
 TERRAIN_URL_STUB_ALT = "the-mountain/mountain-conditions/lift-and-terrain-status.aspx"
 WEATHER_URL_STUB = "the-mountain/mountain-conditions/snow-and-weather-report.aspx"
 WEATHER_URL_STUB_ALT = "the-mountain/mountain-conditions/weather-report.aspx"
+TERRAIN_URL_STUBS = {"Crested Butte": TERRAIN_URL_STUB_ALT}
+WEATHER_URL_STUBS = {"Crested Butte": WEATHER_URL_STUB_ALT}
 
 RESORT_URLS = {
     "Vail": "https://www.vail.com/",
@@ -36,7 +38,7 @@ RESORT_URLS = {
     "Breckenridge": "https://www.breckenridge.com/",
     "Park City": "https://www.parkcitymountain.com/",
     "Keystone": "https://www.keystoneresort.com/",
-    "Crested Butte": "http://www.skicb.com/",
+    "Crested Butte": "https://www.skicb.com/",
     "Heavenly": "https://www.skiheavenly.com/",
     "Northstar": "https://www.northstarcalifornia.com/",
     "Kirkwood": "https://www.kirkwood.com/",
@@ -56,10 +58,10 @@ RESORT_URLS = {
     "Seven Springs": "https://www.7springs.com/",
     "Hidden Valley(PA)": "https://www.hiddenvalleyresort.com/",
     "Laurel Mountain": "https://www.laurelmountainski.com/",
-    "Wilmot": "http://www.wilmotmountain.com/",
-    "Afton Alps": "http://www.aftonalps.com/",
-    "Mt Brighton": "http://www.mtbrighton.com/",
-    "Alpine Valley": "http://alpinevalleyohio.com/",
+    "Wilmot": "https://www.wilmotmountain.com/",
+    "Afton Alps": "https://www.aftonalps.com/",
+    "Mt Brighton": "https://www.mtbrighton.com/",
+    "Alpine Valley": "https://alpinevalleyohio.com/",
     "Boston Mills and Brandywine": "https://www.bmbw.com/",
     "Mad River Mountain": "https://www.skimadriver.com/",
     "Hidden Valley(MO)": "https://www.hiddenvalleyski.com/",
@@ -98,7 +100,8 @@ def Getweather_data(resort):
         dict: a dict containing the temperature, snowfall and description attributes. description is not currently used. Returns None if their is an error fetching the results.
     """
 
-    url = RESORT_URLS[resort] + WEATHER_URL_STUB
+    weather_stub = WEATHER_URL_STUBS.get(resort, WEATHER_URL_STUB)
+    url = RESORT_URLS[resort] + weather_stub
     r = http.get(url, ttl_seconds = 600)
     response = r.body()
     temperature = None
@@ -111,7 +114,7 @@ def Getweather_data(resort):
             weather_description = temp_data[0]["ForecastData"][0]["WeatherIconStatus"]
         if line.startswith("    FR.snowReportData = "):
             snowfall = json.decode(trimToJSON(line))["TwentyFourHourSnowfall"]["Inches"]
-    if temperature == None:
+    if temperature == None and weather_stub != WEATHER_URL_STUB_ALT:
         url = RESORT_URLS[resort] + WEATHER_URL_STUB_ALT
         r = http.get(url, ttl_seconds = 600)
         response = r.body()
@@ -137,7 +140,8 @@ def getTerrain(resort):
     Returns:
         _type_: _description_
     """
-    url = RESORT_URLS[resort] + TERRAIN_URL_STUB
+    terrain_stub = TERRAIN_URL_STUBS.get(resort, TERRAIN_URL_STUB)
+    url = RESORT_URLS[resort] + terrain_stub
 
     # Pull an HTML response of the lift status page
     r = http.get(url, ttl_seconds = 600)
@@ -149,7 +153,7 @@ def getTerrain(resort):
         if line.startswith("    FR.TerrainStatusFeed = "):
             terrain_status_js_command = line
             break
-    if terrain_status_js_command == None:
+    if terrain_status_js_command == None and terrain_stub != TERRAIN_URL_STUB_ALT:
         url = RESORT_URLS[resort] + TERRAIN_URL_STUB_ALT
         r = http.get(url, ttl_seconds = 600)
         response = r.body()

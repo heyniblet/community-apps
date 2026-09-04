@@ -21,7 +21,7 @@ def main(config):
     Returns rendered application root.
     """
     if config.get("public_key") == None or config.get("private_key") == None:
-        image = http.get("http://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg").body()
+        image = http.get("https://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg").body()
         name = "Something went wrong, enjoy this image of Wolverine while we fix it."
 
         return render_data(image, name)
@@ -36,7 +36,7 @@ def main(config):
         item = req.json()["data"]["results"][0]
         name = item["name"]
         imageUrlSegments = item["thumbnail"]
-        imageUrl = imageUrlSegments["path"] + "." + imageUrlSegments["extension"]
+        imageUrl = imageUrlSegments["path"].replace("http:", "https:") + "." + imageUrlSegments["extension"]
         image = http.get(imageUrl).body()
 
         return render_data(image, name)
@@ -115,8 +115,8 @@ def get_random_character_id(config):
         fail("API request failed with status:", req.status_code)
 
     responseCharacter = req.json()["data"]["results"][0]
-    imagePath = responseCharacter["thumbnail"]["path"]
-    hasImage = imagePath != "http://i.annihil.us/u/prod/marvel/i/mg/b/40/image_not_available"
+    imagePath = responseCharacter["thumbnail"]["path"].replace("http:", "https:")
+    hasImage = imagePath != "https://i.annihil.us/u/prod/marvel/i/mg/b/40/image_not_available"
     characterId = responseCharacter["id"]
 
     if not hasImage:

@@ -20,7 +20,7 @@ yesterday = today - time.parse_duration("86400s")
 yesterdayf = yesterday.format("2006-01-02")
 
 #this is the API service for news
-NEWS_URL = "http://newsapi.org/v2/everything?q=india&searchIn=description&sortBy=popularity&from={}&to={}&domains=indiatimes.com,livemint.com,thehindu.com,indianexpress.com&language=en&apiKey=".format(yesterdayf, todayf)
+NEWS_URL = "https://newsapi.org/v2/everything?q=india&searchIn=description&sortBy=popularity&from={}&to={}&domains=indiatimes.com,livemint.com,thehindu.com,indianexpress.com&language=en&apiKey=".format(yesterdayf, todayf)
 
 def main(config):
     # set default api key

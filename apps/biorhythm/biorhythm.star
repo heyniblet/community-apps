@@ -69,7 +69,7 @@ def draw_plot(config):
     if DEBUG:
         print("DRAWING PLOT")
 
-    timezone = config.get("timezone") or "America/New_York"
+    timezone = time.tz()
     now = time.now().in_location(timezone)
 
     default_date = humanize.time_format("yyyy-MM-ddT00:00:00Z", now)

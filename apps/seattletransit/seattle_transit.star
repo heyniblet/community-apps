@@ -28,7 +28,7 @@ def main(config):
     if api_key != None:
         stop_url = "https://api.pugetsound.onebusaway.org/api/where/arrivals-and-departures-for-stop/" + stopid + ".json?key=" + api_key
     else:
-        stop_url = "http://api.pugetsound.onebusaway.org/api/where/arrivals-and-departures-for-stop/1_75403.json?key=TEST"
+        stop_url = "https://api.pugetsound.onebusaway.org/api/where/arrivals-and-departures-for-stop/1_75403.json?key=TEST"
 
     font = "CG-pixel-3x5-mono"
 
@@ -415,7 +415,7 @@ def get_stops(location, config):
     loc = json.decode(location)
     api_key = config.get("onebusaway_api_key")
 
-    stop_search = "http://api.pugetsound.onebusaway.org/api/where/stops-for-location.json?key=" + api_key + "&lat=" + str(loc["lat"]) + "&lon=" + str(loc["lng"])
+    stop_search = "https://api.pugetsound.onebusaway.org/api/where/stops-for-location.json?key=" + api_key + "&lat=" + str(loc["lat"]) + "&lon=" + str(loc["lng"])
     res = http.get(stop_search)
     if res.status_code != 200:
         fail("OBA request failed with status %d", res.status_code)

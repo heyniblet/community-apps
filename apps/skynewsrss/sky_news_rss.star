@@ -32,7 +32,7 @@ SPACER_COLOR = "#000"
 ARTICLE_LINESPACING = 0
 ARTICLE_AREA_HEIGHT = 24
 
-RSS_STUB = "http://feeds.skynews.com/feeds/rss/{}.xml"
+RSS_STUB = "https://feeds.skynews.com/feeds/rss/{}.xml"
 
 SECTION_TITLE = {
     "home": "Home",

@@ -11,7 +11,7 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-CTA_ARRIVAL_URL = "http://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
+CTA_ARRIVAL_URL = "https://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
 
 CTA_L_STATON_LIST_URL = "https://data.cityofchicago.org/resource/8pix-ypme.json"
 

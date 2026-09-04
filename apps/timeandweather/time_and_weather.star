@@ -1,7 +1,7 @@
 """
 Applet: Time & Weather
 Summary: Display time & weather
-Description: Display the time in addition to current weather conditions from either National Weather Service (NWS), OpenWeather, OpenWeather 3.0 One Call, Tomorrow.io, Open-Meteo, or Weatherbit weather APIs. To request an OpenWeather API key, see https://home.openweathermap.org/users/sign_up. To request a Tomorrow.io API key, see https://docs.tomorrow.io/login?redirect_uri=/reference/intro/getting-started. To request a Weatherbit API key, see https://www.weatherbit.io/account/create.
+Description: Display the time and current weather conditions from Open-Meteo.
 Author: sudeepban
 """
 
@@ -60,11 +60,11 @@ DEFAULT_LOCATION = """
 NWS_GRID_FORECAST_POINT_URL = "https://api.weather.gov/points/{latitude},{longitude}"
 NWS_HOURLY_GRID_FORECAST_URL = "https://api.weather.gov/gridpoints/BOX/{gridX},{gridY}/forecast/hourly"
 OPENWEATHER_CURRWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather?lat={latitude}&lon={longitude}&appid={api_key}&units={units}&lang=en"
-OPENWEATHER_AIR_POLLUTION_URL = "http://api.openweathermap.org/data/2.5/air_pollution?lat={latitude}&lon={longitude}&appid={api_key}"
+OPENWEATHER_AIR_POLLUTION_URL = "https://api.openweathermap.org/data/2.5/air_pollution?lat={latitude}&lon={longitude}&appid={api_key}"
 OPENWEATHER_ONECALL_URL = "https://api.openweathermap.org/data/3.0/onecall?lat={latitude}&lon={longitude}&exclude=minutely,hourly,daily,alerts&appid={api_key}&units={units}&lang=en"
-ACCUWEATHER_LOCATION_URL = "http://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey={api_key}&q={latitude}%2C{longitude}"
+ACCUWEATHER_LOCATION_URL = "https://dataservice.accuweather.com/locations/v1/cities/geoposition/search?apikey={api_key}&q={latitude}%2C{longitude}"
 
-ACCUWEATHER_URL = "http://dataservice.accuweather.com/currentconditions/v1/{locationKey}?apikey={api_key}&details=true"
+ACCUWEATHER_URL = "https://dataservice.accuweather.com/currentconditions/v1/{locationKey}?apikey={api_key}&details=true"
 TOMORROW_IO_REALTIME_URL = "https://api.tomorrow.io/v4/weather/realtime?location={latitude},{longitude}&apikey={api_key}&units={units}"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,cloud_cover,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m&hourly=dew_point_2m,visibility,uv_index&models=best_match&temperature_unit={temperature_unit}&wind_speed_unit={wind_speed_unit}&forecast_hours=1"
 WEATHERBIT_CURRENT_WEATHER_URL = "https://api.weatherbit.io/v2.0/current?lat={latitude}&lon={longitude}&key={api_key}&lang=en&units={units}"
@@ -146,7 +146,7 @@ def get_openweather_air_pollution(api_key, latitude, longitude):
     return air_quality
 
 def main(config):
-    api_service = config.get("weatherApiService") or "OpenWeather"
+    api_service = config.get("weatherApiService") or "Open-Meteo"
     location = json.decode(config.get("location", DEFAULT_LOCATION))
     latitude = float(location["lat"])
     longitude = float(location["lng"])
@@ -1021,51 +1021,6 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
-                id = "weatherApiService",
-                name = "Weather API Service",
-                desc = "Select your preferred Weather API",
-                icon = "database",
-                default = "OpenWeather",
-                options = [
-                    schema.Option(
-                        display = "Accuweather",
-                        value = "Accuweather",
-                    ),
-                    schema.Option(
-                        display = "National Weather Service (NWS)",
-                        value = "National Weather Service (NWS)",
-                    ),
-                    schema.Option(
-                        display = "OpenWeather",
-                        value = "OpenWeather",
-                    ),
-                    schema.Option(
-                        display = "OpenWeather (One Call API 3.0)",
-                        value = "OpenWeatherOneCall",
-                    ),
-                    schema.Option(
-                        display = "Tomorrow.io",
-                        value = "Tomorrow.io",
-                    ),
-                    schema.Option(
-                        display = "Open-Meteo",
-                        value = "Open-Meteo",
-                    ),
-                    schema.Option(
-                        display = "Weatherbit",
-                        value = "Weatherbit",
-                    ),
-                ],
-            ),
-            schema.Text(
-                id = "apiKey",
-                name = "API Key",
-                desc = "API key for weather data access",
-                icon = "gear",
-                default = "",
-                secret = True,
-            ),
             schema.Location(
                 id = "location",
                 name = "Location",
@@ -1113,10 +1068,5 @@ def get_schema():
                 icon = "brush",
                 default = TEMP_COLOR_DEFAULT,
             ),
-            schema.Generated(
-                id = "generatedWeatherMetrics",
-                source = "weatherApiService",
-                handler = more_toggles,
-            ),
-        ],
+        ] + more_toggles("Open-Meteo"),
     )

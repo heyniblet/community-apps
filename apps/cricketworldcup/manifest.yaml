@@ -7,8 +7,6 @@ author: M0ntyP
 fileName: cricket_world_cup.star
 packageName: cricketworldcup
 recommendedInterval: 5
-broken: true
-brokenReason: The ESPNCricinfo API endpoint is blocking requests (403 Forbidden).
 category: sports
 tags:
   - cricket

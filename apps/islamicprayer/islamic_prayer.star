@@ -178,7 +178,7 @@ def prayer_timings_filter(pre_filtered_timings, show_sunrise):
 
 def fetch_prayer_times(latitude, longitude, month, year, prayer_calc_option):
     # API docs: https://aladhan.com/prayer-times-api#GetCalendar
-    api_url = "http://api.aladhan.com/v1/calendar?latitude={}&longitude={}&month={}&year={}&method={}".format(latitude, longitude, month, year, prayer_calc_option)
+    api_url = "https://api.aladhan.com/v1/calendar?latitude={}&longitude={}&month={}&year={}&method={}".format(latitude, longitude, month, year, prayer_calc_option)
     prayer_month_raw = http.get(api_url, ttl_seconds = ONE_MONTH)
     prayer_month_body = prayer_month_raw.body()
 

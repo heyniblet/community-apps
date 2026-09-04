@@ -225,82 +225,37 @@ def get_linien_colors(linien):
 
     return linien_colors
 
-# Gets all available Stopps of the Wiener Linien
-def get_all_haltestellen():
-    # get all stopps
-    # This can be cached for a week as the stopps are not expected to change
-    haltestellen = http.get("https://www.wienerlinien.at/ogd_realtime/doku/ogd/wienerlinien-ogd-haltepunkte.csv", ttl_seconds = 86400 * 7).body()
-
-    # tidy up the data
-    # data = [line.split(";") for line in haltestellen.strip().split("\r\n")]
-    # columns = data[0]
-    # rows = data[1:]
-
-    # create a dictionary that stores all stopIDs for each haltestelle
-    haltestellen_dict = {}
-
-    for line in haltestellen.strip().split("\r\n"):
-        columns = line.split(";")
-        stopID = columns[0]
-        diva = columns[1]
-        haltestelle = columns[2]
-        municipality = columns[3]
-
-        # Some stopps are unnecessary or flawed
-        if municipality != "Wien" or haltestelle == "" or diva == "" or haltestelle == "A2":
-            continue
-
-        if haltestelle not in haltestellen_dict:
-            haltestellen_dict[haltestelle] = set()
-
-        haltestellen_dict[haltestelle].add(stopID)
-
-    # Sort dictionary alphabetically and add 'Keine' option
-    haltestellen_dict = dict(sorted(haltestellen_dict.items(), key = lambda item: item[0]))
-    haltestellen_dict["Keine"] = set()
-    haltestellen_dict["Keine"].add(" ")
-
-    # Create and return schema Options
-    haltestellenOptions = [schema.Option(display = haltestellen_dict.keys()[i], value = ",".join(haltestellen_dict[haltestellen_dict.keys()[i]])) for i in range(len(haltestellen_dict))]
-    return haltestellenOptions
-
 def get_schema():
-    haltestellenOptions = get_all_haltestellen()
-
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps1",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "Stop IDs",
+                desc = "Comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = "4111,4118,4906,4911",  # Stephansplatz
-                options = haltestellenOptions,
             ),
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps2",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "More stop IDs",
+                desc = "Optional comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = " ",
-                options = haltestellenOptions,
             ),
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps3",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "More stop IDs",
+                desc = "Optional comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = " ",
-                options = haltestellenOptions,
             ),
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps4",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "More stop IDs",
+                desc = "Optional comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = " ",
-                options = haltestellenOptions,
             ),
             schema.Dropdown(
                 id = "switch_speed",

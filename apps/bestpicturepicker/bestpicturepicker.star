@@ -3,7 +3,7 @@ load("random.star", "random")
 load("render.star", "render")
 
 def main():
-    resp = http.get("http://pandemicpictures.info/imdb", ttl_seconds = 21600)
+    resp = http.get("https://pandemicpictures.info/imdb", ttl_seconds = 21600)
     jsonResp = resp.json()
     movie = jsonResp[random.number(0, len(jsonResp))]
     img = http.get(movie["ImageUrl"]).body()

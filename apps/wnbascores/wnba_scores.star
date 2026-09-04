@@ -76,6 +76,7 @@ def main(config):
     league = {LEAGUE: API + "?limit=100" + (selectedTeam == "all" and " " or "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
     scores = get_scores(league, selectedTeam)
     if len(scores) > 0:
+        rotationSpeed = str(max(3, min(int(rotationSpeed), 60 // len(scores))))
         for i, s in enumerate(scores):
             gameStatus = s["status"]["type"]["state"]
             competition = s["competitions"][0]
@@ -468,7 +469,8 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
-            show_full_animation = True,
+            max_age = 180,
+            show_full_animation = len(renderCategory) > 1,
             child = render.Column(
                 children = [
                     render.Animation(
@@ -821,16 +823,21 @@ def get_background_color(team, displayType, color):
 def get_logoType(team, logo):
     usealtlogo = json.decode(ALT_LOGO)
     usealt = usealtlogo.get(team, "NO")
+    originalLogo = logo
     if usealt != "NO":
-        logo = get_cachable_data(usealt, 36000)
+        candidates = [usealt, originalLogo]
     else:
         # ESPN serves a mix of "500/<abbr>.png" and "500/scoreboard/<abbr>.png",
         # but only the plain "500-dark/<abbr>.png" variant exists for every team.
         logo = logo.replace("500/scoreboard", "500")
         logo = logo.replace("/500/", "/500-dark/")
         logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=")
-        logo = get_cachable_data(logo + "&h=50&w=50", 36000)
-    return logo
+        candidates = [logo + "&h=50&w=50", originalLogo]
+    for candidate in candidates:
+        res = http.get(url = candidate, ttl_seconds = 36000)
+        if res.status_code == 200:
+            return res.body()
+    return get_cachable_data("https://i.ibb.co/5LMp8T1/transparent.png", 36000)
 
 def get_logoSize(team):
     usealtsize = json.decode(MAGNIFY_LOGO)

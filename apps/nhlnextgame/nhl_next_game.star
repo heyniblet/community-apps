@@ -185,24 +185,32 @@ def main(config):
     time_zone_str = config.str("time_zone") or "America/New_York"
     #---------------------------------------
 
-    TEAM_NEXT_GAME_JSON = "https://statsapi.web.nhl.com/api/v1/teams/" + str(main_team_id) + "?expand=team.schedule.next"
+    team_abbreviation = getTeamAbbFromID(int(main_team_id))
+    now = time.now()
+    season_start = now.year if now.month >= 7 else now.year - 1
+    season = "%d%d" % (season_start, season_start + 1)
+    TEAM_NEXT_GAME_JSON = "https://api-web.nhle.com/v1/club-schedule-season/%s/%s" % (team_abbreviation, season)
 
     print("Miss! Calling NHL API.")
     rep = http.get(TEAM_NEXT_GAME_JSON, ttl_seconds = 3600)
     if rep.status_code != 200:
         fail("NHL API request failed with status %d", rep.status_code)
-    nhldata = rep.json()
+    today = now.format("2006-01-02")
+    games = [game for game in rep.json()["games"] if game["gameDate"] >= today]
+    if not games:
+        return render.Root(child = render.Text("No upcoming games"))
+    game = games[0]
 
-    homeTeamID = nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["home"]["team"]["id"]
-    awayTeamID = nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["away"]["team"]["id"]
-    homeTeamRecord = str(int(nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["home"]["leagueRecord"]["wins"])) + "-" + str(int(nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["home"]["leagueRecord"]["losses"])) + "-" + str(int(nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["home"]["leagueRecord"]["ot"]))
-    awayTeamRecord = str(int(nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["away"]["leagueRecord"]["wins"])) + "-" + str(int(nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["away"]["leagueRecord"]["losses"])) + "-" + str(int(nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["teams"]["away"]["leagueRecord"]["ot"]))
+    homeTeamID = game["homeTeam"]["id"]
+    awayTeamID = game["awayTeam"]["id"]
+    homeTeamRecord = ""
+    awayTeamRecord = ""
     homeTeamIcon = getTeamIconFromID(homeTeamID)
     awayTeamIcon = getTeamIconFromID(awayTeamID)
     homeTeamAbb = getTeamAbbFromID(homeTeamID)
     awayTeamAbb = getTeamAbbFromID(awayTeamID)
 
-    gameDate = nhldata["teams"][0]["nextGameSchedule"]["dates"][0]["games"][0]["gameDate"]
+    gameDate = game["startTimeUTC"]
     displayDate = ""
 
     date_key = humanize.time_format("yyyy-MM-dd", time.parse_time(gameDate).in_location(time_zone_str))

@@ -14,9 +14,9 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 EXAMPLE_STOP_CODE = "550685"
-BUSTIME_STOP_TIMES_URL = "http://bustime.mta.info/api/siri/stop-monitoring.json"
-BUSTIME_STOP_INFO_URL = "http://bustime.mta.info/api/where/stop/%s.json"
-BUSTIME_STOPS_FOR_LOCATION_URL = "http://bustime.mta.info/api/where/stops-for-location.json"
+BUSTIME_STOP_TIMES_URL = "https://bustime.mta.info/api/siri/stop-monitoring.json"
+BUSTIME_STOP_INFO_URL = "https://bustime.mta.info/api/where/stop/%s.json"
+BUSTIME_STOPS_FOR_LOCATION_URL = "https://bustime.mta.info/api/where/stops-for-location.json"
 PREVIEW_DATA = [{"line_color": "FAA61A", "line_name": "Q100", "destination_name": "LIMITED LI CITY QUEENS PLZ", "eta_text": "15 min"}, {"line_color": "00AEEF", "line_name": "Q69", "destination_name": "LI CITY QUEENS PLZ via DITMARS BL via 21 ST", "eta_text": "45 min"}]
 
 def get_schema():
@@ -26,7 +26,7 @@ def get_schema():
             schema.Text(
                 id = "api_key",
                 name = "MTA BusTime API Key",
-                desc = "Your MTA BusTime API key. See http://bustime.mta.info/wiki/Developers/Index for details.",
+                desc = "Your MTA BusTime API key. See https://bustime.mta.info/wiki/Developers/Index for details.",
                 icon = "key",
                 secret = True,
             ),

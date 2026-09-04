@@ -24,7 +24,7 @@ MOVIE_PAGE_SIZE = 5
 TITLE_CHARACTER_LIMIT = 32
 
 def main(config):
-    response = http.get(VIDIOTS_URL, ttl_seconds = 240)
+    response = http.get(VIDIOTS_URL, headers = {"User-Agent": "Mozilla/5.0"}, ttl_seconds = 240)
 
     if response.status_code != 200:
         fail("Vidiots request failed with status %d", response.status_code)

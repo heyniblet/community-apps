@@ -4,10 +4,10 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-FOOTBALL_URL = "http://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-BASEBALL_URL = "http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
-HOCKEY_URL = "http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
-BASKETBALL_URL = "http://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+FOOTBALL_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+BASEBALL_URL = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+HOCKEY_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+BASKETBALL_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
 
 DEFAULT_LOCATION = """
 {
@@ -264,6 +264,8 @@ def main(config):
 
     rows = []
     for event in my_events:
+        away_team = event["competitions"][0]["competitors"][1]["team"]
+        home_team = event["competitions"][0]["competitors"][0]["team"]
         rows.append(render.Row(
             main_align = "start",
             cross_align = "start",
@@ -274,42 +276,42 @@ def main(config):
                 render.Box(
                     child = render.Text(
                         font = "5x8",
-                        content = event["competitions"][0]["competitors"][1]["team"]["abbreviation"],
-                        color = event["competitions"][0]["competitors"][1]["team"]["alternateColor"],
+                        content = away_team["abbreviation"],
+                        color = away_team.get("alternateColor", "#ffffff"),
                     ),
                     height = 10,
                     width = 18,
-                    color = event["competitions"][0]["competitors"][1]["team"]["color"],
+                    color = away_team.get("color", "#000000"),
                 ),
                 render.Box(
                     child = render.Text(
                         content = event["competitions"][0]["competitors"][1]["score"],
-                        color = event["competitions"][0]["competitors"][1]["team"]["color"],
+                        color = away_team.get("color", "#000000"),
                         font = "5x8",
                     ),
                     height = 10,
                     width = 14,
-                    color = event["competitions"][0]["competitors"][1]["team"]["alternateColor"],
+                    color = away_team.get("alternateColor", "#ffffff"),
                 ),
                 render.Box(
                     child = render.Text(
                         font = "5x8",
-                        content = event["competitions"][0]["competitors"][0]["team"]["abbreviation"],
-                        color = event["competitions"][0]["competitors"][0]["team"]["alternateColor"],
+                        content = home_team["abbreviation"],
+                        color = home_team.get("alternateColor", "#ffffff"),
                     ),
                     height = 10,
                     width = 18,
-                    color = event["competitions"][0]["competitors"][0]["team"]["color"],
+                    color = home_team.get("color", "#000000"),
                 ),
                 render.Box(
                     child = render.Text(
                         content = event["competitions"][0]["competitors"][0]["score"],
-                        color = event["competitions"][0]["competitors"][0]["team"]["color"],
+                        color = home_team.get("color", "#000000"),
                         font = "5x8",
                     ),
                     height = 10,
                     width = 14,
-                    color = event["competitions"][0]["competitors"][0]["team"]["alternateColor"],
+                    color = home_team.get("alternateColor", "#ffffff"),
                 ),
             ],
         ))

@@ -14,7 +14,7 @@ load("schema.star", "schema")
 STEAM_ICON = STEAM_ICON_ASSET.readall()
 
 CACHE_TTL_SECONDS = 300
-API_BASE_URL = "http://api.steampowered.com/"
+API_BASE_URL = "https://api.steampowered.com/"
 API_PLAYER_SUMMARIES = API_BASE_URL + "ISteamUser/GetPlayerSummaries/v0002"
 API_RECENTLY_PLAYED_GAMES = API_BASE_URL + "IPlayerService/GetRecentlyPlayedGames/v0001"
 API_OWNED_GAMES = API_BASE_URL + "IPlayerService/GetOwnedGames/v0001"
@@ -55,7 +55,7 @@ def main(config):
 
         if resp.json()["response"]["game_count"] == 1:
             game_icon_hash = resp.json()["response"]["games"][0]["img_icon_url"]
-            game_icon_url = "http://media.steampowered.com/steamcommunity/public/images/apps/" + str(current_game_id) + "/" + game_icon_hash + ".jpg"
+            game_icon_url = "https://media.steampowered.com/steamcommunity/public/images/apps/" + str(current_game_id) + "/" + game_icon_hash + ".jpg"
             main_icon = http.get(game_icon_url, ttl_seconds = CACHE_TTL_SECONDS).body()
         else:
             main_icon = STEAM_ICON

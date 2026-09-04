@@ -160,7 +160,7 @@ def getRank(elo):
             return rank["name"]
     return "Unranked3"
 
-RANK_URL = "https://gql-gateway-dot-slippi.uc.r.appspot.com/graphql"
+RANK_URL = "https://internal.slippi.gg/graphql"
 
 def getUserCodeDashIndex(userCode):
     for i in range(len(userCode)):
@@ -170,23 +170,24 @@ def getUserCodeDashIndex(userCode):
 
 def requestRank(userCode):
     body = json.encode({
-        "operationName": "AccountManagementPageQuery",
+        "operationName": "UserProfilePageQuery",
         "variables": {
             "cc": userCode,
-            "uid": userCode,
         },
-        "query": "fragment userProfilePage on User {\n  fbUid\n  displayName\n  connectCode {\n    code\n    __typename\n  }\n  status\n  activeSubscription {\n    level\n    hasGiftSub\n    __typename\n  }\n  rankedNetplayProfile {\n    id\n    ratingOrdinal\n    ratingUpdateCount\n    wins\n    losses\n    dailyGlobalPlacement\n    dailyRegionalPlacement\n    continent\n    characters {\n      id\n      character\n      gameCount\n      __typename\n    }\n    __typename\n  }\n  __typename\n}\n\nquery AccountManagementPageQuery($cc: String!, $uid: String!) {\n  getUser(fbUid: $uid) {\n    ...userProfilePage\n    __typename\n  }\n  getConnectCode(code: $cc) {\n    user {\n      ...userProfilePage\n      __typename\n    }\n    __typename\n  }\n}\n",
+        "query": "query UserProfilePageQuery($cc: String) { getUser(connectCode: $cc) { displayName connectCode { code } rankedNetplayProfile { ratingOrdinal ratingUpdateCount wins losses dailyGlobalPlacement dailyRegionalPlacement continent characters { character gameCount } } } }",
     })
     res = http.post(
         RANK_URL,
         body = body,
         headers = {
+            "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": "tronbyt-slippi-rank/1.0",
         },
         ttl_seconds = REFRESH_TIME,
     )
     if res.status_code != 200:
-        fail("request failed with status %d", res.status_code)
+        fail("request failed with status %d: %s", res.status_code, res.body())
     res = res.json()
     return res
 
@@ -212,7 +213,7 @@ def main(config):
         rankedData = json.decode(rankedData)
 
         # print(rankedData)
-        if not rankedData["data"]["getUser"] or userCodeHash != rankedData["data"]["getConnectCode"]["user"]["connectCode"]["code"]:
+        if not rankedData["data"]["getUser"] or userCodeHash != rankedData["data"]["getUser"]["connectCode"]["code"]:
             #new usercode, request data again
             rankedData = requestRank(userCodeHash)
             cache.set("rankedData", json.encode(rankedData), ttl_seconds = REFRESH_TIME)
@@ -221,10 +222,11 @@ def main(config):
         rankedData = requestRank(userCodeHash)
         cache.set("rankedData", json.encode(rankedData), ttl_seconds = REFRESH_TIME)
 
-    if rankedData["data"]["getConnectCode"]["user"]["displayName"]:
-        elo = rankedData["data"]["getConnectCode"]["user"]["rankedNetplayProfile"]["ratingOrdinal"]
+    user = rankedData["data"]["getUser"]
+    if user and user["displayName"]:
+        elo = user["rankedNetplayProfile"]["ratingOrdinal"]
         rank = getRank(elo)
-        name = rankedData["data"]["getConnectCode"]["user"]["displayName"]
+        name = user["displayName"]
         rankedImg = RANK_IMGS[rank]
     else:
         fail("Ranked data did not respond correctly")

@@ -96,7 +96,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
-            show_full_animation = True,
+            show_full_animation = len(renderCategory) > 1,
             child = render.Animation(children = renderCategory),
         )
     else:

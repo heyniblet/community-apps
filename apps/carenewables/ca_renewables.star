@@ -11,7 +11,7 @@ load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 
-FUEL_URL = "https://www.caiso.com/outlook/SP/fuelsource.csv"
+FUEL_URL = "https://www.caiso.com/outlook/current/fuelsource.csv"
 
 # Large hydro and batteries are not officially 'green' but are certainly "clean" -- these can be toggled via the config
 
@@ -33,8 +33,9 @@ DEFAULT_DELAY = "2"  # if this gets too large, not enough time to display all en
 def sum(input_list):
     total = 0
     for i in input_list:
-        if float(i) >= 0:  # don't count negative values (exports and charging batteries) in total power supply -- this was causing the dropout in the chart in the original version
-            total += float(i)
+        value = float(i or "0")
+        if value >= 0:  # don't count negative values (exports and charging batteries) in total power supply -- this was causing the dropout in the chart in the original version
+            total += value
 
     #         else:
     #             print("charging battery or export", i)
@@ -76,7 +77,7 @@ def process_data(csv_body, display_fuel_types):
     header, rows = data[0], data[1:]
     indexes = {k: header.index(k) for k in display_fuel_types}
     totals = [sum(row[1:]) for row in rows]
-    segmented = {k: [float(row[indexes[k]]) for row in rows] for k in display_fuel_types}
+    segmented = {k: [float(row[indexes[k]] or "0") for row in rows] for k in display_fuel_types}
     return segmented, totals
 
 # Sum the green values at each period

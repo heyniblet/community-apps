@@ -1,7 +1,7 @@
 load("http.star", "http")
 load("render.star", "render")
 
-API_URL = "https://www.frederickscanner.com/fredscannerpro/fredscannertweet.json"
+API_URL = "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=fredscanner.bsky.social&limit=1&filter=posts_no_replies"
 
 def main():
     rep = http.get(API_URL)
@@ -10,7 +10,7 @@ def main():
 
     config = {}
     data = rep.json()
-    tweet = data["rmvString"]
+    tweet = data["feed"][0]["post"]["record"]["text"]
 
     return render.Root(
         delay = int(config.get("scroll", 25)),

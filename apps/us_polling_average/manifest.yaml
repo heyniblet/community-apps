@@ -8,7 +8,7 @@ fileName: us_polling_average.star
 packageName: us_polling_average
 recommendedInterval: 5
 broken: true
-brokenReason: The data source (FiveThirtyEight) has changed and the JSON endpoint now redirects to an HTML page.
+brokenReason: FiveThirtyEight discontinued its public polling-average JSON downloads; they now return an ABC News HTML shell.
 category: news
 tags:
   - news

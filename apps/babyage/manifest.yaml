@@ -6,7 +6,7 @@ desc: Displays your baby's age in days, weeks, and months!
 author: helmc2
 fileName: baby_age.star
 packageName: babyage
-recommendedInterval: 5
+recommendedInterval: 240
 category: lifestyle
 tags:
   - lifestyle

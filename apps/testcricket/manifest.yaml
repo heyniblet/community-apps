@@ -6,7 +6,6 @@ desc: This app takes the selected team and displays the current match situation 
 author: lunchbox8484
 fileName: test_cricket.star
 packageName: testcricket
-broken: true
 recommendedInterval: 5
 category: sports
 tags:

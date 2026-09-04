@@ -6,7 +6,7 @@ desc: Uses 60 Pixels to display time across width of Tidbyt.
 author: AmillionAir
 fileName: abstract_clock.star
 packageName: abstractclock
-recommendedInterval: 0
+recommendedInterval: 1
 category: clocks
 tags:
   - time

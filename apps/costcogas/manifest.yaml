@@ -8,6 +8,7 @@ fileName: costco_gas.star
 packageName: costcogas
 recommendedInterval: 5
 broken: true
+brokenReason: Costco blocks the warehouse pricing endpoint with HTTP 403; it requires an approved feed or operator proxy.
 category: transit
 tags:
   - utility

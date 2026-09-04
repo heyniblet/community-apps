@@ -9,9 +9,9 @@ load("random.star", "random")
 load("render.star", "canvas", "render")
 
 # Constants
-HEIGHT = canvas.height()
-WIDTH = canvas.width()
-IS_2X = canvas.is2x()
+HEIGHT = 32
+WIDTH = 64
+SCALE = 2 if canvas.is2x() else 1
 BUILDINGS = 8
 BUILDING_MAX_W = 8
 BUILDING_MIN_W = 2
@@ -71,7 +71,7 @@ def set_tallest_building(building, frame):
             window_y = building[BUILDING_Y] - y
             window_x = building[BUILDING_X] + building[BUILDING_W] - 1
             if window_x > 63:
-                window_x = 63
+                window_x = WIDTH - 1
             frame[window_y][window_x] = WINDOW_COLOR_OFF
         building[BUILDING_WINDOWS] = building[BUILDING_W] * building[BUILDING_H]
 
@@ -81,7 +81,7 @@ def set_tallest_building(building, frame):
 
 def stars(frame):
     for _ in range(random.number(3, 5)):
-        star_x = random.number(0, 63)
+        star_x = random.number(0, WIDTH - 1)
         star_y = random.number(0, 23)
 
         if not_star_collision(frame, star_y, star_x):
@@ -93,7 +93,7 @@ def not_star_collision(frame, star_y, star_x):
     if star_x - 1 >= 0:
         no_collision = no_collision and not_color_collision(frame[star_y][star_x - 1])
 
-    if star_x + 1 < 64:
+    if star_x + 1 < WIDTH:
         no_collision = no_collision and not_color_collision(frame[star_y][star_x + 1])
 
     return no_collision
@@ -109,7 +109,7 @@ def update_view(frame, buildings, light_counter):
         window_x = buildings[b][BUILDING_X] + window_col
         window_y = buildings[b][BUILDING_Y] - window_row
         if window_x > 63:
-            window_x = 63
+            window_x = WIDTH - 1
         frame[window_y][window_x] = WINDOW_COLOR_ON
         if (buildings[b][IS_TALLEST]) and (light_counter % 6 == 0):
             update_tallest(buildings[b], frame)
@@ -127,7 +127,7 @@ def render_frame(frame):
         children = [
             render.Row(
                 children = [
-                    render.Box(width = 1, height = 1, color = cell)
+                    render.Box(width = SCALE, height = SCALE, color = cell)
                     for cell in row
                 ],
             )

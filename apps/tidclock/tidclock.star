@@ -38,8 +38,8 @@ def get_schema():
             ),
             schema.Toggle(
                 id = "weatherpaid",
-                name = "Weatherstack API Paid",
-                desc = "Use paid weatherstack.com subscription to allow display of forecasts",
+                name = "Weatherstack Forecast Plan",
+                desc = "Enable forecasts only with a Weatherstack Professional plan or higher",
                 icon = "cloudRain",
                 default = False,
             ),
@@ -269,10 +269,10 @@ DEFAULT_LOCATION = """
 	"timezone": "America/New_York"
 }
 """
-WEATHERURLPRE = "http://api.weatherstack.com/forecast?access_key="
+WEATHERURLPRE = "https://api.weatherstack.com/forecast?access_key="
 WEATHERURLPOSTWEEK = "&forecast_days=7"
 WEATHERURLPOSTDAY = "&forecast_days=1&hourly=1&interval=1"
-WEATHERURLFREE = "http://api.weatherstack.com/current?access_key="
+WEATHERURLFREE = "https://api.weatherstack.com/current?access_key="
 LUNATION = 2551443  # lunar cycle in seconds (29 days 12 hours 44 minutes 3 seconds)
 REF_NEWMOON = time.parse_time("30-Apr-2022 20:28:00", format = "02-Jan-2006 15:04:05").unix
 MONTHSTRS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]

@@ -7,6 +7,7 @@ author: tavdog
 fileName: fishbyt.star
 packageName: fishbyt
 broken: true
+brokenReason: NOAA retired the FishWatch species JSON API and now redirects it to an HTML page; no equivalent public profile feed is available.
 recommendedInterval: 5
 category: entertainment
 tags:

@@ -8,6 +8,13 @@ Author: grantmatheny
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
+load("time.star", "time")
+
+def cycle_remaining(cycle):
+    if cycle.get("timeLeft"):
+        return cycle["timeLeft"].split()
+    seconds = max(0, int((time.parse_time(cycle["expiry"]) - time.now()).seconds))
+    return ["%dh" % (seconds // 3600), "%dm" % ((seconds % 3600) // 60), "%ds" % (seconds % 60)]
 
 def time_dict_conversion(timedict):
     if timedict.get("h") == None and (timedict.get("m") == None or int(timedict.get("m")) == 0):
@@ -54,22 +61,22 @@ def main(config):
     if rep.status_code != 200:
         fail("Warframe request failed with status %d", rep.status_code)
     cetusactive = rep.json()["cetusCycle"]["state"].title()
-    cetusremaining = rep.json()["cetusCycle"]["timeLeft"].split()
+    cetusremaining = cycle_remaining(rep.json()["cetusCycle"])
 
     earthactive = rep.json()["earthCycle"]["state"].title()
-    earthremaining = rep.json()["earthCycle"]["timeLeft"].split()
+    earthremaining = cycle_remaining(rep.json()["earthCycle"])
 
-    cambionactive = rep.json()["cambionCycle"]["active"].title()
-    cambionremaining = rep.json()["cambionCycle"]["timeLeft"].split()
+    cambionactive = rep.json()["cambionCycle"]["state"].title()
+    cambionremaining = cycle_remaining(rep.json()["cambionCycle"])
 
     vallisactive = rep.json()["vallisCycle"]["state"].title()
-    vallisremaining = rep.json()["vallisCycle"]["timeLeft"].split()
+    vallisremaining = cycle_remaining(rep.json()["vallisCycle"])
 
     zariman_toggle = config.bool("warframe_cycles_zariman_enabled", False)
 
     if zariman_toggle:
         zarimanactive = rep.json()["zarimanCycle"]["state"].title()
-        zarimanremaining = rep.json()["zarimanCycle"]["timeLeft"].split()
+        zarimanremaining = cycle_remaining(rep.json()["zarimanCycle"])
     else:
         zarimanactive = "Corpus"
         zarimanremaining = ["4h", "53m", "38s"]

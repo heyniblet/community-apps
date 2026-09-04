@@ -6,6 +6,7 @@ Author: Jack Sherbal
 """
 
 load("cache.star", "cache")
+load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
@@ -13,8 +14,8 @@ load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
-NUM_QUESTIONS = 100
-JSERVICE = "http://jservice.io/api/random?count=%d" % NUM_QUESTIONS
+NUM_QUESTIONS = 20
+JSERVICE = "https://opentdb.com/api.php?amount=%d&type=multiple&encode=base64" % NUM_QUESTIONS
 CACHE_TTL_SECONDS = 15 * NUM_QUESTIONS
 
 def get_data():
@@ -25,7 +26,7 @@ def get_data():
         fail("Jservice (Trivia) request failed with status %d", rep.status_code)
 
     cache.set("question_index", str(question_index + 1), ttl_seconds = CACHE_TTL_SECONDS)
-    questions = json.decode(rep.body())
+    questions = json.decode(rep.body())["results"]
 
     return questions[question_index % NUM_QUESTIONS]
 
@@ -54,10 +55,10 @@ def get_value(value):
 
 def main(config):
     body = get_data()
-    value = get_value(body["value"])
-    question = remove_chars(body["question"])
-    answer = remove_chars(body["answer"])
-    category = remove_chars(body["category"]["title"])
+    value = base64.decode(body["difficulty"]).upper()
+    question = remove_chars(base64.decode(body["question"]))
+    answer = remove_chars(base64.decode(body["correct_answer"]))
+    category = remove_chars(base64.decode(body["category"]))
 
     DELAY = int(config.str("scroll_speed", DEFAULT_SPEED)) + calc_delay(question, category)
     ANSWER_DELAY = config.str("answer_delay", DEFAULT_ANSWER_DELAY)

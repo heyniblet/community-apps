@@ -102,6 +102,7 @@ def main(config):
     league = {LEAGUE: API + "?limit=100" + (selectedTeam == "all" and " " or "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
     scores = get_scores(league, selectedTeam)
     if len(scores) > 0:
+        rotationSpeed = str(max(3, min(int(rotationSpeed), 60 // len(scores))))
         for i, s in enumerate(scores):
             gameStatus = s["status"]["type"]["state"]
             competition = s["competitions"][0]
@@ -494,7 +495,8 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
-            show_full_animation = True,
+            max_age = 180,
+            show_full_animation = len(renderCategory) > 1,
             child = render.Column(
                 children = [
                     render.Animation(
@@ -836,28 +838,40 @@ def get_schema():
 
 def get_scores(urls, team):
     allscores = []
-    gameCount = 0
     for i, s in urls.items():
         print(s)
         data = get_cachable_data(s)
         decodedata = json.decode(data)
         allscores.extend(decodedata["events"])
-        if team != "all" and team != "":
-            newScores = []
-            for _, s in enumerate(allscores):
-                home = s["competitions"][0]["competitors"][0]["team"]["abbreviation"]
-                away = s["competitions"][0]["competitors"][1]["team"]["abbreviation"]
-                gameStatus = s["status"]["type"]["state"]
-                if (home == team or away == team) and gameStatus == "post":
-                    newScores.append(s)
-                elif (home == team or away == team) and gameCount == 0:
-                    if gameStatus == "in":
-                        newScores.clear()
-                    newScores.append(s)
-                    gameCount = gameCount + 1
-            allscores = newScores
         all([i, allscores])
-    return allscores
+    return select_team_scores(allscores, team)
+
+def select_team_scores(scores, team):
+    if team == "all" or team == "":
+        return scores
+
+    live = []
+    upcoming = []
+    completed = []
+    for _, score in enumerate(scores):
+        competitors = score["competitions"][0]["competitors"]
+        home = competitors[0]["team"]["abbreviation"]
+        away = competitors[1]["team"]["abbreviation"]
+        if home != team and away != team:
+            continue
+        state = score["status"]["type"]["state"]
+        if state == "in":
+            live.append(score)
+        elif state == "pre":
+            upcoming.append(score)
+        elif state == "post":
+            completed.append(score)
+
+    if live:
+        return live[:1]
+    if upcoming:
+        return upcoming[:1]
+    return completed[-1:]
 
 def get_odds(theOdds, theOU, team, homeaway):
     theOddsarray = theOdds.split(" ")
@@ -909,13 +923,18 @@ def get_background_color(team, displayType, color):
 def get_logoType(team, logo):
     usealtlogo = json.decode(ALT_LOGO)
     usealt = usealtlogo.get(team, "NO")
+    originalLogo = logo
     if usealt != "NO":
-        logo = get_cachable_data(usealt, 36000)
+        candidates = [usealt, originalLogo]
     else:
         logo = logo.replace("500/scoreboard", "500-dark/scoreboard")
         logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=", 36000)
-        logo = get_cachable_data(logo + "&h=50&w=50")
-    return logo
+        candidates = [logo + "&h=50&w=50", originalLogo]
+    for candidate in candidates:
+        res = http.get(url = candidate, ttl_seconds = 36000)
+        if res.status_code == 200:
+            return res.body()
+    return get_cachable_data("https://i.ibb.co/5LMp8T1/transparent.png", 36000)
 
 def get_logoSize(team):
     usealtsize = json.decode(MAGNIFY_LOGO)

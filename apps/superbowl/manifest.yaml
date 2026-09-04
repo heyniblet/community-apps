@@ -6,7 +6,6 @@ desc: Countdown to the next Super Bowl.
 author: rs7q5
 fileName: superbowl.star
 packageName: superbowl
-broken: true
 category: entertainment
 tags:
   - sports

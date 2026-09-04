@@ -5,34 +5,24 @@ Description: Display standings or scores for a Yahoo Fantasy Baseball league (ML
 Author: jweier extended from LunchBox8484
 """
 
-load("cache.star", "cache")
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 load("xpath.star", "xpath")
 
-# Constants for production repo
-TIDBYT_OAUTH_CALLBACK_URL = "https%3A%2F%2Fappauth.tidbyt.com%2Fyahoofantasymlb"  # registered https://appauth.tidbyt.com/yahoofantasymlb as redirect_uri at Yahoo
-YAHOO_CLIENT_ID = secret.decrypt("AV6+xWcEWMDT2jcxrD35wOfTQxWvAHKAxFxzai1GSmDkB/h8jchP1n+cCcESoBAHJUl1JBye3kuoEn6UwKzBFMBOohXSO8NvwASENm03L0Kj+wY88Nj4a4WEU+2qEIbMgw89CAGElNxcKNS4n4uKs3nYtqSnQj7X0NdtLYmX21ICNuaPpAzbO53vpnYFM3YypK0ZkEa2QN5jButjapgz3znET09eUF0/F+XhtbXDFCCmTtSlpojga86zPut3dwj1mzEdRycg") or ""
-YAHOO_CLIENT_SECRET = secret.decrypt("AV6+xWcEJ6YJpwBZ4iTBKHweMQHJENU/9ZnBsKHYMeCFoo3vjq0NwB0nOnFqFSSZNKJfxo+KUIPxIcqO23MpxhIcp5Zb/XYHqz1YCa/a1Q9uke9iZgm7IT/R1RBSo0LZdJDQZtC+5WCklkCMNFMTAnk9frRstdIzCA13+CF+n89sPOYMwGFEJJW1qMqbOg==") or ""
-
-# Common Constants
-YAHOO_CLIENT_ID_AND_SECRET_BASE_64 = base64.encode(YAHOO_CLIENT_ID + ":" + YAHOO_CLIENT_SECRET)
-YAHOO_OAUTH_AUTHORIZATION_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 YAHOO_OAUTH_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
-ACCESS_TOKEN_CACHE_TTL = 3000  # 50 minutes as Yahoo access tokens only last 60 minutes
-STANDINGS_CACHE_TTL = 14400  # 4 days
-LEAGUE_NAME_CACHE_TTL = 28800  # 8 days
-GAME_KEY = "422"
+YAHOO_REDIRECT_URI = "oob"
+GAME_KEY = "mlb"
 
 def main(config):
     render_category = []
     league_name = ""
-    refresh_token = config.get("auth")
+    client_id = config.get("yahoo_client_id")
+    client_secret = config.get("yahoo_client_secret")
+    refresh_token = config.get("yahoo_refresh_token")
     league_number = config.get("league_number", "")
     rotation_speed = config.get("rotation_speed", "5")
     teams_per_view = int(config.get("teams_per_view", "3"))
@@ -41,12 +31,10 @@ def main(config):
     color_scheme = json.decode(color_scheme)
     show_scores = config.bool("show_scores", False)
 
-    if refresh_token:
-        print("Calling Get Access Token")
-        access_token = get_access_token(refresh_token)
+    if client_id and client_secret and refresh_token:
+        access_token = get_access_token(client_id, client_secret, refresh_token)
 
         if (access_token):
-            print("League Name: " + league_name)
             league_name = get_league_name(access_token, GAME_KEY, league_number)
 
             if (league_name):
@@ -337,59 +325,33 @@ color_scheme_options = [
     ),
 ]
 
-def oauth_handler(params):
-    headers = {
-        "Content-type": "application/x-www-form-urlencoded",
-    }
-
-    # deserialize oauth2 parameters
-    params = json.decode(params)
-    print("Redirect URL: " + params["redirect_uri"])
-    print("Code: " + params["code"])
-
-    body = (
-        "grant_type=authorization_code" +
-        "&client_id=" + params["client_id"] +
-        "&client_secret=" + YAHOO_CLIENT_SECRET +
-        "&code=" + params["code"] +
-        "&scope=fspt-r" +
-        "&redirect_uri=" + params["redirect_uri"]
-    )
-
-    # exchange parameters and client secret for an access token
-    response = http.post(
-        url = YAHOO_OAUTH_TOKEN_URL,
-        headers = headers,
-        body = body,
-    )
-
-    if response.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (response.status_code, response.body()))
-
-    token_params = response.json()
-    refresh_token = token_params["refresh_token"]
-
-    print("Refresh Token:" + refresh_token)
-    print("Access Token: " + token_params["access_token"])
-
-    return refresh_token
-
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
-                id = "auth",
-                name = "Yahoo Account",
-                desc = "Connect your Yahoo account.",
-                icon = "baseball",
-                handler = oauth_handler,
-                client_id = YAHOO_CLIENT_ID or "foo",
-                authorization_endpoint = "https://api.login.yahoo.com/oauth2/request_auth",
-                scopes = [
-                    "fspt-r",
-                ],
+            schema.Text(
+                id = "yahoo_client_id",
+                name = "Yahoo Client ID",
+                desc = "Consumer Key from your Yahoo-approved Fantasy Sports application.",
+                icon = "key",
+                secret = True,
+                default = "",
+            ),
+            schema.Text(
+                id = "yahoo_client_secret",
+                name = "Yahoo Client Secret",
+                desc = "Consumer Secret from your Yahoo-approved Fantasy Sports application.",
+                icon = "key",
+                secret = True,
+                default = "",
+            ),
+            schema.Text(
+                id = "yahoo_refresh_token",
+                name = "Yahoo Refresh Token",
+                desc = "Refresh token created with Yahoo's authorization-code flow and redirect URI oob.",
+                icon = "key",
+                secret = True,
+                default = "",
             ),
             schema.Text(
                 id = "league_number",
@@ -447,94 +409,58 @@ def get_schema():
         ],
     )
 
-def get_access_token(refresh_token):
-    #Try to load access token from cache
-    access_token_cached = cache.get(refresh_token + "_access_token")
-
-    if access_token_cached != None:
-        print("Hit! Using cached access token " + access_token_cached)
-        return access_token_cached
-    else:
-        print("Miss! Getting new access token from Yahoo API.")
-
-        url = "https://api.login.yahoo.com/oauth2/get_token"
-        body = (
-            "grant_type=refresh_token" +
-            "&redirect_uri=" + TIDBYT_OAUTH_CALLBACK_URL +
-            "&refresh_token=" + refresh_token
-        )
+def get_access_token(client_id, client_secret, refresh_token):
+    response = http.post(
+        YAHOO_OAUTH_TOKEN_URL,
         headers = {
-            "Authorization": "Basic " + YAHOO_CLIENT_ID_AND_SECRET_BASE_64,
+            "Authorization": "Basic " + base64.encode(client_id + ":" + client_secret),
             "Content-Type": "application/x-www-form-urlencoded",
-        }
-        print("Making Call")
-        r = http.post(url, body = body, headers = headers)
-        body = r.json()
-        access_token = body["access_token"]
+        },
+        form_body = {
+            "grant_type": "refresh_token",
+            "redirect_uri": YAHOO_REDIRECT_URI,
+            "refresh_token": refresh_token,
+        },
+    )
+    if response.status_code != 200:
+        return ""
 
-        cache.set(refresh_token + "_access_token", access_token, ttl_seconds = ACCESS_TOKEN_CACHE_TTL)
-        print("Printing access token:")
-        print(access_token)
-
-        return access_token
+    return response.json().get("access_token", "")
 
 def get_league_name(access_token, GAME_KEY, league_number):
     league_name = ""
 
-    #Try to load league name from cache
-    league_name_cached = cache.get(access_token + "_league_name")
-
-    if league_name_cached != None:
-        print("Hit! Using cached league name!")
-        league_name = league_name_cached
-    else:
-        print("Miss! Getting new league name from Yahoo API.")
-        url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_number
-        headers = {
-            "Authorization": "Bearer " + access_token,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        print("Making Call for League Name")
-        league_name_response = http.get(url, headers = headers, ttl_seconds = LEAGUE_NAME_CACHE_TTL)
-
-        league_name = xpath.loads(league_name_response.body()).query("/fantasy_content/league/name")
-
-    print(league_name)
+    url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_number
+    headers = {
+        "Authorization": "Bearer " + access_token,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    league_name_response = http.get(url, headers = headers)
+    league_name = xpath.loads(league_name_response.body()).query("/fantasy_content/league/name")
     return league_name
 
 def get_standings_and_records(access_token, GAME_KEY, league_number):
     allstandings = []
 
-    #Try to load standings from cache
-    standings_cached = cache.get(access_token + "_standings")
+    url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_number + "/standings"
+    headers = {
+        "Authorization": "Bearer " + access_token,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    standings_response = http.get(url, headers = headers)
 
-    if standings_cached != None:
-        print("Hit! Using cached standings!")
-        allstandings = json.decode(standings_cached)
-    else:
-        print("Miss! Getting new standings from Yahoo API.")
-        url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_number + "/standings"
-        headers = {
-            "Authorization": "Bearer " + access_token,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        print("Making Call for Standings")
-        standings_response = http.get(url, headers = headers, ttl_seconds = STANDINGS_CACHE_TTL)
+    total_teams = int(xpath.loads(standings_response.body()).query("/fantasy_content/league/standings/teams/@count"))
+    team_names = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/name")
+    team_standings = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/rank")
+    team_wins = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/wins")
+    team_losses = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/losses")
+    team_ties = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/ties")
 
-        total_teams = int(xpath.loads(standings_response.body()).query("/fantasy_content/league/standings/teams/@count"))
-        team_names = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/name")
-        team_standings = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/rank")
-        team_wins = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/wins")
-        team_losses = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/losses")
-        team_ties = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/ties")
-        team_standings = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/rank")
+    for team_number in range(total_teams):
+        allstandings.append({"Name": team_names[team_number], "Standings": team_standings[team_number], "Wins": team_wins[team_number], "Losses": team_losses[team_number], "Ties": team_ties[team_number]})
 
-        for team_number in range(total_teams):
-            allstandings.append({"Name": team_names[team_number], "Standings": team_standings[team_number], "Wins": team_wins[team_number], "Losses": team_losses[team_number], "Ties": team_ties[team_number]})
-
-    print(allstandings)
     return allstandings
 
 def render_standings_and_records(x, standings, entries_to_display, heading_font_color, color_scheme, leagueName):
@@ -611,7 +537,6 @@ def get_current_matchup(access_token, GAME_KEY, league_number):
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    print("Making Call for Matchups")
     current_matchup_response = http.get(url, headers = headers)
 
     # owners_team = xpath.loads(current_matchup_response.body()).query("/fantasy_content/league/scoreboard/matchups/matchup/teams/team/is_owned_by_current_login//preceding-sibling::name/text()")
@@ -623,7 +548,6 @@ def get_current_matchup(access_token, GAME_KEY, league_number):
     for i in range(2):
         current_matchup.append({"Name": teams_in_matchup_xml[i], "Score": scores_in_matchup_xml[i]})
 
-    print("CURRENT MATCHUP: " + str(current_matchup))
     return current_matchup
 
 def render_current_matchup(current_matchup, entries_to_display, heading_font_color, color_scheme, leagueName):
@@ -646,7 +570,6 @@ def render_current_matchup(current_matchup, entries_to_display, heading_font_col
             teamName = current_matchup[i]["Name"]
             teamName = teamName[:11]
             teamColor = ""
-            print(teamName)
             teamScore = current_matchup[i]["Score"]
             teamNameBoxSize = 46
             scoreBoxSize = 18

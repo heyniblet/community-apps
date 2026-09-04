@@ -5,6 +5,7 @@ Description: Real time views of your Roblox experiences.
 Author: Chad Milburn / CODESTRONG
 """
 
+load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/roblox_dark_logo.png", ROBLOX_DARK_LOGO_ASSET = "file")
@@ -128,13 +129,13 @@ def main(config):
         isOnline = json.decode(user_online_status_cached)
     else:
         print("Fetching user online status")
-        getUserOnlineStatus = "https://api.roblox.com/users/%s/onlinestatus/" % userRobloxId
-        repGetUserOnlineStatus = http.get(getUserOnlineStatus, ttl_seconds = TTL_SECONDS)
+        getUserOnlineStatus = "https://presence.roblox.com/v1/presence/users"
+        repGetUserOnlineStatus = http.post(getUserOnlineStatus, json_body = {"userIds": [int(userRobloxId)]}, ttl_seconds = TTL_SECONDS)
         if repGetUserOnlineStatus.status_code != 200:
             print("Fetching user online status failed with status %d" % repGetUserOnlineStatus.status_code)
             isOnline = False
         else:
-            isOnline = repGetUserOnlineStatus.json()["IsOnline"]
+            isOnline = repGetUserOnlineStatus.json()["userPresences"][0]["userPresenceType"] != 0
 
     ### FRIEND MODE
     if view_mode == VIEW_FRIENDS:
@@ -158,7 +159,7 @@ def main(config):
         for friend in userFriends:
             getUserAvatar = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=48x48&format=Png&isCircular=true" % friend["id"]
             repGetUserAvatar = http.get(getUserAvatar)
-            friendObject = {"username": friend["name"], "id": "%d" % friend["id"], "isOnline": friend["isOnline"], "avatarUrl": repGetUserAvatar.json()["data"][0]["imageUrl"]}
+            friendObject = {"username": friend["name"], "id": "%d" % friend["id"], "isOnline": False, "avatarUrl": repGetUserAvatar.json()["data"][0]["imageUrl"]}
             friendsList.append(friendObject)
 
         ### SORT BY ONLINE STATUS

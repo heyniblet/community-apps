@@ -7,8 +7,6 @@ author: Shopify
 fileName: sales_trends.star
 packageName: salestrends
 recommendedInterval: 5
-broken: true
-brokenReason: 'www.shopcounter.app: no such host'
 category: utilities
 tags:
   - finance

@@ -6,7 +6,7 @@ desc: This app show the current date and time in a binary format.
 author: LukiLeu
 fileName: binary_clock.star
 packageName: binaryclock
-recommendedInterval: 0
+recommendedInterval: 1
 category: clocks
 tags:
   - tech

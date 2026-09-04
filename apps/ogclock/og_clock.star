@@ -45,7 +45,7 @@ NWS_POINTS_URL = "https://api.weather.gov/points/{latitude},{longitude}"
 NWS_STATIONS_URL = "https://api.weather.gov/gridpoints/{grid_id}/{grid_x},{grid_y}/stations"
 NWS_LATEST_OBSERVATION_URL = "{station_url}/observations/latest"
 OPENWEATHER_CURRWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather?lat={latitude}&lon={longitude}&appid={api_key}&units={units}&lang=en"
-OPENWEATHER_AIR_POLLUTION_URL = "http://api.openweathermap.org/data/2.5/air_pollution?lat={latitude}&lon={longitude}&appid={api_key}"
+OPENWEATHER_AIR_POLLUTION_URL = "https://api.openweathermap.org/data/2.5/air_pollution?lat={latitude}&lon={longitude}&appid={api_key}"
 OPENWEATHER_ONECALL_URL = "https://api.openweathermap.org/data/3.0/onecall?lat={latitude}&lon={longitude}&exclude=minutely,hourly,daily,alerts&appid={api_key}&units={units}&lang=en"
 AMBIENT_WEATHER_DEVICES_URL = "https://rt.ambientweather.net/v1/devices"
 

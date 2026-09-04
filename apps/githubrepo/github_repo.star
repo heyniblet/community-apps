@@ -57,7 +57,7 @@ FAIL_COLOR = "#e5534b"
 ############
 #other settings
 
-DEFAULT_AUTH_TOKEN = "1234"  #can get this by creating a personal token (classic) in GitHub and having the scope be public_repo
+DEFAULT_AUTH_TOKEN = "1234"  # Invalid placeholder used only by local default previews; Cloud requires a reviewed user token.
 DEFAULT_OWNER = "tidbyt"
 DEFAULT_REPO = "community"
 DEFAULT_BRANCH = "main"
@@ -149,7 +149,7 @@ def get_schema():
         schema.Text(
             id = "auth_token",
             name = "GitHub Auth Token",
-            desc = "GitHub personal access token (classic) with public_repo scope.",
+            desc = "Fine-grained GitHub token with an expiration and read-only access to the selected repository. Do not grant write permissions.",
             icon = "key",
             secret = True,
         ),

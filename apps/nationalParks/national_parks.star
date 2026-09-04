@@ -10,7 +10,7 @@ load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 
-NPS_URL = "http://developer.nps.gov/api/v1/parks"
+NPS_URL = "https://developer.nps.gov/api/v1/parks"
 
 def getData(config):
     api_key = config.get("nps_api_key")

@@ -41,7 +41,7 @@ load("xpath.star", "xpath")
 LQUOTE = LQUOTE_ASSET.readall()
 RQUOTE = RQUOTE_ASSET.readall()
 
-URL = "http://feeds.feedburner.com/theysaidso/qod"
+URL = "https://feeds.feedburner.com/theysaidso/qod"
 
 WIDTH = 64
 HEIGHT = 32

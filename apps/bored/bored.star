@@ -5,7 +5,6 @@ Description: This app will suggest things you can do when you are bored.
 Author: Anders Heie
 """
 
-load("cache.star", "cache")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -14,6 +13,34 @@ load("schema.star", "schema")
 DEFAULT_COLOR = "#FF00FF"
 DEFAULT_FONT = "6x13"
 DEFAULT_DIRECTION = "vertical"
+DIGITS = {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+}
+
+def percentage(value, default = 50):
+    text = str(value)
+    if not text:
+        return default
+
+    result = 0
+    for index in range(len(text)):
+        character = text[index:index + 1]
+        digit = DIGITS.get(character)
+        if digit == None:
+            return default
+        result = result * 10 + digit
+        if result >= 100:
+            return 100
+    return result
 
 # Hardcoded list of activities with effort levels (0.0 = very easy, 1.0 = very hard)
 # Pre-shuffled to provide variety in sequential order
@@ -195,22 +222,6 @@ BORED_ACTIVITIES = [
 ]
 
 def main(config):
-    # Cache key for tracking which activity to show next
-    cache_key = "bored_activity_index"
-
-    # Get current activity index from cache
-    activity_index = cache.get(cache_key)
-    if activity_index == None:
-        # Start at a random position in the list instead of always starting at 0
-        activity_index = random.number(0, len(BORED_ACTIVITIES) - 1)
-
-        # Cache the random starting position immediately
-        cache.set(cache_key, str(activity_index), ttl_seconds = 3600)
-        print("Starting at random activity index: " + str(activity_index))
-    else:
-        activity_index = int(activity_index)
-        print("Retrieved activity index: " + str(activity_index))
-
     # Pre-analyze custom settings for personal activities
     custom_bored = []
     if config.get("personal1", "").strip() != "":
@@ -235,34 +246,28 @@ def main(config):
         custom_bored.append(config.get("personal10", "").strip())
 
     hasPersonalized = len(custom_bored) > 0
-    print("Found personalized activities: " + str(len(custom_bored)))
 
     # Determine which activity list to use and select activity
     effort_level = 0.5  # Default effort level for personal activities
     if hasPersonalized:
         # Check if we should show personal activities
-        chance = int(config.get("personalized_chance", "50"))  # Increased default to 50%
+        chance = percentage(config.get("personalized_chance", "50"))
         if chance > random.number(0, 99):
             # Use personal activities
             activity = custom_bored[random.number(0, len(custom_bored) - 1)]
             effort_level = 0.5  # Assume medium effort for personal activities
-            print("Using personal activity: " + activity)
         else:
-            # Use hardcoded activities with cycling
+            # Cloud applets run in isolated processes, so persistent cache.star
+            # state cannot be used to cycle through this list.
+            activity_index = random.number(0, len(BORED_ACTIVITIES) - 1)
             activity_data = BORED_ACTIVITIES[activity_index]
             activity = activity_data["activity"]
             effort_level = activity_data["effort"]
-            activity_index = (activity_index + 1) % len(BORED_ACTIVITIES)
-            cache.set(cache_key, str(activity_index), ttl_seconds = 3600)  # Cache for 1 hour
-            print("Using hardcoded activity: " + activity)
     else:
-        # Use hardcoded activities with cycling
+        activity_index = random.number(0, len(BORED_ACTIVITIES) - 1)
         activity_data = BORED_ACTIVITIES[activity_index]
         activity = activity_data["activity"]
         effort_level = activity_data["effort"]
-        activity_index = (activity_index + 1) % len(BORED_ACTIVITIES)
-        cache.set(cache_key, str(activity_index), ttl_seconds = 3600)  # Cache for 1 hour
-        print("Using hardcoded activity: " + activity)
 
     color = config.get("color", DEFAULT_COLOR)
     font = config.get("font", DEFAULT_FONT)
@@ -359,7 +364,7 @@ def main(config):
         )
     else:
         # If we scroll vertically, we need smaller fonts to avoid long words being cut off at the sides
-        if font != "tom-thumb" or font != "tb-8":
+        if font != "tom-thumb" and font != "tb-8":
             font = "tb-8"
 
         main_content = render.Box(
@@ -405,6 +410,7 @@ def main(config):
     )
 
     return render.Root(
+        show_full_animation = config.bool("scroll", True),
         delay = int(config.get("speed", 45)),
         child = display_content,
     )

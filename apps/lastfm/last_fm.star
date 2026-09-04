@@ -42,7 +42,7 @@ def main(config):
             ),
         )
 
-    lastFmUrl = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=" + userName + "&api_key=" + api_key + "&format=json"
+    lastFmUrl = "https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=" + userName + "&api_key=" + api_key + "&format=json"
 
     rep = http.get(lastFmUrl)
     if rep.status_code != 200:

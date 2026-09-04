@@ -5,7 +5,6 @@ Description: This app gets female basketball data from the Skordle website to di
 Author: Woolycoin437420
 """
 
-load("cache.star", "cache")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -15,40 +14,17 @@ DEFAULT_GAME = "1"
 
 #This is the main function that runs after the settings. Returns display
 def main(config):
-    data = []
     current_game = config.get("games", DEFAULT_GAME)
-    total_games = cache.get("max")
-
-    if total_games == None:
-        get_data()
-        total_games = cache.get("max")
+    all_games = get_data()
+    total_games = len(all_games)
 
     #Type conversion from string to int
     current_game = int(current_game)
-    total_games = int(total_games)
 
-    if current_game > 0:
-        data = cache.get("{}".format(current_game))
-        if data == None and total_games > 0:
-            get_data()
-            data = cache.get("{}".format(current_game))
-    else:
-        data = None
+    if total_games > 0 and current_game > total_games:
+        current_game = total_games
 
-    #The filtered data list is a temporary storage while the data variable is sorted.
-    filtered_data = []
-
-    if data != None:
-        #Data is a list that was converted into a string.
-        #The slice notation cuts off the [] and the split makes a new list
-        data = data[1:-1].split(", ")
-
-        #For some reason, the split caused escape characters to be added to each item.
-        #This is where the filtered data list comes in.
-        #The slice notation cuts off the escape characters and extra quotes.
-        for item in data:
-            filtered_data.append("{}".format(item[1:-1]))
-        data = filtered_data
+    data = all_games.get(current_game)
 
     first_icon_url = ""
     second_icon_url = ""
@@ -67,7 +43,8 @@ def main(config):
         if len(data) == 7:
             first_icon_url, first_team, first_score, second_icon_url, second_team, second_score, progress = data
         elif len(data) == 6:
-            first_icon_url, first_team, first_score, second_icon_url, second_team, second_score, progress = data
+            first_icon_url, first_team, first_score, second_icon_url, second_team, second_score = data
+            progress = "Final"
         elif len(data) == 5:
             first_icon_url, first_team, datetime, second_icon_url, second_team = data
             datetime = datetime.split(" @ ")
@@ -103,7 +80,7 @@ def main(config):
                                 render.Row(
                                     children = [
                                         render.Image(
-                                            src = http.get(first_icon_url).body(),
+                                            src = http.get(first_icon_url, ttl_seconds = 3600).body(),
                                             width = 15,
                                             height = 15,
                                         ),
@@ -120,7 +97,7 @@ def main(config):
                                 render.Row(
                                     children = [
                                         render.Image(
-                                            src = http.get(second_icon_url).body(),
+                                            src = http.get(second_icon_url, ttl_seconds = 3600).body(),
                                             width = 15,
                                             height = 15,
                                         ),
@@ -137,7 +114,7 @@ def main(config):
                                 render.Row(
                                     children = [
                                         render.Image(
-                                            src = http.get(first_icon_url).body(),
+                                            src = http.get(first_icon_url, ttl_seconds = 3600).body(),
                                             width = 15,
                                             height = 15,
                                         ),
@@ -154,7 +131,7 @@ def main(config):
                                 render.Row(
                                     children = [
                                         render.Image(
-                                            src = http.get(second_icon_url).body(),
+                                            src = http.get(second_icon_url, ttl_seconds = 3600).body(),
                                             width = 15,
                                             height = 15,
                                         ),
@@ -171,7 +148,7 @@ def main(config):
                                 render.Row(
                                     children = [
                                         render.Image(
-                                            src = http.get(first_icon_url).body(),
+                                            src = http.get(first_icon_url, ttl_seconds = 3600).body(),
                                             width = 15,
                                             height = 15,
                                         ),
@@ -188,7 +165,7 @@ def main(config):
                                 render.Row(
                                     children = [
                                         render.Image(
-                                            src = http.get(second_icon_url).body(),
+                                            src = http.get(second_icon_url, ttl_seconds = 3600).body(),
                                             width = 15,
                                             height = 15,
                                         ),
@@ -257,20 +234,30 @@ def get_data():
 
     #The sort function breaks up the HTML data and returns a dictionary.
     #This dictionary contains lists of data for each game.
-    sorted = sort(web.body())
-    cache.set("max", "{}".format(len(sorted)), ttl_seconds = 3600)
-    for game in sorted:
-        cache.set("{}".format(game), "{}".format(sorted[game]), ttl_seconds = 3600)
+    return sort(web.body())
 
-#Sorts through HTML data and returns numbered games with their data
-#It gets weird, but the slice notation helps.
+#Returns the visible text from a table cell without depending on HTML offsets.
+def html_text(element):
+    text = ""
+    in_tag = False
+    value = "<td" + element
+    for index in range(len(value)):
+        char = value[index]
+        if char == "<":
+            if not in_tag and len(text) > 0 and text[-1] != " ":
+                text += " "
+            in_tag = True
+        elif char == ">":
+            in_tag = False
+        elif not in_tag:
+            text += char
+    return text.strip().replace("  ", " ")
+
+#Sorts through HTML data and returns numbered games with their data.
 def sort(body):
     sorted = {}
     tables = []
     counter = 0
-    team = ""
-    dt_jumble = ""
-    team_jumble = ""
     has_games = False
 
     sections = body.split("<table")
@@ -295,65 +282,35 @@ def sort(body):
             sorted[counter] = []
             elements = table.split("<td")
 
-            #This is the loop that finds and stores relevant data.
-            #Each cell of a table contains a class identifier for teams, scores, etc.
-            #Their format is remarkably consistent, so slice notation is often enough.
+            #Each cell has a stable class even when attribute lengths change.
             for element in elements:
                 if "teamcell" in element:
-                    #The teamcells are a little inconsistent, hence the many conditions.
-                    sorting = element[:-5].split("<span")
-
-                    if len(sorting) == 2:
-                        team_jumble = sorting[0]
-                        team = team_jumble.split(">")
-
-                    elif len(sorting) == 3:
-                        team_jumble = sorting[1]
-                        team = team_jumble.split("</span>")
-
-                    team = team[-1]
-
-                    if team[0] == " ":
+                    team = html_text(element)
+                    if len(team) > 0 and team[0] == "@":
                         team = team[1:]
-
-                    if team[-1] == " ":
-                        team = team[:-1]
-
-                    if team[0] == "@":
-                        team = team[1:]
-
-                    sorted[counter].append(team)
+                    if len(team) > 0:
+                        sorted[counter].append(team)
 
                 if "scorecell" in element:
-                    sorted[counter].append(element[19:-14])
+                    sorted[counter].append(html_text(element))
 
                 if "logocell" in element:
-                    sorted[counter].append(element[28:-39])
+                    if "src='" in element:
+                        sorted[counter].append(element.split("src='")[1].split("'")[0])
+                    elif "src=\"" in element:
+                        sorted[counter].append(element.split("src=\"")[1].split("\"")[0])
 
                 if "datetimecell" in element:
-                    dt_jumble = element[34:-14]
-                    dt_jumble = dt_jumble.replace("<br>", " ")
-                    dt_jumble = dt_jumble.replace("</br>", " ")
-                    sorted[counter].append(dt_jumble)
+                    sorted[counter].append(html_text(element))
 
                 if "progresscell" in element:
-                    split = element.split("</td>")
-                    sorted[counter].append(split[0][22:])
+                    sorted[counter].append(html_text(element))
 
     return sorted
 
 #Mobile settings function that returns the desired sport and class
 def get_schema():
-    games = cache.get("max")
-    if games == None:
-        get_data()
-        games = cache.get("max")
-
-    #List of Games to select
-    if int(games) > 0:
-        game_options = [schema.Option(display = "{}".format(game + 1), value = "{}".format(game + 1)) for game in range(int(games))]
-    else:
-        game_options = [schema.Option(display = "None", value = "0")]
+    game_options = [schema.Option(display = "{}".format(game), value = "{}".format(game)) for game in range(1, 51)]
     return schema.Schema(
         version = "1",
         fields = [

@@ -1,0 +1,15 @@
+---
+id: german-wotd
+name: German WOTD
+summary: German word of the day
+desc: Pick a random German word for each day and display its definition in English.
+author: pej289
+fileName: german_wotd.star
+packageName: germanwotd
+recommendedInterval: 5
+category: education
+tags:
+  - education
+  - local
+published: '2026-08-18T14:58:09Z'
+updated: '2026-08-18T14:58:09Z'

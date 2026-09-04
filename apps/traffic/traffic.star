@@ -35,8 +35,8 @@ TRAIN_ICON = TRAIN_ICON_ASSET.readall()
 WALK_ICON = WALK_ICON_ASSET.readall()
 WHEELCHAIR_ICON = WHEELCHAIR_ICON_ASSET.readall()
 
-BING_URL = "http://dev.virtualearth.net/REST/v1"
-MQ_URL = "http://www.mapquestapi.com"
+BING_URL = "https://dev.virtualearth.net/REST/v1"
+MQ_URL = "https://www.mapquestapi.com"
 ORS_URL = "https://api.openrouteservice.org"
 
 BASE_CACHE = "traffic"

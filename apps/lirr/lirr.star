@@ -180,7 +180,7 @@ def get_delta(stop):
 def get_gtfs():
     cached = cache.get(STATIC_GTFS_FILE)
     if cached == None:
-        resText = http.get("http://web.mta.info/developers/data/lirr/google_transit.zip").body()
+        resText = http.get("https://web.mta.info/developers/data/lirr/google_transit.zip").body()
         res = parse_gtfs(resText)
 
         cache.set(STATIC_GTFS_FILE, json.encode(res), ttl_seconds = 3600)

@@ -117,7 +117,7 @@ def main(config):
     if api_key == None:
         return render_error_message()
 
-    arrival_estimate_url = "http://api.transitchicago.com/api/1.0/ttarrivals.aspx"
+    arrival_estimate_url = "https://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
 
     estimates_response = http.get(
         arrival_estimate_url,

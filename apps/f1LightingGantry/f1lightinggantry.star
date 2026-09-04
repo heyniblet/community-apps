@@ -9,7 +9,6 @@ load("files/black.png", BLACK_LIGHT_FILE = "file")
 load("files/red.png", RED_LIGHT_FILE = "file")
 load("random.star", "random")
 load("render.star", "canvas", "render")
-load("schema.star", "schema")
 
 def main():
     animation = []
@@ -67,7 +66,7 @@ def get_light_row(step):
         img_data = red_light_data if step >= i else black_light_data
         light_images.append(render.Image(width = image_pixel_width, src = img_data))
 
-    # Wrap the images in a Row with 'center' alignment,
+    # Wrap the images in a Row with "center" alignment,
     # and put that inside a Box that is the full width of the screen.
     return render.Box(
         width = canvas.width(),
@@ -77,10 +76,4 @@ def get_light_row(step):
             main_align = "center",  # This centers the children horizontally
             children = light_images,
         ),
-    )
-
-def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [],
     )

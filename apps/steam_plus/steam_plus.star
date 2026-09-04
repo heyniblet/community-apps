@@ -18,8 +18,8 @@ STEAM_LOGO = http.get(STEAM_LOGO_PATH).body()
 def main(config):
     api_key = config.str("api_key") or ""
 
-    STEAM_API_ENDPOINT = "http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=" + api_key + "&steamids="
-    STEAM_GAMES_ENDPOINT = "http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=" + api_key + "&steamid="
+    STEAM_API_ENDPOINT = "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=" + api_key + "&steamids="
+    STEAM_GAMES_ENDPOINT = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key=" + api_key + "&steamid="
 
     resp = http.get(STEAM_API_ENDPOINT + config.str("id", "") or "76561197998958802", ttl_seconds = 360)
 

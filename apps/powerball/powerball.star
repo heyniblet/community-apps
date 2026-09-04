@@ -8,25 +8,17 @@ Author: AmillionAir
 load("http.star", "http")
 load("render.star", "render")
 
-NUMBERS_URL = "https://www.powerball.com/api/v1/numbers/powerball/recent10?_format=json"
-Next_Draw_URL = "https://powerball.com/api/v1/estimates/powerball?_format=json"
-Winner_URL = "https://powerball.com/api/v1/draw-summary/powerball?_format=json"
+NUMBERS_URL = "https://data.ny.gov/resource/d6yy-54nr.json?$limit=1&$order=draw_date%20DESC"
 
 def main():
     print("Calling powerball data.")
 
-    PB_NUMS = http.get(NUMBERS_URL, ttl_seconds = 600).json()[0]["field_winning_numbers"]
-    Draw_Date = http.get(NUMBERS_URL, ttl_seconds = 600).json()[0]["field_draw_date"]
-    Next_Draw_Date = http.get(Next_Draw_URL, ttl_seconds = 600).json()[0]["field_next_draw_date"]
-    Winner = http.get(Winner_URL, ttl_seconds = 600).json()[0]["field_primary_winner_states"]
-    Jackpot = http.get(Next_Draw_URL, ttl_seconds = 600).json()[0]["field_prize_amount"]
-
-    pb_data = dict(PB_NUMS = PB_NUMS, Draw_Date = Draw_Date, Next_Draw_Date = Next_Draw_Date, Winner = Winner, Jackpot = Jackpot)
-
-    if pb_data["Winner"] == "None":
-        Won = "0 Winners"
-    else:
-        Won = "1+ Winner"
+    draw = http.get(NUMBERS_URL, ttl_seconds = 600).json()[0]
+    PB_NUMS = draw["winning_numbers"]
+    Draw_Date = draw["draw_date"]
+    Next_Draw_Date = Draw_Date
+    Jackpot = "POWERBALL"
+    Won = "Power Play x%s" % draw.get("multiplier", "-")
 
     return render.Root(
         child = render.Column(
@@ -93,7 +85,7 @@ def main():
                             children = [
                                 render.Text(Won, font = "tom-thumb"),
                                 render.Box(width = 38, height = 1),
-                                render.Text("Upcoming", font = "tom-thumb"),
+                                render.Text("Latest Draw", font = "tom-thumb"),
                             ],
                         ),
                     ],

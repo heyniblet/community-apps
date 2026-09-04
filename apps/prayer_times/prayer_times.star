@@ -18,7 +18,7 @@ MOON_ICON = MOON_ICON_ASSET.readall()
 SUN_ICON = SUN_ICON_ASSET.readall()
 
 # Adhan prayer API URL
-PRAYER_TIME_BASE_URL = "http://api.aladhan.com/v1/timings/"
+PRAYER_TIME_BASE_URL = "https://api.aladhan.com/v1/timings/"
 
 # Load Moon icon from base64 encoded data
 
