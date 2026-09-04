@@ -12,7 +12,6 @@ load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("secret.star", "secret")
-load("time.star", "time")
 
 dev_client_id = "1"
 dev_client_secret = "1"
@@ -118,12 +117,6 @@ def render_realms(name, slot, players, max_players, motd):
 
 # -------- HELPER FUNCTIONS --------
 
-def seconds_between(before_str, after_str):
-    before = time.parse_time(before_str)
-    after = time.parse_time(after_str)
-    seconds = int((after - before).seconds)
-    return seconds
-
 def get_players(res_json, server):
     for s in res_json["servers"]:
         if s["id"] == server["id"]:
@@ -196,20 +189,11 @@ def refresh_access_token(config):
 
     res_json = res.json()
 
-    cache.set(
-        res_json["refresh_token"],
-        res_json["access_token"],
-        ttl_seconds = int(res_json["expires_in"]),
-    )
+    cache.set(refresh_token, res_json["access_token"], ttl_seconds = int(res_json["expires_in"]))
 
     return res_json["access_token"]
 
 def xbox_live_auth(access_token):
-    xbox_live_token = cache.get("xbox_live_token")
-    user_hash = cache.get("user_hash")
-    if xbox_live_token and user_hash:
-        return xbox_live_token, user_hash
-
     res = http.post(
         url = "https://user.auth.xboxlive.com/user/authenticate",
         json_body = {
@@ -231,17 +215,9 @@ def xbox_live_auth(access_token):
     xbox_live_token = res_json["Token"]
     user_hash = res_json["DisplayClaims"]["xui"][0]["uhs"]
 
-    ttl_seconds = seconds_between(res_json["IssueInstant"], res_json["NotAfter"])
-    cache.set("xbox_live_token", xbox_live_token, ttl_seconds = ttl_seconds)
-    cache.set("user_hash", user_hash, ttl_seconds = ttl_seconds)
-
     return xbox_live_token, user_hash
 
 def get_xsts_token(xbox_live_token):
-    xsts_token = cache.get("xsts_token")
-    if xsts_token:
-        return xsts_token
-
     res = http.post(
         url = "https://xsts.auth.xboxlive.com/xsts/authorize",
         json_body = {
@@ -260,9 +236,6 @@ def get_xsts_token(xbox_live_token):
     res_json = res.json()
 
     xsts_token = res_json["Token"]
-
-    ttl_seconds = seconds_between(res_json["IssueInstant"], res_json["NotAfter"])
-    cache.set("xsts_token", xsts_token, ttl_seconds = ttl_seconds)
 
     return xsts_token
 

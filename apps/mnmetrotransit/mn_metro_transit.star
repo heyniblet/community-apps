@@ -20,11 +20,11 @@ def main(config):
     url = "https://svc.metrotransit.org/NexTripv2/" + stop_code + "?format=json"
 
     #Cache Data
-    print("Miss! Calling Transit data.")
-    MTT = http.get(url, ttl_seconds = 30).json()
+    response = http.get(url, ttl_seconds = 60)
+    if response.status_code != 200:
+        return render_error("Transit data unavailable")
+    MTT = response.json()
     MTT_data = MTT
-
-    print(MTT_data)
 
     MTT_TITLE = MTT_data
 
@@ -34,7 +34,7 @@ def main(config):
     CT2 = "#fa0"
 
     #invalid stop code page
-    if "status" in MTT_TITLE:
+    if "status" in MTT_TITLE or len(MTT.get("stops", [])) == 0:
         stopDesc = "Invalid Stop Number"
         route1 = "Error"
         route2 = "Error"
@@ -252,6 +252,9 @@ def main(config):
             ],
         ),
     )
+
+def render_error(message):
+    return render.Root(render.WrappedText(message, align = "center", font = "tom-thumb"))
 
 def get_schema():
     return schema.Schema(

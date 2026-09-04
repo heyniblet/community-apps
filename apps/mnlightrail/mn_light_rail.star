@@ -16,7 +16,14 @@ def main(config):
     #Establish API URL
     stop_code = config.get("stop_code", DEFAULT_STOP_CODE)
     url = "https://svc.metrotransit.org/NexTripv2/" + stop_code + "?format=json"
-    MTT = http.get(url).json()
+    response = http.get(url, ttl_seconds = 60)
+    if response.status_code != 200:
+        return render_error("Transit data unavailable")
+    MTT = response.json()
+    if len(MTT.get("stops", [])) == 0:
+        return render_error("Invalid stop number")
+    if len(MTT.get("departures", [])) < 2:
+        return render_error("No upcoming departures")
 
     #Find color and destination of first and second train and use that for rendering square color and 3 letter destination code
     if MTT["departures"][0]["route_short_name"] == "Blue":
@@ -91,6 +98,9 @@ def main(config):
             ],
         ),
     )
+
+def render_error(message):
+    return render.Root(render.WrappedText(message, align = "center", font = "tom-thumb"))
 
 def get_schema():
     return schema.Schema(
