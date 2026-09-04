@@ -15,7 +15,7 @@ load("schema.star", "schema")
 NASA_LOGO = NASA_LOGO_ASSET.readall()
 
 APOD_URL = "https://api.nasa.gov/planetary/apod"
-DEVELOPER_API_KEY = "TZpCjZ84E9ClE93Utu4c5BnfhGXvBEOfcWyJ2OaR"  # Limited key for development
+DEMO_API_KEY = "DEMO_KEY"
 
 # Register with NASA for a key to encrypt for prod: https://api.nasa.gov
 
@@ -25,7 +25,7 @@ def main(config):
     display_info = config.bool("display_info")
     apod = get_apod(
         APOD_URL,
-        DEVELOPER_API_KEY,
+        DEMO_API_KEY,
         TTL_SECONDS,
     )
     title = apod["title"]
