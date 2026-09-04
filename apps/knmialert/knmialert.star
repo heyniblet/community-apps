@@ -75,7 +75,7 @@ def main():
                                 offset_start = 56,
                                 offset_end = 56,
                                 child = render.Text(
-                                    content = "KNMI: {}".format(alert["text"]),
+                                    content = "bron: KNMI - {}".format(alert["text"]),
                                     color = "#fff",
                                 ),
                             ),

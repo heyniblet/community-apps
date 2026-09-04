@@ -2,7 +2,7 @@
 id: knmialert
 name: KNMIalert
 summary: Weather alerts Netherlands
-desc: Only displays active live weather alerts by KNMI for The Netherlands.
+desc: Independent app displaying active live weather alerts for The Netherlands. Source is KNMI; KNMI is not involved in or endorsing this app.
 author: PMK (@pmk)
 fileName: knmialert.star
 packageName: knmialert
