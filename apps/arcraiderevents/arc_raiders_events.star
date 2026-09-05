@@ -5,7 +5,6 @@ Description: Displays active and upcoming ARC Raiders in-game events with live c
 Author: jeffver
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
@@ -14,6 +13,9 @@ load("time.star", "time")
 
 API_URL = "https://metaforge.app/api/arc-raiders/events-schedule"
 CACHE_TTL = 300  # 5 minutes
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_EVENTS = 500
+MAX_TEXT_LENGTH = 120
 
 # ARC Raiders brand colors (from logo stripes)
 ARC_CYAN = "#00e5ff"  # Leftmost stripe
@@ -102,33 +104,37 @@ def main(config):
 
     # Get optional map filter from config
     map_filter = config.get("map_filter", "All")
+    valid_maps = ["All", "Dam", "Spaceport", "Buried City", "Blue Gate", "Stella Montis", "Riven Tides"]
+    if map_filter not in valid_maps:
+        map_filter = "All"
 
-    # Try cache first
-    cached = cache.get("arc_events")
-    if cached != None:
-        events = json.decode(cached)
-    else:
-        rep = http.get(API_URL)
-        if rep.status_code != 200:
-            return render.Root(
-                child = render.Box(
-                    render.Column(
-                        cross_align = "center",
-                        main_align = "center",
-                        children = [
-                            render.Text("ARC RAIDERS", color = ARC_RED, font = "tom-thumb"),
-                            render.Box(width = 64, height = 1, color = DARK_GRAY),
-                            render.Text("API ERROR", color = ARC_YELLOW, font = "tom-thumb"),
-                        ],
-                    ),
-                ),
-            )
-        events = rep.json()
-        if type(events) == "dict" and "data" in events:
-            events = events["data"]
+    rep = http.get(API_URL, ttl_seconds = CACHE_TTL)
+    if rep.status_code != 200:
+        return render_error()
+    body = rep.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return render_error()
+    payload = json.decode(body)
+    raw_events = payload.get("data") if type(payload) == "dict" else None
+    if type(raw_events) != "list":
+        return render_error()
 
-        # Cache the response
-        cache.set("arc_events", json.encode(events), ttl_seconds = CACHE_TTL)
+    events = []
+    for event in raw_events[:MAX_EVENTS]:
+        if type(event) != "dict":
+            continue
+        name = event.get("name")
+        map_name = event.get("map")
+        start = event.get("startTime")
+        end = event.get("endTime")
+        if type(name) != "string" or type(map_name) != "string" or type(start) not in ["int", "float"] or type(end) not in ["int", "float"] or end <= start:
+            continue
+        events.append({
+            "name": name[:MAX_TEXT_LENGTH],
+            "map": map_name[:MAX_TEXT_LENGTH],
+            "startTime": int(start),
+            "endTime": int(end),
+        })
 
     # Filter by map if specified
     if map_filter != "All":
@@ -139,8 +145,8 @@ def main(config):
     upcoming_events = []
 
     for event in events:
-        start = int(event["startTime"])
-        end = int(event["endTime"])
+        start = event["startTime"]
+        end = event["endTime"]
 
         if start <= now_ms and now_ms < end:
             active_events.append(event)
@@ -157,6 +163,15 @@ def main(config):
             "remaining_ms": int(event["endTime"]) - now_ms,
             "type": "active",
         })
+
+    if len(display_events) == 0:
+        for event in upcoming_events[:3]:
+            display_events.append({
+                "name": event["name"],
+                "map": event["map"],
+                "remaining_ms": event["startTime"] - now_ms,
+                "type": "upcoming",
+            })
 
     # Fallback if no events
     if len(display_events) == 0:
@@ -299,6 +314,7 @@ def get_schema():
         schema.Option(display = "Buried City", value = "Buried City"),
         schema.Option(display = "Blue Gate", value = "Blue Gate"),
         schema.Option(display = "Stella Montis", value = "Stella Montis"),
+        schema.Option(display = "Riven Tides", value = "Riven Tides"),
     ]
 
     return schema.Schema(
@@ -313,4 +329,19 @@ def get_schema():
                 options = maps,
             ),
         ],
+    )
+
+def render_error():
+    return render.Root(
+        child = render.Box(
+            render.Column(
+                cross_align = "center",
+                main_align = "center",
+                children = [
+                    render.Text("ARC RAIDERS", color = ARC_RED, font = "tom-thumb"),
+                    render.Box(width = 64, height = 1, color = DARK_GRAY),
+                    render.Text("API ERROR", color = ARC_YELLOW, font = "tom-thumb"),
+                ],
+            ),
+        ),
     )
