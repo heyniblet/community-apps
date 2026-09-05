@@ -25,15 +25,20 @@ POPULAR_URL = "https://petition.parliament.uk/petitions?state=open"
 
 FONT = "tom-thumb"
 GREEN = "#008800"  # from the House of Commons website
+MAX_RESPONSE_BYTES = 256 * 1024
 
 # Public domain per https://commons.wikimedia.org/wiki/File:Crowned_Portcullis_redesign_2018.svg
 
 def extract_petition(node):
     link = node.find("a")
+    href = link.attr("href")
+    counts = node.find("dd")
+    if not href or not href.startswith("/petitions/") or counts.len() < 2:
+        return None
     return {
-        "title": link.text(),
-        "url": BASE_URL + link.attr("href"),
-        "count": node.find(".count").text(),
+        "title": link.text()[:300],
+        "url": BASE_URL + href,
+        "count": counts.eq(1).text()[:32],
     }
 
 def render_marquee(petition):
@@ -115,13 +120,22 @@ def render_petition(petition):
 
 def fetch_open_petition(index):
     resp = http.get(POPULAR_URL, ttl_seconds = 3600)
-    page = html(resp.body())
-    nodes = page.find("li.petition-open")
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    nodes = html(body).find(".petition-item")
+    if index < 0 or index >= nodes.len():
+        return None
     return extract_petition(nodes.eq(index))
 
 def main(config):
-    number = int(config.str("number", "1"))
-    petition = fetch_open_petition(number)
+    number_value = config.str("number", "1")
+    if number_value not in [str(i) for i in range(1, 11)]:
+        return render.Root(child = render.WrappedText("Invalid petition number", align = "center"))
+    number = int(number_value)
+    petition = fetch_open_petition(number - 1)
+    if not petition:
+        return render.Root(child = render.WrappedText("Petitions unavailable", align = "center"))
 
     return render.Root(
         child = render_petition(petition),

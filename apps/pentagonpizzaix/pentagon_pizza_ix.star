@@ -11,12 +11,17 @@ load("time.star", "time")
 
 # ---- Hardcoded settings ----
 ENDPOINT = "https://qsoybchuihyhdillvant.functions.supabase.co/ppi-public"
+API_TTL_SECONDS = 300
+MAX_RESPONSE_BYTES = 128 * 1024
+MAX_SERIES_POINTS = 288
 
 def fetch_json():
-    r = http.get(ENDPOINT, ttl_seconds = 60)
-    if r.status_code != 200:
+    r = http.get(ENDPOINT, ttl_seconds = API_TTL_SECONDS)
+    body = r.body()
+    if r.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return None
-    return r.json()
+    payload = r.json()
+    return payload if type(payload) == "dict" else None
 
 # Extract from: { current:{value,change_1h}, series_24h:[{ts,v},...] }
 def extract(data):
@@ -27,13 +32,14 @@ def extract(data):
     if type(data) == "dict":
         c = data.get("current")
         if type(c) == "dict":
-            cur = c.get("value", 0) - 100
-            d1h = c.get("change_1h", 0)
-            d24h = c.get("change_24h", 0)
+            cur = c.get("value", 100) - 100 if type(c.get("value")) in ["int", "float"] else 0
+            d1h = c.get("change_1h", 0) if type(c.get("change_1h")) in ["int", "float"] else 0
+            d24h = c.get("change_24h", 0) if type(c.get("change_24h")) in ["int", "float"] else 0
         s = data.get("series_24h")
         if type(s) == "list":
             # Sort the list of dicts by timestamp string (ISO8601 sorts correctly as string)
-            sorted_series = sorted(s, key = lambda e: e["ts"])
+            valid_series = [entry for entry in s[:MAX_SERIES_POINTS] if type(entry) == "dict" and type(entry.get("ts")) == "string" and type(entry.get("v")) in ["int", "float"]]
+            sorted_series = sorted(valid_series, key = lambda e: e["ts"])
 
             # Build (value, index) tuples after sorting
             series = [(i, entry["v"] - 100) for i, entry in enumerate(sorted_series)]
@@ -45,7 +51,6 @@ up_arrow = "↑"
 down_arrow = "↓"
 bg_color = "#000000"
 pizza_slice = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120"> <defs> <style> .crust { fill: #c68642; stroke: #000; stroke-width: 2; } .cheese { fill: #f7d774; stroke: #000; stroke-width: 2; } .pep { fill: #b33a3a; stroke: #b33a3a; stroke-width: 1; } </style> <clipPath id="sliceClip"> <polygon points="10,10 110,10 60,110"/> </clipPath> </defs> <polygon points="10,10 110,10 60,110" class="cheese"/> <rect x="10" y="5" width="100" height="10" rx="5" ry="5" class="crust"/> <g clip-path="url(#sliceClip)"> <!-- Left side --> <circle cx="25" cy="28" r="7" class="pep"/> <circle cx="35" cy="55" r="7" class="pep"/> <circle cx="40" cy="80" r="7" class="pep"/> <circle cx="95" cy="28" r="7" class="pep"/> <circle cx="75" cy="55" r="7" class="pep"/> <circle cx="65" cy="80" r="7" class="pep"/> <circle cx="50" cy="38" r="7" class="pep"/> <circle cx="60" cy="60" r="7" class="pep"/> <circle cx="55" cy="78" r="7" class="pep"/> <circle cx="60" cy="95" r="7" class="pep"/> <circle cx="70" cy="42" r="7" class="pep"/> <circle cx="80" cy="72" r="7" class="pep"/> </g> </svg>'
-pizza_pie = "https://qsoybchuihyhdillvant.supabase.co/storage/v1/object/public/pizza/pizza.png"
 
 def getArrow(val):
     if val > 0:
@@ -64,7 +69,7 @@ def noPizza():
     display = render.Stack(
         children = [
             render.Box(
-                render.Image(http.get(pizza_pie).body(), height = 30, width = 30),
+                render.Image(pizza_slice, height = 30, width = 30),
             ),
             render.Box(
                 render.WrappedText("No Pizza!"),
@@ -76,7 +81,11 @@ def noPizza():
 
 def buildPizzaRates():
     data = fetch_json()
+    if not data:
+        return render.WrappedText("Pizza data unavailable", align = "center")
     cur, d1h, d24h, series = extract(data)
+    if not series:
+        return render.WrappedText("Pizza data unavailable", align = "center")
 
     cur_arrow = ""
     d1_arrow = ""
@@ -130,14 +139,6 @@ def buildPizzaRates():
         y_lim = (-100, 100),
         color_inverted = ppi_down_color,
         fill = True,
-    )
-
-    display = render.Column(
-        children = [
-            marqueeDisplay,
-            spacer,
-            chartDisplay,
-        ],
     )
 
     display = render.Column(
