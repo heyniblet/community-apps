@@ -1,22 +1,7 @@
-load("cache.star", "cache")
-load("encoding/json.star", "json")
-load("http.star", "http")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("simulations.star", "ALL_SIMULATIONS")
 load("time.star", "time")
-
-# API endpoint for fetching simulations
-API_URL = "https://wildc.net/dp/api.py"
-
-# Cache TTL in seconds
-CACHE_TTL = 15
-MAX_GENERATION_ID = 4665  # api stopped saving files after this number
-
-# Display constants (matching generate_pixlet.py)
-# Pendulum length constraints (matching API defaults)
-LENGTH_1_MAX = 6.0
-LENGTH_2_MAX = 7.2
 
 # Use slightly smaller extent for better variety (allows some off-screen for large pendulums)
 MAX_EXTENT = 11.0  # More aggressive than actual max (13.2) for better visual variety
@@ -38,74 +23,6 @@ def get_layout(width, height):
         height = height,
     )
 
-def fetch_simulation(seed, layout, generation_id = None):
-    """Fetch a simulation from the API and transform coordinates to pixel space."""
-    cache_key = ("gen_" + str(generation_id) if generation_id else "sim_" + str(seed)) + "_" + str(layout.width)
-
-    # Try to get from cache first
-    cached = cache.get(cache_key)
-    if cached != None:
-        return json.decode(cached)
-
-    # Build URL - either from specific generation or random API
-    if generation_id:
-        url = "https://wildc.net/dp/generations/" + str(generation_id) + ".json"
-    else:
-        # Request a simulation with specific seed for reproducibility
-        url = API_URL + "?mode=random&duration=20&step_size=0.033&seed=" + str(seed)
-
-    # Fetch from API
-    response = http.get(url, ttl_seconds = CACHE_TTL)
-    if response.status_code != 200:
-        print("API request failed: " + str(response.status_code))
-        return None
-
-    # Parse JSON response
-    data = response.json()
-    trajectory = data.get("trajectory", [])
-    sim_name = data.get("name", "api")
-
-    # Calculate max Y for second bob only (lower pendulum)
-    y2_max = -MAX_EXTENT
-    for point in trajectory:
-        if len(point) >= 4:
-            y2 = point[3]  # y2 is the Y coordinate of the second bob
-            if y2 > y2_max:
-                y2_max = y2
-
-    # Determine optimal origin Y position based on energy level
-    # If second bob never goes above origin (low energy), adjust origin upward
-    origin_y = layout.origin_y
-    if y2_max <= 0:
-        # Low energy: all motion is below the fixed origin
-        # Move origin to top of screen to maximize visible area
-        # Leave small padding at top
-        padding_top = 3
-        origin_y = padding_top
-        print("Low-energy pendulum detected, moving origin to Y=" + str(origin_y))
-
-    # Transform coordinates from physics space to pixel space
-    # trajectory contains [x1, y1, x2, y2] arrays
-    pixel_frames = []
-    for point in trajectory:
-        if len(point) >= 4:
-            # Map physics coordinates to pixels
-            # Physics origin (0,0) maps to (ORIGIN_X, origin_y)
-            # Note: Y-axis is inverted (physics +y is up, screen +y is down)
-            x1_pixel = layout.origin_x + int(point[0] * layout.scale)
-            y1_pixel = origin_y - int(point[1] * layout.scale)
-            x2_pixel = layout.origin_x + int(point[2] * layout.scale)
-            y2_pixel = origin_y - int(point[3] * layout.scale)
-
-            pixel_frames.append([x1_pixel, y1_pixel, x2_pixel, y2_pixel])
-
-    # Return the transformed data along with origin_y and name
-    return {
-        "frames": pixel_frames,
-        "origin_y": origin_y,
-        "name": sim_name,
-    }
-
 def main(config):
     width, height = canvas.width(), canvas.height()
     layout = get_layout(width, height)
@@ -114,84 +31,18 @@ def main(config):
     animation = config.get("animation", "random")
     speed = config.get("speed", "fast")
 
-    # Handle "random from all sources" by randomly picking a source
-    if animation == "random_all":
-        # Randomly pick between: embedded (0), api random params (1), api random generation (2)
-        source = time.now().unix % 3
-        if source == 0:
-            # Use random embedded simulation (excluding the API sentinel)
-            animation = "random"
-        elif source == 1:
-            # Use API with random params
-            animation = "api"
-        else:
-            # Use random generation from API
-            animation = "api_random"
-
-    # Determine which simulation to use
-    if animation == "api" or animation == "api_random":
-        sim_idx = len(ALL_SIMULATIONS) - 1  # Use last index for API mode
-    elif animation == "random" or animation == "":
-        sim_idx = time.now().unix % len(ALL_SIMULATIONS)
-    else:
-        # Parse the number
-        sim_num = int(animation)
-        if sim_num >= 1 and sim_num <= len(ALL_SIMULATIONS):
-            sim_idx = sim_num - 1
-        else:
-            # Out of range, use random
-            sim_idx = time.now().unix % len(ALL_SIMULATIONS)
-
-    # Check if the selected simulation is the API sentinel (last simulation)
-    if sim_idx == len(ALL_SIMULATIONS) - 1:
-        # Check if we should use a random generation from the collection
-        if animation == "api_random":
-            # Check if a specific generation ID was provided
-            generation_id = config.get("generation_id", "")
-            if generation_id and generation_id != "":
-                print("Fetching specific generation: " + generation_id)
-                sim_data = fetch_simulation(0, layout, generation_id)
-            else:
-                # Randomly pick a generation from 1 to 1630
-                generation_id = str((time.now().unix % MAX_GENERATION_ID) + 1)
-                print("Fetching random generation: " + generation_id)
-                sim_data = fetch_simulation(0, layout, generation_id)
-        else:
-            # Fetch from API with random seed (ignore generation_id field)
-            seed = time.now().unix  # Changes every second
-            print("Fetching simulation from API with seed: " + str(seed))
-            sim_data = fetch_simulation(seed, layout)
-
-        # Handle fetch failure
-        if sim_data == None:
-            print("API request failed, falling back to random embedded simulation")
-            sim_idx = time.now().unix % (len(ALL_SIMULATIONS) - 1)
-            simulation = ALL_SIMULATIONS[sim_idx]
-            api_origin_y = None
-            api_name = None
-            is_api_mode = False
-        else:
-            simulation = sim_data.get("frames", [])
-            api_origin_y = sim_data.get("origin_y", layout.origin_y)
-            api_name = sim_data.get("name", "api")
-
-            # Check if we have valid frames
-            if len(simulation) == 0:
-                print("API returned empty frames, falling back to random embedded simulation")
-                sim_idx = time.now().unix % (len(ALL_SIMULATIONS) - 1)
-                simulation = ALL_SIMULATIONS[sim_idx]
-                api_origin_y = None
-                api_name = None
-                is_api_mode = False
-            else:
-                is_api_mode = True
-    else:
-        # Use embedded simulation
-        print("Picked simulation no." + str(sim_idx + 1) + " (out of " + str(len(ALL_SIMULATIONS)) + ")")
-        simulation = ALL_SIMULATIONS[sim_idx]
-        api_origin_y = None  # Not used for embedded simulations
-        api_name = None  # Not used for embedded simulations
-        is_api_mode = False
+    # The former author-hosted API is retired. Keep its saved values compatible
+    # by selecting one of the 33 simulations already bundled with this app.
+    sim_idx = time.now().unix % len(ALL_SIMULATIONS)
+    for index in range(len(ALL_SIMULATIONS)):
+        if animation == str(index + 1):
+            sim_idx = index
+            break
+    print("Picked simulation no." + str(sim_idx + 1) + " (out of " + str(len(ALL_SIMULATIONS)) + ")")
+    simulation = ALL_SIMULATIONS[sim_idx]
+    api_origin_y = None
+    api_name = None
+    is_api_mode = False
 
     # Set delay based on speed (slow = 33ms, fast = 16ms)
     if speed == "fast":
@@ -837,10 +688,10 @@ def render_fade_frame(sim_name, config, layout, opacity, is_api_mode, simulation
 def get_schema():
     # Build animation options dynamically
     animation_options = [
-        schema.Option(display = "Random from all sources", value = "random_all"),
+        schema.Option(display = "Random built-in (legacy all-sources setting)", value = "random_all"),
         schema.Option(display = "Random from built in list", value = "random"),
-        schema.Option(display = "Random params from API (new generation)", value = "api"),
-        schema.Option(display = "Random generation from API (previously generated)", value = "api_random"),
+        schema.Option(display = "Random built-in (legacy API setting)", value = "api"),
+        schema.Option(display = "Random built-in (legacy generation setting)", value = "api_random"),
     ]
     for i in range(1, len(ALL_SIMULATIONS) + 1):
         animation_options.append(
@@ -882,7 +733,7 @@ def get_schema():
             schema.Text(
                 id = "generation_id",
                 name = "Generation ID",
-                desc = "Enter a specific generation ID between 1 and 4665 (only used with 'Random generation from API' mode)",
+                desc = "Legacy setting retained for existing installations; the retired generation service is no longer used.",
                 icon = "hashtag",
                 default = "",
             ),

@@ -5,6 +5,7 @@ Description: Display the approximate member count for a given Discord server (vi
 Author: Dennis Zoma (https://zoma.dev)
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/twitter_icon.png", TWITTER_ICON_ASSET = "file")
@@ -13,25 +14,37 @@ load("schema.star", "schema")
 
 TWITTER_ICON = TWITTER_ICON_ASSET.readall()
 
-DISCORD_API_URL = "https://discord.com/api/v9/invites/%s?with_counts=true"
+DISCORD_API_URL = "https://discord.com/api/v10/invites/%s?with_counts=true"
+DEFAULT_INVITE_ID = "r45MXG4kZc"
+MAX_RESPONSE_BYTES = 256 * 1024
+
+def safe_invite_id(value):
+    value = str(value or "").strip()
+    if not value or len(value) > 64:
+        return ""
+    for char in value.elems():
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return ""
+    return value
 
 def main(config):
-    invite_id = config.get("invite_id", "r45MXG4kZc")
+    invite_id = safe_invite_id(config.get("invite_id", DEFAULT_INVITE_ID))
+    body = None
 
-    url = DISCORD_API_URL % invite_id
-    response = http.get(url, ttl_seconds = 240)
+    if invite_id:
+        response = http.get(DISCORD_API_URL % invite_id, ttl_seconds = 300)
+        response_body = response.body()
+        if response.status_code == 200 and response_body and len(response_body) <= MAX_RESPONSE_BYTES:
+            body = json.decode(response_body, None)
 
-    if response.status_code != 200:
-        fail("Discord request failed with status %d", response.status_code)
-
-    body = response.json()
-
-    if body == None or len(body) == 0 or body["guild"] == None or len(body["guild"]) == 0:
+    guild = body.get("guild") if type(body) == "dict" else None
+    member_count = body.get("approximate_member_count") if type(body) == "dict" else None
+    if type(guild) != "dict" or type(member_count) not in ["int", "float"] or member_count < 0:
         formatted_members_count = "Not Found"
         server_name = "Check your invite ID"
     else:
-        formatted_members_count = "%s members" % humanize.comma(int(body["approximate_member_count"]))
-        server_name = body["guild"]["name"]
+        formatted_members_count = "%s members" % humanize.comma(min(int(member_count), 1000000000))
+        server_name = str(guild.get("name") or "Discord server")[:120]
 
     return render.Root(
         child = render.Box(
