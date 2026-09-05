@@ -5,7 +5,9 @@ Description: Developer Excuse app generates playful and imaginative excuses to b
 Author: masonwongcs
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -14,13 +16,19 @@ DEFAULT_COLOR = "#ffffff"
 DEFAULT_DIRECTION = "horizontal"
 
 def main(config):
-    rep = http.get(EXCUSE_URL)
-    if rep.status_code != 200:
-        fail("Excuse request failed with status %d", rep.status_code)
+    rep = http.get(EXCUSE_URL, ttl_seconds = 300)
+    body = rep.body()
+    payload = json.decode(body, None) if rep.status_code == 200 and len(body) <= 256 * 1024 else None
+    excuse = payload[0].get("excuse") if type(payload) == "list" and payload and type(payload[0]) == "dict" else None
+    if type(excuse) != "string" or not excuse or len(excuse) > 500:
+        return render.Root(child = render.Text("No excuse available", color = "#888"))
 
-    excuse = rep.json()[0]["excuse"]
     direction = config.get("direction", DEFAULT_DIRECTION)
+    if direction not in ["horizontal", "vertical"]:
+        direction = DEFAULT_DIRECTION
     color = config.get("text_color", DEFAULT_COLOR)
+    if type(color) != "string" or not re.match(r"^#[0-9a-fA-F]{6}$", color):
+        color = DEFAULT_COLOR
 
     if (direction == "vertical"):
         return render.Root(

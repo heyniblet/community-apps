@@ -6,7 +6,7 @@ Author: Olly Stedall @saltedlolly
 Thanks: drudge, inxi, whyamihere, Amillion Air
 """
 
-load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/dgb_icon.png", DGB_ICON_ASSET = "file")
 load("images/sats_symbol.png", SATS_SYMBOL_ASSET = "file")
@@ -16,8 +16,6 @@ load("schema.star", "schema")
 
 DGB_ICON = DGB_ICON_ASSET.readall()
 SATS_SYMBOL = SATS_SYMBOL_ASSET.readall()
-
-print("----------------------------------------------------------------------------------------")
 
 #this list contains the currently supported fiat currencies
 MAIN_CURRENCY_LIST = {
@@ -102,42 +100,15 @@ def main(config):
     third_currency = ALT_CURRENCY_LIST.get(config.get("third_currency"), ALT_CURRENCY_LIST[DEFAULT_THIRD_CURRENCY])
     country_toggle = config.bool("country_toggle", DEFAULT_SHOW_COUNTRY)
 
-    # LOOKUP CURRENT PRICES (OR RETRIEVE FROM CACHE)
-
-    # Get current prices from cache
-    dgb_price_aud_cached = cache.get("dgb_price_aud")
-    dgb_price_cad_cached = cache.get("dgb_price_cad")
-    dgb_price_eur_cached = cache.get("dgb_price_eur")
-    dgb_price_gbp_cached = cache.get("dgb_price_gbp")
-    dgb_price_sats_cached = cache.get("dgb_price_sats")
-    dgb_price_usd_cached = cache.get("dgb_price_usd")
-
-    if dgb_price_usd_cached != None:
-        print("Hit! Displaying cached data.")
-        dgb_price_aud = float(dgb_price_aud_cached)
-        dgb_price_cad = float(dgb_price_cad_cached)
-        dgb_price_eur = float(dgb_price_eur_cached)
-        dgb_price_gbp = float(dgb_price_gbp_cached)
-        dgb_price_sats = float(dgb_price_sats_cached)
-        dgb_price_usd = float(dgb_price_usd_cached)
+    dgbquery = http.get(DIGIBYTE_PRICE_URL, ttl_seconds = 600)
+    body = dgbquery.body()
+    payload = json.decode(body, None) if dgbquery.status_code == 200 and len(body) <= 256 * 1024 else None
+    prices = payload.get("digibyte", {}) if type(payload) == "dict" else {}
+    values = [prices.get(code) for code in ["aud", "cad", "eur", "gbp", "sats", "usd"]] if type(prices) == "dict" else []
+    if len(values) == 6 and all([type(value) in ["int", "float"] and value > 0 and value < 1000000000 for value in values]):
+        dgb_price_aud, dgb_price_cad, dgb_price_eur, dgb_price_gbp, dgb_price_sats, dgb_price_usd = values
     else:
-        print("Miss! Calling CoinGecko API.")
-        dgbquery = http.get(DIGIBYTE_PRICE_URL, ttl_seconds = 600)
-        if dgbquery.status_code != 200:
-            print("Coingecko request failed with status %d" % dgbquery.status_code)
-            dgb_price_aud = None
-            dgb_price_cad = None
-            dgb_price_eur = None
-            dgb_price_gbp = None
-            dgb_price_sats = None
-            dgb_price_usd = None
-        else:
-            dgb_price_aud = dgbquery.json()["digibyte"]["aud"]
-            dgb_price_cad = dgbquery.json()["digibyte"]["cad"]
-            dgb_price_eur = dgbquery.json()["digibyte"]["eur"]
-            dgb_price_gbp = dgbquery.json()["digibyte"]["gbp"]
-            dgb_price_sats = dgbquery.json()["digibyte"]["sats"]
-            dgb_price_usd = dgbquery.json()["digibyte"]["usd"]
+        dgb_price_aud, dgb_price_cad, dgb_price_eur, dgb_price_gbp, dgb_price_sats, dgb_price_usd = [None, None, None, None, None, None]
 
     #Setup price display variable
     display_vec = []
@@ -156,11 +127,10 @@ def main(config):
             children = [
                 render.Text("ERROR:", font = "CG-pixel-3x5-mono", color = "#FF0000"),
                 render.Text("Coingecko", font = "CG-pixel-3x5-mono"),
-                render.Text("unvailable!", font = "CG-pixel-3x5-mono"),
+                render.Text("unavailable!", font = "CG-pixel-3x5-mono"),
             ],
         )
         display_vec.append(display_error)
-        print("Error: No price data available")
 
     # DISPLAY PRICES
     currency = ""
@@ -173,42 +143,32 @@ def main(config):
         for i in range(3):
             if i == 0:
                 currency = main_currency
-                print("Main Currency:")
             if i == 1:
                 currency = second_currency
-                print("Second Currency:")
             if i == 2:
                 currency = third_currency
-                print("Third Currency:")
 
             # Setup currency price
-            if currency == "none":
-                print("None")
-            elif currency == "aud":
+            if currency == "aud":
                 currency_price = dgb_price_aud
                 currency_symbol = "$"
                 currency_country = "AU"
-                print("AUD")
             elif currency == "cad":
                 currency_price = dgb_price_cad
                 currency_symbol = "$"
                 currency_country = "CA"
-                print("CAD")
             elif currency == "eur":
                 currency_price = dgb_price_eur
                 currency_symbol = "€"
                 currency_country = "EU"
-                print("EUR")
             elif currency == "gbp":
                 currency_price = dgb_price_gbp
                 currency_symbol = "£"
                 currency_country = "UK"
-                print("GBP")
             elif currency == "usd":
                 currency_price = dgb_price_usd
                 currency_symbol = "$"
                 currency_country = "US"
-                print("USD")
             elif currency == "sats":
                 currency_price = dgb_price_sats
 
@@ -221,7 +181,6 @@ def main(config):
                     ],
                 )
                 display_vec.append(display_currency_price)
-                print("SATS")
 
             elif currency == "none":
                 display_currency_price = None
@@ -252,7 +211,7 @@ def main(config):
                 elif len(currency_price_integer) == 4:
                     currency_price = str(int(math.round(currency_price * 10)))
                     currency_price = (currency_symbol + currency_price[0:-1] + "." + currency_price[-1:])
-                elif len(currency_price_integer) == 5 or 6:
+                elif len(currency_price_integer) in [5, 6]:
                     currency_price = str(int(math.round(currency_price)))
                     currency_price = (currency_symbol + currency_price)
                 elif len(currency_price_integer) >= 7:

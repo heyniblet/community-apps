@@ -4,7 +4,6 @@ Based on pydexcom implementation patterns
 Shows real-time glucose readings from Dexcom G7 CGM
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
@@ -38,13 +37,7 @@ HEADERS = {
     "User-Agent": "Dexcom Share/3.0.2.11 CFNetwork/1220.1 Darwin/20.3.0",
 }
 
-# Cache configuration
-ACCOUNT_ID_CACHE_KEY = "dexcom_account_id"
-SESSION_CACHE_KEY = "dexcom_session"
-GLUCOSE_CACHE_KEY = "glucose_data"
-SESSION_CACHE_TTL = 3600  # 1 hour - more conservative to avoid expired sessions
-GLUCOSE_CACHE_TTL = 240  # 4 minutes - slightly shorter for fresher data
-ACCOUNT_CACHE_TTL = 86400  # 24 hours
+MAX_RESPONSE_BYTES = 512 * 1024
 
 # Glucose thresholds (mg/dL)
 LOW_THRESHOLD = 70
@@ -95,6 +88,30 @@ TREND_ARROWS = {
 # Unit conversion - From pydexcom
 MMOL_L_CONVERSION_FACTOR = 0.0555
 
+def valid_credential(value, maximum):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= maximum and "\r" not in value and "\n" not in value
+
+def response_json(response):
+    body = response.body()
+    return json.decode(body, None) if response.status_code == 200 and len(body) <= MAX_RESPONSE_BYTES else None
+
+def valid_uuid(value):
+    return type(value) == "string" and len(value) == 36 and all([char.isalnum() or char == "-" for char in value.codepoints()]) and value != "00000000-0000-0000-0000-000000000000"
+
+def sanitize_reading(value):
+    if type(value) != "dict":
+        return None
+    glucose = value.get("Value")
+    trend = value.get("Trend", "")
+    timestamp = value.get("DT", "")
+    if type(glucose) not in ["int", "float"] or glucose < 20 or glucose > 600:
+        return None
+    if type(trend) != "string" or trend not in TREND_ARROWS:
+        trend = "NotComputable"
+    if type(timestamp) != "string" or len(timestamp) > 64:
+        timestamp = ""
+    return {"Value": glucose, "Trend": trend, "DT": timestamp}
+
 def format_mmol(value):
     """Format mmol/L value with one decimal place"""
 
@@ -112,10 +129,9 @@ def main(config):
     password = config.get("password", "")
     region = config.get("region", "us").lower()
     units = config.get("units", "mg/dL")
-    debug = config.bool("debug", False)
 
     # Validate credentials
-    if not username or not password:
+    if not valid_credential(username, 256) or not valid_credential(password, 512):
         return render_no_config()
 
     # Validate region
@@ -123,7 +139,7 @@ def main(config):
         return render_error("Invalid region")
 
     # Create Dexcom client
-    client = DexcomClient(username, password, region, debug)
+    client = DexcomClient(username, password, region)
 
     # Get glucose reading
     glucose_reading = get_current_glucose_reading(client)
@@ -168,13 +184,12 @@ def main(config):
         color = color,
     )
 
-def DexcomClient(username, password, region, debug = False):
+def DexcomClient(username, password, region):
     """Create a Dexcom client object (dict in Starlark)"""
     return {
         "username": username,
         "password": password,
         "region": region,
-        "debug": debug,
         "base_url": DEXCOM_BASE_URLS[region],
         "app_id": DEXCOM_APPLICATION_IDS[region],
     }
@@ -187,26 +202,6 @@ def get_current_glucose_reading(client):
     if not session_id:
         return None
 
-    # Create user-specific cache key
-    glucose_cache_key = GLUCOSE_CACHE_KEY + "_" + client["username"]
-
-    # Check cache first, but validate it's not too old
-    cached_data = cache.get(glucose_cache_key)
-    if cached_data:
-        cached_reading = json.decode(cached_data)
-
-        # Check if cached data is recent enough (within 4 minutes)
-        if cached_reading and cached_reading.get("DT"):
-            cache_age = get_data_age_minutes(cached_reading.get("DT", ""))
-
-            # Use cache if less than 4 minutes old (matches GLUCOSE_CACHE_TTL)
-            if cache_age < 4:
-                if client["debug"]:
-                    print("Using cached glucose data (age: %d min)" % cache_age)
-                return cached_reading
-            elif client["debug"]:
-                print("Cached data too old (%d min), fetching fresh" % cache_age)
-
     # Fetch glucose values - request last 10 minutes to avoid stale data
     # Requesting smaller time windows helps get fresher data
     url = client["base_url"] + DEXCOM_GLUCOSE_VALUES_ENDPOINT
@@ -216,96 +211,26 @@ def get_current_glucose_reading(client):
         "maxCount": "3",  # Get last 3 readings to ensure we have data
     }
 
-    if client["debug"]:
-        print("Fetching fresh glucose from: %s" % url)
-        print("Session ID: %s..." % session_id[:10] if session_id else "None")
-
     response = http.get(
         url = url,
         params = params,
         headers = HEADERS,
-        ttl_seconds = 60,
     )
-
-    if client["debug"]:
-        print("Glucose response status: %d" % response.status_code)
-
-    # Handle session errors (expired session)
-    if response.status_code == 500:
-        error_msg = response.body()
-        if "SessionIdNotFound" in error_msg or "SessionNotValid" in error_msg:
-            if client["debug"]:
-                print("Session expired, clearing cache and retrying...")
-
-            # Clear both session and account cache and retry once
-            session_cache_key = SESSION_CACHE_KEY + "_" + client["username"]
-            account_cache_key = ACCOUNT_ID_CACHE_KEY + "_" + client["username"]
-            cache.set(session_cache_key, "", ttl_seconds = 1)  # Clear by setting to empty with short TTL
-            cache.set(account_cache_key, "", ttl_seconds = 1)  # Clear account too
-
-            # Get new session and retry
-            session_id = get_session_id(client)
-            if session_id:
-                params["sessionId"] = session_id
-                response = http.get(url = url, params = params, headers = HEADERS, ttl_seconds = 60)
-
-    if response.status_code != 200:
-        if client["debug"]:
-            print("Failed to fetch glucose: %s" % response.body())
-        return None
-
-    # Parse response
-    data = response.json()
+    data = response_json(response)
 
     # If no data in last 10 minutes, try a longer window (30 minutes)
     if (not data or len(data) == 0) and params["minutes"] == "10":
-        if client["debug"]:
-            print("No data in last 10 min, trying 30 min window")
         params["minutes"] = "30"
         params["maxCount"] = "6"  # Get more readings
-        response = http.get(url = url, params = params, headers = HEADERS, ttl_seconds = 60)
+        response = http.get(url = url, params = params, headers = HEADERS)
+        data = response_json(response)
 
-        if response.status_code == 200:
-            data = response.json()
-
-    if not data or len(data) == 0:
-        if client["debug"]:
-            print("No glucose data returned from API")
+    if type(data) != "list" or not data or len(data) > 288:
         return None
-
-    if client["debug"]:
-        print("Received %d readings from API" % len(data))
-        for i, reading in enumerate(data):
-            reading_time = reading.get("DT", "")
-            reading_age = get_data_age_minutes(reading_time) if reading_time else -1
-            print("  Reading %d: Value=%s, Age=%d min, Time=%s" % (i, reading.get("Value", "?"), reading_age, reading_time[:30] if reading_time else ""))
-
-    # Use the most recent reading (first in the array)
-    glucose_reading = data[0]
-
-    if client["debug"]:
-        reading_time = glucose_reading.get("DT", "")
-        reading_age = get_data_age_minutes(reading_time) if reading_time else -1
-        print("Using most recent: Value=%s, Age=%d min" % (glucose_reading.get("Value", "?"), reading_age))
-
-    # Cache the result with user-specific key
-    cache.set(glucose_cache_key, json.encode(glucose_reading), ttl_seconds = GLUCOSE_CACHE_TTL)
-
-    if client["debug"]:
-        print("Cached new glucose reading for %d seconds" % GLUCOSE_CACHE_TTL)
-
-    return glucose_reading
+    return sanitize_reading(data[0])
 
 def get_session_id(client):
     """Get session ID following pydexcom authentication pattern"""
-
-    # Check cache first
-    cache_key = SESSION_CACHE_KEY + "_" + client["username"]
-    cached_session = cache.get(cache_key)
-    if cached_session:
-        if client["debug"]:
-            print("Using cached session")
-        return cached_session
 
     # Get account ID first
     account_id = get_account_id(client)
@@ -321,9 +246,6 @@ def get_session_id(client):
         "applicationId": client["app_id"],
     })
 
-    if client["debug"]:
-        print("Getting session from: %s" % url)
-
     response = http.post(
         url = url,
         headers = HEADERS,
@@ -331,32 +253,16 @@ def get_session_id(client):
         ttl_seconds = 0,  # Don't cache auth requests
     )
 
-    if client["debug"]:
-        print("Session response status: %d" % response.status_code)
-
-    if response.status_code != 200:
-        if client["debug"]:
-            print("Failed to get session: %s" % response.body())
+    body = response.body()
+    if response.status_code != 200 or len(body) > 128:
         return None
 
     # Parse session ID (comes with quotes)
-    session_id = response.body().strip('"')
-
-    # Cache the session
-    cache.set(cache_key, session_id, ttl_seconds = SESSION_CACHE_TTL)
-
-    return session_id
+    session_id = body.strip('"')
+    return session_id if valid_uuid(session_id) else None
 
 def get_account_id(client):
     """Get account ID following pydexcom pattern"""
-
-    # Check cache first
-    cache_key = ACCOUNT_ID_CACHE_KEY + "_" + client["username"]
-    cached_id = cache.get(cache_key)
-    if cached_id:
-        if client["debug"]:
-            print("Using cached account ID")
-        return cached_id
 
     # Authenticate to get account ID
     url = client["base_url"] + DEXCOM_AUTHENTICATE_ENDPOINT
@@ -367,10 +273,6 @@ def get_account_id(client):
         "applicationId": client["app_id"],
     })
 
-    if client["debug"]:
-        print("Authenticating at: %s" % url)
-        print("Using app ID: %s" % client["app_id"])
-
     response = http.post(
         url = url,
         headers = HEADERS,
@@ -378,27 +280,13 @@ def get_account_id(client):
         ttl_seconds = 0,  # Don't cache auth requests
     )
 
-    if client["debug"]:
-        print("Auth response status: %d" % response.status_code)
-
-    if response.status_code != 200:
-        if client["debug"]:
-            print("Authentication failed: %s" % response.body())
+    body = response.body()
+    if response.status_code != 200 or len(body) > 128:
         return None
 
     # Parse account ID (comes with quotes)
-    account_id = response.body().strip('"')
-
-    # Validate it's not the null UUID
-    if account_id == "00000000-0000-0000-0000-000000000000":
-        if client["debug"]:
-            print("Invalid account ID returned")
-        return None
-
-    # Cache the account ID
-    cache.set(cache_key, account_id, ttl_seconds = ACCOUNT_CACHE_TTL)
-
-    return account_id
+    account_id = body.strip('"')
+    return account_id if valid_uuid(account_id) else None
 
 def get_glucose_color(value, units):
     """Determine color based on glucose value"""
@@ -437,23 +325,22 @@ def get_data_age_minutes(timestamp_str):
     if start == -1 or end == -1:
         return 999
 
-    ms_str = timestamp_str[start + 1:end]
-
-    # Handle timezone offset
-    for sep in ["-", "+"]:
-        if sep in ms_str:
-            ms_str = ms_str.split(sep)[0]
+    raw = timestamp_str[start + 1:end]
+    digits = ""
+    for char in raw.codepoints():
+        if not char.isdigit():
             break
-
-    # Convert to integer
-    ms = int(ms_str)
+        digits += char
+    if len(digits) < 10 or len(digits) > 16:
+        return 999
+    ms = int(digits)
 
     # Calculate difference from now
     now = time.now()
     now_ms = now.unix * 1000
     diff_minutes = (now_ms - ms) / 60000
 
-    return int(diff_minutes)
+    return max(0, int(diff_minutes))
 
 def render_glucose_display(value, arrow, units, age, color):
     """Render the glucose display"""
@@ -554,12 +441,14 @@ def get_schema():
                 name = "Dexcom Username",
                 desc = "Your Dexcom Share username",
                 icon = "user",
+                secret = True,
             ),
             schema.Text(
                 id = "password",
                 name = "Dexcom Password",
                 desc = "Your Dexcom Share password",
                 icon = "lock",
+                secret = True,
             ),
             schema.Dropdown(
                 id = "region",
@@ -602,7 +491,7 @@ def get_schema():
             schema.Toggle(
                 id = "debug",
                 name = "Debug Mode",
-                desc = "Show debug output in console",
+                desc = "Retained for saved-config compatibility; sensitive logs stay disabled",
                 icon = "bug",
                 default = False,
             ),
