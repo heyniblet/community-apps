@@ -48,8 +48,10 @@ SECTION_TITLE = {
 
 def main(config):
     edition = config.get("news_edition", DEFAULT_NEWS)
+    edition = edition if edition in SECTION_TITLE else DEFAULT_NEWS
 
-    articlecount = int(config.get("articlecount", DEFAULT_ARTICLE_COUNT))
+    articlecount_value = str(config.get("articlecount", DEFAULT_ARTICLE_COUNT))
+    articlecount = int(articlecount_value) if articlecount_value in ["1", "2", "3"] else int(DEFAULT_ARTICLE_COUNT)
     articles = get_cacheable_data(edition.lower(), articlecount)
 
     if canvas.is2x():
@@ -216,14 +218,19 @@ def get_cacheable_data(url, articlecount):
 
     res = http.get(RSS_STUB.format(url), ttl_seconds = CACHE_TTL_SECONDS)
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        return [("Financial Times", "Headlines unavailable")]
     data = res.body()
+    if not data or len(data) > 512 * 1024 or not data.lstrip().startswith("<"):
+        return [("Financial Times", "Headlines unavailable")]
 
     data_xml = xpath.loads(data)
 
     for i in range(1, articlecount + 1):
         title_query = "//item[{}]/title".format(str(i))
         desc_query = "//item[{}]/description".format(str(i))
-        articles.append((data_xml.query(title_query), str(data_xml.query(desc_query)).replace("None", "")))
+        title = data_xml.query(title_query)
+        desc = data_xml.query(desc_query)
+        if type(title) == "string" and title:
+            articles.append((title[:300], desc[:1000] if type(desc) == "string" else ""))
 
-    return articles
+    return articles or [("Financial Times", "No headlines available")]

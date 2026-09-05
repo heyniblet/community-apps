@@ -5,7 +5,6 @@ Description: Displays info on 10 most wanted criminals.
 Author: Robert Ison
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
@@ -13,8 +12,9 @@ load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
 FBI_BASE_URL = "https://api.fbi.gov/wanted/v1/list"
-FBI_CACHE_NAME = "fbi_top_ten_most_wanted"
-FBI_CACHE_TTL = 6 * 60 * 60  # 6 hours
+FBI_CACHE_TTL = 60 * 60
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
 FBI_BLUE = "#0033A0"  # Justice/loyalty (blue field)
 FBI_GOLD = "#FFD61A"  # Value/history (stars, outlines, peaks)
@@ -33,26 +33,31 @@ def safe_get(data, path):
     return current if current != None else ""
 
 def clean_html(text):
-    """Remove HTML tags recursively."""
-    if not text:
-        return ""
-    if text.startswith("<"):
-        end_tag = text.find(">")
-        if end_tag != -1:
-            return " " + clean_html(text[end_tag + 1:])
-        return text
-    return text[0] + clean_html(text[1:])
+    """Remove HTML tags without recursing over provider-controlled text."""
+    result = []
+    inside = False
+    for char in text.elems():
+        if char == "<":
+            inside = True
+        elif char == ">":
+            inside = False
+            result.append(" ")
+        elif not inside:
+            result.append(char)
+    return "".join(result)
 
 def cleanup_text(text):
     """Remove extra whitespace."""
     words = [w for w in text.split() if w]
     return " ".join(words)
 
-def get_top_ten_wanted():
-    cached = cache.get(FBI_CACHE_NAME)
-    if cached != None:
-        return json.decode(cached)
+def supported_image(body):
+    if not body or len(body) < 12:
+        return False
+    octets = body.elem_ords()
+    return body[0:3] == "GIF" or octets[0] == 137 and body[1:4] == "PNG" or octets[0] == 255 and octets[1] == 216 or body[0:4] == "RIFF" and body[8:12] == "WEBP"
 
+def get_top_ten_wanted():
     # Simplified URL: 'pageSize' is the correct key.
     # Since there are only ever 10, one page is plenty.
     url = "{}?poster_classification=ten".format(FBI_BASE_URL)
@@ -63,34 +68,41 @@ def get_top_ten_wanted():
             "Accept": "application/json",
             "User-Agent": "TidbytApp/1.0",
         },
-        ttl_seconds = 0,
+        ttl_seconds = FBI_CACHE_TTL,
     )
 
     if resp.status_code != 200:
         return []
 
-    data = resp.json()
-    items = data.get("items", [])
+    body = resp.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    items = data.get("items", []) if type(data) == "dict" else []
+    if type(items) != "list":
+        return []
     top_ten = []
 
-    for item in items:
+    for item in items[:50]:
+        if type(item) != "dict":
+            continue
+
         # Extra safety check: ensure it's actually a Top 10 fugitive
         subjects = item.get("subjects", [])
-        if "Ten Most Wanted Fugitives" in subjects:
+        if type(subjects) == "list" and "Ten Most Wanted Fugitives" in subjects:
             images = item.get("images", [])
-            thumb = images[0].get("thumb", "") if len(images) > 0 else ""
+            thumb = images[0].get("thumb", "") if type(images) == "list" and len(images) > 0 and type(images[0]) == "dict" else ""
+            if type(thumb) != "string" or len(thumb) > 2048 or not thumb.startswith("https://www.fbi.gov/wanted/"):
+                thumb = ""
 
             top_ten.append({
-                "title": safe_get(item, ["title"]),
-                "reward_text": safe_get(item, ["reward_text"]),
+                "title": str(safe_get(item, ["title"]))[:120],
+                "reward_text": str(safe_get(item, ["reward_text"]))[:500],
                 "thumbnail": thumb,
-                "remarks": cleanup_text(clean_html(safe_get(item, ["remarks"]))),
-                "place_of_birth": safe_get(item, ["place_of_birth"]),
-                "uid": safe_get(item, ["uid"]),
+                "remarks": cleanup_text(clean_html(str(safe_get(item, ["remarks"]))[:2000]))[:500],
+                "place_of_birth": str(safe_get(item, ["place_of_birth"]))[:120],
+                "uid": str(safe_get(item, ["uid"]))[:120],
             })
-
-    if top_ten:
-        cache.set(FBI_CACHE_NAME, json.encode(top_ten), FBI_CACHE_TTL)
+            if len(top_ten) == 10:
+                break
 
     return top_ten
 
@@ -106,7 +118,9 @@ def main(config):
     selected = top_ten[random.number(0, len(top_ten) - 1)]
 
     if selected["thumbnail"] != "":
-        artwork = http.get(selected["thumbnail"], headers = {"Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, ttl_seconds = FBI_CACHE_TTL).body()
+        image_response = http.get(selected["thumbnail"], headers = {"Accept": "image/png,image/jpeg,image/*;q=0.8", "User-Agent": "Niblet/1.0"}, ttl_seconds = FBI_CACHE_TTL)
+        image_body = image_response.body()
+        artwork = image_body if image_response.status_code == 200 and len(image_body) <= MAX_IMAGE_BYTES and supported_image(image_body) else None
     else:
         artwork = None
 
@@ -152,7 +166,7 @@ def main(config):
                         ),
                     ],
                 ),
-                render.Image(src = artwork, width = 32) if selected["thumbnail"] != "" else render.Text("👮"),
+                render.Image(src = artwork, width = 32) if artwork else render.Text("👮"),
             ],
         ),
         delay = delay,
