@@ -6,6 +6,7 @@ Author: Critical Chicken
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/aceattorney.png", IMGBGACEATTORNEY_ASSET = "file", IMGTAGACEATTORNEY_ASSET = "file")
 load("images/branding.png", IMGBRANDING_ASSET = "file")
@@ -236,11 +237,19 @@ def main():
     finalexcerpt = ""
 
     get_feeds = http.get("https://www.criticalchicken.com/wp-json/wp/v2/posts?_fields=title,categories,excerpt&per_page=1", ttl_seconds = 900)
-    if get_feeds.status_code != 200:
+    if get_feeds.status_code != 200 or len(get_feeds.body()) > 262144:
         return connectionError()
-    get_headline = get_feeds.json()[0]["title"]["rendered"]
-    get_category = get_feeds.json()[0]["categories"]
-    get_excerpt = get_feeds.json()[0]["excerpt"]["rendered"]
+    posts = json.decode(get_feeds.body())
+    if type(posts) != "list" or not posts or type(posts[0]) != "dict":
+        return connectionError()
+    post = posts[0]
+    title = post.get("title")
+    excerpt = post.get("excerpt")
+    get_category = post.get("categories", [])
+    if type(title) != "dict" or type(excerpt) != "dict" or type(title.get("rendered")) != "string" or type(excerpt.get("rendered")) != "string" or type(get_category) != "list":
+        return connectionError()
+    get_headline = title["rendered"][:500]
+    get_excerpt = excerpt["rendered"][:2000]
 
     # Strip out HTML tags that might appear in the excerpts
     excerpt_strip_bold_op = get_excerpt.replace("<b>", "")

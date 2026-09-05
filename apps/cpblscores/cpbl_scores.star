@@ -7,11 +7,11 @@ Author: yuping917
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-CACHE_TTL_SECONDS = 60
 DEFAULT_LOCATION = """
 {
     "lat": "25.105497",
@@ -28,7 +28,7 @@ LEAGUE_DISPLAY_OFFSET = -3
 
 nextFiveByTeam = "https://www.thesportsdb.com/api/v1/json/key/eventsnext.php?id="
 nextFiveteenByleague = "https://www.thesportsdb.com/api/v1/json/key/eventsnextleague.php?id=5111"
-lastFiveByTeam = "https://www.thesportsdb.com/api/v1/json/3/eventslast.php?id="
+lastFiveByTeam = "https://www.thesportsdb.com/api/v1/json/key/eventslast.php?id="
 lastFiveteenByleague = "https://www.thesportsdb.com/api/v1/json/key/eventspastleague.php?id=5111"
 
 TEAM_LOGO = """
@@ -49,7 +49,9 @@ def main(config):
     displayType = "horizontal"
     displayTop = config.get("displayTop", "time")
     databaseType = config.get("databaseType", "past")
-    apikey = config.get("apikey", "3")
+    apikey = config.get("apikey", "") or "123"
+    if not re.match(r"^[A-Za-z0-9_-]{1,128}$", apikey):
+        return render_error("Invalid API key")
     timeColor = config.get("displayTimeColor", "#FFA500")
     rotationSpeed = config.get("rotationSpeed", "5")
     location = config.get("location", DEFAULT_LOCATION)
@@ -123,13 +125,13 @@ def main(config):
                 awayScore = ""
                 homeScore = ""
             else:
-                awayScore = s.get("intAwayScore")
-                homeScore = s.get("intHomeScore")
+                awayScore = str(s.get("intAwayScore", "0"))
+                homeScore = str(s.get("intHomeScore", "0"))
             awayScoreColor = "#fff"
             homeScoreColor = "#fff"
-            if homeScore > awayScore:
+            if score_value(homeScore) > score_value(awayScore):
                 homeScoreColor = "#D1D117"
-            elif homeScore < awayScore:
+            elif score_value(homeScore) < score_value(awayScore):
                 awayScoreColor = "#D1D117"
             renderCategory.extend(
                 [
@@ -154,7 +156,7 @@ def main(config):
                                             render.Box(width = 32, height = 24, color = awayColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
                                                 render.Column(expanded = True, main_align = "start", cross_align = "center", children = [
                                                     render.Stack(children = [
-                                                        render.Box(width = 32, height = 24, child = render.Image(get_cachable_data(get_logo(s.get("idAwayTeam"))), width = 32, height = 32)),
+                                                        render.Box(width = 32, height = 24, child = team_logo(s.get("idAwayTeam"))),
                                                         render.Column(expanded = True, main_align = "start", cross_align = "center", children = [
                                                             render.Box(width = 32, height = 16),
                                                             render.Box(width = 32, height = 8, color = "#000a", child = render.Text(content = awayScore, color = awayScoreColor, font = scoreFont)),
@@ -165,7 +167,7 @@ def main(config):
                                             render.Box(width = 32, height = 24, color = homeColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
                                                 render.Column(expanded = True, main_align = "start", cross_align = "center", children = [
                                                     render.Stack(children = [
-                                                        render.Box(width = 32, height = 24, child = render.Image(get_cachable_data(get_logo(s.get("idHomeTeam"))), width = 32, height = 32)),
+                                                        render.Box(width = 32, height = 24, child = team_logo(s.get("idHomeTeam"))),
                                                         render.Column(expanded = True, main_align = "start", cross_align = "center", children = [
                                                             render.Box(width = 32, height = 16),
                                                             render.Box(width = 32, height = 8, color = "#000a", child = render.Text(content = homeScore, color = homeScoreColor, font = scoreFont)),
@@ -193,7 +195,7 @@ def main(config):
             ),
         )
     else:
-        return []
+        return render_error("Scores unavailable")
 
 def get_date_column(displayTop, now, scoreNumber, rotationSpeed, textColor, borderColor, displayType, gameTime, timeColor):
     if displayTop == "gameinfo":
@@ -240,20 +242,29 @@ def get_shortened_display(text):
 
 def get_scores(urls, selectedTeam, databaseType):
     allscores = []
-    data = get_cachable_data(urls[0])
-    decodedata = json.decode(data)
+    decodedata = get_json(urls[0])
+    if decodedata == None:
+        return []
     if selectedTeam != "5111":
         if databaseType != "feature":
-            allscores.extend(decodedata["results"])
+            events = decodedata.get("results", [])
         else:
-            allscores.extend(decodedata["events"])
-    elif selectedTeam == "5111":
-        allscores.extend(decodedata["events"])
+            events = decodedata.get("events", [])
+    else:
+        events = decodedata.get("events", [])
+    if type(events) == "list":
+        allscores.extend(events[:20])
     if urls[1] != "":
-        data = get_cachable_data(urls[1])
-        decodedata = json.decode(data)
-        allscores.extend(decodedata["events"])
-    return allscores
+        decodedata = get_json(urls[1])
+        if decodedata != None and type(decodedata.get("events")) == "list":
+            allscores.extend(decodedata["events"][:20])
+    return [event for event in allscores if valid_event(event)]
+
+def valid_event(event):
+    return type(event) == "dict" and type(event.get("strTimestamp")) == "string" and re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", event["strTimestamp"]) and type(event.get("idAwayTeam")) == "string" and type(event.get("idHomeTeam")) == "string"
+
+def score_value(score):
+    return int(score) if re.match(r"^[0-9]+$", score) else 0
 
 teamOptions = [
     schema.Option(
@@ -436,13 +447,26 @@ def get_schema():
         ],
     )
 
-def get_cachable_data(url):
-    res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-    return res.body()
+def get_json(url):
+    res = http.get(url = url)
+    if res.status_code != 200 or len(res.body()) > 524288:
+        return None
+    data = json.decode(res.body())
+    return data if type(data) == "dict" else None
+
+def team_logo(team):
+    url = get_logo(team)
+    if not url.startswith("https://r2.thesportsdb.com/"):
+        return render.Box(width = 32, height = 32)
+    response = http.get(url, ttl_seconds = 86400)
+    if response.status_code != 200 or len(response.body()) > 2097152:
+        return render.Box(width = 32, height = 32)
+    return render.Image(response.body(), width = 32, height = 32)
 
 def get_logo(team):
     usealtlogo = json.decode(TEAM_LOGO)
     logo = usealtlogo.get(team, "NO")
     return logo
+
+def render_error(message):
+    return render.Root(child = render.WrappedText(message, font = "tom-thumb"))
