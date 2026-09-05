@@ -18,7 +18,8 @@ LYNX_ICON = LYNX_ICON_ASSET.readall()
 #Load LYNX icon from base64 encoded data 29x13
 
 LIGHTRAIL = "lightrail"
-CACHE_TTL_SECONDS = 60
+CACHE_TTL_SECONDS = 3600
+MAX_RESPONSE_BYTES = 256 * 1024
 
 STATION_LIST = {
     "UNC Charlotte Main": "unccharlotte",
@@ -103,6 +104,8 @@ def main(config):
     #Arrays that have lightrail times
     unccTime = get_times(unccTrain)
     i485Time = get_times(i485Train)
+    if not valid_schedule(unccTime) or not valid_schedule(i485Time):
+        return render.Root(child = render.WrappedText("LYNX schedule unavailable", align = "center", width = 64))
 
     #Gets train schedule based on what station is selected in schema
     if station_id == "i485":
@@ -522,20 +525,27 @@ def main(config):
 
 def get_times(urls):
     alltimes = []
-    for i, s in urls.items():
+    for _, s in urls.items():
         data = get_cachable_data(s)
-        decodedata = json.decode(data)
-        alltimes.extend(decodedata["stationStops"])
-        all([i, alltimes])
+        decodedata = json.decode(data, None) if data else None
+        if type(decodedata) != "dict" or type(decodedata.get("stationStops")) != "list":
+            return []
+        alltimes.extend(decodedata["stationStops"][:100])
 
     return alltimes
 
+def valid_schedule(schedule):
+    if len(schedule) < 26:
+        return False
+    for times in schedule[:26]:
+        if type(times) != "list" or not times:
+            return False
+    return True
+
 def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
     res = http.get(url = url, ttl_seconds = ttl_seconds)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
+    body = res.body()
+    return body if res.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
 
 def rearrangeUNCCtimes(unccTime):
     #Time doesn't exist so it's removed

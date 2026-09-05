@@ -5,6 +5,7 @@ Description: Displays Coffee Orders with explanations.
 Author: Robert Ison
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/coffee_cup_image.png", COFFEE_CUP_IMAGE_ASSET = "file")
 load("images/default_coffee_image.jpg", DEFAULT_COFFEE_IMAGE_ASSET = "file")
@@ -17,6 +18,9 @@ DEFAULT_COFFEE_IMAGE = DEFAULT_COFFEE_IMAGE_ASSET.readall()
 
 COFFEE_IMAGE_CACHE_TIME = 600  #10 Minutes
 COFFEE_IMAGE_URL = "https://coffee.alexflipnote.dev/random.json"
+COFFEE_IMAGE_PREFIX = "https://coffee.alexflipnote.dev/"
+MAX_JSON_BYTES = 4096
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
 COFFEE_DATA = [
     {
         "Coffee Drink": "Espresso",
@@ -179,11 +183,18 @@ def get_selected_coffees(config):
 def get_coffee_image():
     rep = http.get(
         COFFEE_IMAGE_URL,
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.1", "Accept": "text/html,application/xhtml+xml,application/xml"},
+        headers = {"User-Agent": "Niblet community app", "Accept": "application/json"},
+        ttl_seconds = COFFEE_IMAGE_CACHE_TIME,
     )
+    body = rep.body()
+    data = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_JSON_BYTES else None
+    artwork_url = data.get("file") if type(data) == "dict" else None
 
-    if rep.status_code == 200 and rep.json():
-        artwork = http.get(rep.json()["file"], ttl_seconds = COFFEE_IMAGE_CACHE_TIME).body()
+    if type(artwork_url) == "string" and len(artwork_url) <= 256 and artwork_url.startswith(COFFEE_IMAGE_PREFIX) and artwork_url.endswith(".jpg"):
+        image_response = http.get(artwork_url, ttl_seconds = COFFEE_IMAGE_CACHE_TIME)
+        artwork = image_response.body()
+        if image_response.status_code != 200 or not artwork or len(artwork) > MAX_IMAGE_BYTES:
+            return render.Image(src = DEFAULT_COFFEE_IMAGE, width = 64, height = 32)
         artwork_image = render.Image(src = artwork, width = 64, height = 32)
     else:
         artwork_image = render.Image(src = DEFAULT_COFFEE_IMAGE, width = 64, height = 32)
@@ -219,19 +230,6 @@ def get_schema():
         schema.Option(display = "Display Random Coffee Order", value = "order"),
     ]
 
-    def get_coffees(type):
-        # default
-        items = sorted(COFFEE_DATA, key = lambda x: x["Coffee Drink"])
-        icon = "mugHot"
-
-        if type == "order":
-            return [
-                schema.Toggle(id = item["Coffee Drink"], name = item["Coffee Drink"], desc = item["Description"], icon = icon, default = False)
-                for item in items
-            ]
-        else:
-            return []
-
     return schema.Schema(
         version = "1",
         fields = [
@@ -251,10 +249,8 @@ def get_schema():
                 options = display_type,
                 default = display_type[1].value,
             ),
-            schema.Generated(
-                id = "coffee_types",
-                source = "display_type",
-                handler = get_coffees,
-            ),
+        ] + [
+            schema.Toggle(id = item["Coffee Drink"], name = item["Coffee Drink"], desc = item["Description"], icon = "mugHot", default = False)
+            for item in sorted(COFFEE_DATA, key = lambda x: x["Coffee Drink"])
         ],
     )
