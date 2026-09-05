@@ -10,10 +10,9 @@ Author: colin_is
 #        daily summaries: min/max temp across all slots, icon from midday slot.
 # V0.3: Switched back to One Call API 3.0 for true daily temp.min / temp.max.
 
-load("cache.star", "cache")
-load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -23,9 +22,9 @@ OW_ICON_URL = "https://openweathermap.org/img/wn/%s.png"
 
 DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
-GEO_CACHE_TTL = 86400  # 24 hours — zip codes rarely change
-FORECAST_CACHE_TTL = 3600  # 1 hour — minimize OW API calls
 ICON_CACHE_TTL = 86400  # 24 hours — OW icons are static
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_ICON_BYTES = 2 * 1024 * 1024
 
 COLUMN_WIDTH = 21  # 64px display / 3 columns ≈ 21px
 ICON_SIZE = 12
@@ -47,27 +46,24 @@ def get_lat_lon(api_key, zip_code):
     Cached for 24 hours since zip-to-coordinate mapping is stable.
     Returns (lat, lon) or (None, None) on error.
     """
-    cache_key = "owf_geo_" + zip_code
-    cached = cache.get(cache_key)
-    if cached:
-        coords = json.decode(cached)
-        return coords["lat"], coords["lon"]
-
     resp = http.get(OW_GEO_URL, params = {
         "zip": zip_code + ",US",
         "appid": api_key,
     })
     if resp.status_code != 200:
-        print("OW geocoding error:", resp.status_code, resp.body())
         return None, None
 
-    data = json.decode(resp.body())
+    body = resp.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return None, None
+    data = json.decode(body, None)
+    if type(data) != "dict":
+        return None, None
     lat = data.get("lat")
     lon = data.get("lon")
-    if lat == None or lon == None:
+    if type(lat) not in ["int", "float"] or type(lon) not in ["int", "float"] or lat < -90 or lat > 90 or lon < -180 or lon > 180:
         return None, None
 
-    cache.set(cache_key, json.encode({"lat": lat, "lon": lon}), ttl_seconds = GEO_CACHE_TTL)
     return lat, lon
 
 def get_forecast(api_key, lat, lon, units):
@@ -77,11 +73,6 @@ def get_forecast(api_key, lat, lon, units):
     (not derived from 3-hour slots). Returns a list of 3 dicts, or None on error.
     Cached for 1 hour (cache key includes units to avoid stale unit mismatch).
     """
-    cache_key = "owf_daily_" + str(lat) + "_" + str(lon) + "_" + units
-    cached = cache.get(cache_key)
-    if cached:
-        return json.decode(cached)
-
     resp = http.get(OW_FORECAST_URL, params = {
         "lat": str(lat),
         "lon": str(lon),
@@ -90,28 +81,36 @@ def get_forecast(api_key, lat, lon, units):
         "appid": api_key,
     })
     if resp.status_code != 200:
-        print("OW forecast error:", resp.status_code, resp.body())
         return None
 
-    items = json.decode(resp.body()).get("daily", [])
-    if len(items) < 3:
+    body = resp.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return None
+    data = json.decode(body, None)
+    items = data.get("daily") if type(data) == "dict" else None
+    if type(items) != "list" or len(items) < 3:
         return None
 
     daily = []
     for i in range(3):
         d = items[i]
-        temp = d.get("temp", {})
-        weather_list = d.get("weather", [])
-        icon_code = weather_list[0].get("icon", "01d") if len(weather_list) > 0 else "01d"
+        temp = d.get("temp") if type(d) == "dict" else None
+        weather_list = d.get("weather") if type(d) == "dict" else None
+        weather = weather_list[0] if type(weather_list) == "list" and weather_list and type(weather_list[0]) == "dict" else {}
+        dt = d.get("dt") if type(d) == "dict" else None
+        temp_min = temp.get("min") if type(temp) == "dict" else None
+        temp_max = temp.get("max") if type(temp) == "dict" else None
+        icon_code = weather.get("icon", "01d")
+        if type(dt) not in ["int", "float"] or type(temp_min) not in ["int", "float"] or type(temp_max) not in ["int", "float"] or type(icon_code) != "string" or not re.match(r"^[0-9]{2}[dn]$", icon_code):
+            return None
 
         daily.append({
-            "dt": d["dt"],
-            "temp_min": temp.get("min", 0),
-            "temp_max": temp.get("max", 0),
+            "dt": dt,
+            "temp_min": temp_min,
+            "temp_max": temp_max,
             "icon": icon_code,
         })
 
-    cache.set(cache_key, json.encode(daily), ttl_seconds = FORECAST_CACHE_TTL)
     return daily
 
 def get_icon(icon_code):
@@ -120,18 +119,16 @@ def get_icon(icon_code):
     Renders the image at 15×15 inside a 12×12 Box to crop OW whitespace while
     keeping the icon centered. Returns a blank Box on failure.
     """
-    cache_key = "owf_icon_" + icon_code
-    cached = cache.get(cache_key)
-    if cached:
-        img = render.Image(src = base64.decode(cached), width = 15, height = 15)
-        return render.Box(width = ICON_SIZE, height = ICON_SIZE, child = img)
-
-    resp = http.get(OW_ICON_URL % icon_code)
+    if type(icon_code) != "string" or not re.match(r"^[0-9]{2}[dn]$", icon_code):
+        return render.Box(width = ICON_SIZE, height = ICON_SIZE - 4)
+    resp = http.get(OW_ICON_URL % icon_code, ttl_seconds = ICON_CACHE_TTL)
     if resp.status_code != 200:
         return render.Box(width = ICON_SIZE, height = ICON_SIZE - 4)
 
-    cache.set(cache_key, base64.encode(resp.body()), ttl_seconds = ICON_CACHE_TTL)
-    img = render.Image(src = resp.body(), width = 15, height = 15)
+    body = resp.body()
+    if len(body) > MAX_ICON_BYTES:
+        return render.Box(width = ICON_SIZE, height = ICON_SIZE - 4)
+    img = render.Image(src = body, width = 15, height = 15)
     return render.Box(width = ICON_SIZE, height = ICON_SIZE, child = img)
 
 def render_day_col(day):
@@ -180,10 +177,10 @@ def main(config):
     api_key = config.get("openweather_api_key", "")
     zip_code = config.get("zip_code", "")
 
-    if not api_key:
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
         return error_display("Add OpenWeather API key in settings")
-    if not zip_code:
-        return error_display("Add ZIP code in settings")
+    if type(zip_code) != "string" or not re.match(r"^[0-9]{5}(-[0-9]{4})?$", zip_code):
+        return error_display("Add a valid US ZIP code")
 
     lat, lon = get_lat_lon(api_key, zip_code)
     if lat == None or lon == None:
