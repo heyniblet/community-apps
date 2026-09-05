@@ -28,18 +28,33 @@ BLUEBIKE_MISSING_DATA = "DATA_NOT_FOUND"
 #Station cache names
 STATION_NAME_CACHE_SUFFIX = "_station_name"
 STATION_STATUS_NAME_SUFFIX = "_station_status"
-STATIONS_INFO_CACHE = "cache_stations_info"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_STATIONS = 2000
+
+def response_stations(rep):
+    body = rep.body()
+    data = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    stations = data.get("data", {}).get("stations", []) if type(data) == "dict" else []
+    return [station for station in stations[:MAX_STATIONS] if type(station) == "dict"] if type(stations) == "list" else []
+
+def count(value):
+    if type(value) == "int":
+        return max(0, value)
+    value = str(value or "")
+    for char in value.elems():
+        if char not in "0123456789":
+            return 0
+    return int(value) if value else 0
 
 def find_station_status_by_id(station_id):
     station_status_cached = cache.get(station_id + STATION_STATUS_NAME_SUFFIX)
     if station_status_cached != None:
-        station_status = json.decode(station_status_cached)
-        return station_status
+        station_status = json.decode(station_status_cached, None)
+        if type(station_status) == "dict":
+            return station_status
     else:
         rep = http.get(BLUEBIKE_STATION_STATUS_URL)
-        if rep.status_code != 200:
-            fail("Bluebike request for find_station_status_by_id failed with status %d", rep.status_code)
-        station_list = rep.json()["data"]["stations"]
+        station_list = response_stations(rep)
         for station in station_list:
             if station["station_id"] == station_id:
                 station_status = station
@@ -56,9 +71,7 @@ def find_station_name_by_id(station_id):
         station_name = station_name_cached
     else:
         rep = http.get(BLUEBIKE_STATIONS_URL)
-        if rep.status_code != 200:
-            fail("Bluebike request for find_station_name_by_id failed with status %d", rep.status_code)
-        station_list = rep.json()["data"]["stations"]
+        station_list = response_stations(rep)
         for station in station_list:
             if station["station_id"] == station_id:
                 station_name = station["name"]
@@ -66,46 +79,15 @@ def find_station_name_by_id(station_id):
         cache.set(station_id + STATION_NAME_CACHE_SUFFIX, station_name, ttl_seconds = 600)
     return station_name
 
-def get_all_stations():
-    stations_info_cached = cache.get(STATIONS_INFO_CACHE)
-    if stations_info_cached != None:
-        stations_info = json.decode(stations_info_cached)
-    else:
-        rep = http.get(BLUEBIKE_STATIONS_URL)
-        if rep.status_code != 200:
-            fail("Bluebike request for get_all_stations failed with status %d", rep.status_code)
-        stations_info = rep.json()["data"]["stations"]
-        cache.set(STATIONS_INFO_CACHE, json.encode(stations_info), ttl_seconds = 600)
-    return stations_info
-
-def bluebike_station_search(pattern):
-    station_list = get_all_stations()
-    matching_stations_results = []
-    for station in station_list:
-        if pattern.upper() in station["name"].upper():
-            matching_stations_results.append(
-                schema.Option(
-                    display = station["name"],
-                    value = station["station_id"],
-                ),
-            )
-
-    # Only show stations when we have a narrower set of results
-    if len(matching_stations_results) > 60:
-        return []
-    else:
-        return matching_stations_results
-
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "station",
-                name = "Bluebike Station",
-                desc = "Name of the Bluebike station",
+                name = "Bluebike Station ID",
+                desc = "Station ID from the Bluebikes GBFS feed; existing saved searches still work.",
                 icon = "building",
-                handler = bluebike_station_search,
             ),
         ],
     )
@@ -118,19 +100,23 @@ def main(config):
         docks_available = "5"
         station_name = "Fenway Outfield"
     else:
-        station_config = json.decode(station_config)
-        station_id = station_config["value"]
+        decoded = json.decode(station_config, None)
+        station_id = str(decoded.get("value") or decoded.get("station_id") or "").strip() if type(decoded) == "dict" else str(station_config).strip()
         station = find_station_status_by_id(station_id)
+        if station == BLUEBIKE_MISSING_DATA:
+            station = {}
 
         # Number of ebikes
-        ebikes_available = str(int(station["num_ebikes_available"]))
+        ebikes_available = str(count(station.get("num_ebikes_available")))
 
         # Number of docks
-        docks_available = str(int(station["num_docks_available"]))
+        docks_available = str(count(station.get("num_docks_available")))
 
         # bikes_available includes classic and ebikes. Subtracting the ebikes to get classic (non-ebikes) count
-        bikes_available = str(int(station["num_bikes_available"] - int(station["num_ebikes_available"])))
+        bikes_available = str(max(0, count(station.get("num_bikes_available")) - count(station.get("num_ebikes_available"))))
         station_name = find_station_name_by_id(station_id = station_id)
+        if not station_name:
+            station_name = "Station unavailable"
     return render.Root(
         render.Column(
             main_align = "space_evenly",

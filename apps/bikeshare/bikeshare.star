@@ -5,7 +5,6 @@ Description: Shows bike and parking availability for user selected bikeshare loc
 Author: snorremd
 """
 
-load("encoding/csv.star", "csv")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/bike_icon.png", BIKE_ICON_ASSET = "file")
@@ -14,51 +13,71 @@ load("schema.star", "schema")
 
 BIKE_ICON = BIKE_ICON_ASSET.readall()
 
-# URL to a CSV file containing the bikeshare providers supporting GBFS
-BIKESHARE_STATION_START = '{"url": "https://gbfs.urbansharing.com/bergenbysykkel.no/station_status.json", "station": { "station_id": "368", "name": "Festplassen", "address": "Christies gate 3A", "rental_uris": {"android": "bergenbysykkel://stations/368", "ios": "bergenbysykkel://stations/368"}, "lat": 60.391123958982405, "lon": 5.325713785893413, "capacity": 25 } }'
-BIKESHARE_STATION_STOP = '{"url": "https://gbfs.urbansharing.com/bergenbysykkel.no/station_status.json", "station": { "station_id": "1898", "name": "Kronstad", "address": "St. Olavs vei 15", "rental_uris": {"android": "bergenbysykkel://stations/1898", "ios": "bergenbysykkel://stations/1898"}, "lat": 60.3720506380196, "lon": 5.352659970408496, "capacity": 25 } }'
+DEFAULT_STATUS_URL = "https://gbfs.urbansharing.com/bergenbysykkel.no/station_status.json"
+DEFAULT_START = {"id": "5356", "name": "Fløen Bybanestopp"}
+DEFAULT_STOP = {"id": "4963", "name": "Kronstad Allmenning"}
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_STATIONS = 5000
 
 # Renders a cute little green bike
-
-# Used to fetch list of available Bikeshare companies and their general bikeshare feed specification APIs
-GBFS_LIST = "https://raw.githubusercontent.com/NABSA/gbfs/master/systems.csv"
 
 # User agent to identify this as a Tidbyt community app when making requests
 USER_AGENT = "Tidbyt - Bikeshare (https://github.com/tidbyt/community/tree/main/apps/bikeshare)"
 
 def fetch_status(station):
+    if not station or not station["url"].startswith("https://"):
+        return None
     station_status_resp = http.get(
         url = station["url"],
         headers = {
             "Accept": "application/json",
             "User-Agent": USER_AGENT,
         },
-        ttl_seconds = 60,
     )
 
     if (station_status_resp.status_code != 200):
         print("Bikeshare request failed with status %d", station_status_resp.status_code)
-        return []
+        return None
 
-    station_json = station_status_resp.body()
+    body = station_status_resp.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    statuses = data.get("data", {}).get("stations", []) if type(data) == "dict" else []
+    for status in statuses[:MAX_STATIONS]:
+        if type(status) == "dict" and str(status.get("station_id", "")) == station["id"]:
+            return status
+    return None
 
-    # Station status start
-    statuses = json.decode(station_json)["data"]["stations"]
-    return [s for s in statuses if s["station_id"] == station["station"]["station_id"]]
+def parse_station(value, fallback, status_url):
+    decoded = json.decode(value, None) if value else None
+    if type(decoded) == "dict":
+        details = decoded.get("station", {})
+        if type(details) != "dict":
+            return None
+        station_id = str(details.get("station_id", "")).strip()
+        name = str(details.get("name", station_id)).strip()
+        url = decoded.get("url") or status_url
+    else:
+        station_id = str(value or fallback["id"]).strip()
+        name = fallback["name"] if not value or station_id == fallback["id"] else station_id
+        url = status_url
+    if not station_id or not name or type(url) != "string":
+        return None
+    return {"id": station_id[:128], "name": name[:80], "url": url.strip()}
 
 def main(config):
-    start = json.decode(config.get("station_start", BIKESHARE_STATION_START))
-    stop = json.decode(config.get("station_stop", BIKESHARE_STATION_STOP))
-
-    # Fetch status for start and stop stations
-    # We fetch twice (cached anyway) to guarantee that the defaulted url and station ids match
-    start_status = fetch_status(start)
-    stop_status = fetch_status(stop)
-    if (len(start_status) == 0 or len(stop_status) == 0):
+    status_url = config.str("station_status_url", DEFAULT_STATUS_URL).strip()
+    start = parse_station(config.get("station_start"), DEFAULT_START, status_url)
+    stop = parse_station(config.get("station_stop"), DEFAULT_STOP, status_url)
+    if not start or not stop:
         return render_error()
 
-    start["availability"] = start_status[0]["num_bikes_available"]
-    stop["availability"] = stop_status[0]["num_docks_available"]
+    start_status = fetch_status(start)
+    stop_status = fetch_status(stop)
+    if not start_status or not stop_status:
+        return render_error()
+
+    start["availability"] = max(0, int(start_status.get("num_bikes_available", 0)))
+    stop["availability"] = max(0, int(stop_status.get("num_docks_available", 0)))
 
     return render.Root(
         render.Column(
@@ -75,7 +94,7 @@ def main(config):
                             pad = (2, 0, 0, 0),
                             child = render.Marquee(
                                 width = 48,
-                                child = render.Text(content = start["station"]["name"], font = "tom-thumb"),
+                                child = render.Text(content = start["name"], font = "tom-thumb"),
                             ),
                         ),
                         render.Padding(
@@ -92,7 +111,7 @@ def main(config):
                             pad = (2, 0, 2, 0),
                             child = render.Marquee(
                                 width = 48,
-                                child = render.Text(content = stop["station"]["name"], font = "tom-thumb"),
+                                child = render.Text(content = stop["name"], font = "tom-thumb"),
                             ),
                         ),
                         render.Padding(
@@ -128,118 +147,37 @@ def render_error():
         ),
     )
 
-# Configuration for the applet
-
-def bikeshare_to_option(bikeshare):
-    return schema.Option(
-        display = bikeshare[1] + " - " + bikeshare[2],
-        value = bikeshare[5],
-    )
-
-def get_bikeshare_providers():
-    resp = http.get(
-        url = GBFS_LIST,
-        ttl_seconds = 60 * 60 * 24,
-    )
-    if resp.status_code != 200:
-        return []
-    bikeshare_csv = resp.body()
-
-    bikeshares = csv.read_all(
-        source = bikeshare_csv,
-    )
-
-    mapped = [bikeshare_to_option(bikeshare) for bikeshare in bikeshares]
-
-    return mapped[1:]
-
-# Look up discovery data for given gbfs url
-def gbfs_discovery(gbfs_url):
-    print("Fetching GBFS discovery data from " + gbfs_url)
-    resp = http.get(
-        url = gbfs_url,
-        ttl_seconds = 60 * 60 * 24,
-    )
-    if resp.status_code != 200:
-        return None
-    discovery_json = resp.body()
-
-    return json.decode(discovery_json)
-
-# Look up bikeshare locations for given url
-def bikeshare_stations(url):
-    resp = http.get(
-        url = url,
-        headers = {
-            "User-Agent": USER_AGENT,
-        },
-        ttl_seconds = 60 * 60 * 24,
-    )
-    if resp.status_code != 200:
-        return []
-    resp_json = resp.body()
-
-    return json.decode(resp_json)
-
-# Given a bikeshare provider look up its stations for use as dropdown options
-def locations(provider):
-    discovery = gbfs_discovery(provider)
-    if discovery == None:
-        return []
-    feeds = discovery["data"].values()[0]["feeds"]
-    infoFeed = [f for f in feeds if f["name"] == "station_information"]
-    statusFeed = [f for f in feeds if f["name"] == "station_status"]
-    if (len(infoFeed) == 0 or len(statusFeed) == 0):
-        return []
-
-    stations = bikeshare_stations(infoFeed[0]["url"])
-
-    # We append the status feed url to each option so we can fetch the status later
-    options = [schema.Option(
-        display = station["name"],
-        value = json.encode({"station": station, "url": statusFeed[0]["url"]}),
-    ) for station in stations["data"]["stations"]]
-
-    if len(options) == 0:
-        return []
-
-    return [
-        schema.Dropdown(
-            id = "station_start",
-            name = "Start station",
-            desc = "Where to pick up bike",
-            icon = "bicycle",
-            options = options,
-            default = options[0].value,
-        ),
-        schema.Dropdown(
-            id = "station_stop",
-            name = "Stop station",
-            desc = "Where to drop off bike",
-            icon = "squareParking",
-            options = options,
-            default = options[0].value,
-        ),
-    ]
-
 def get_schema():
-    providers = get_bikeshare_providers()
-
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "provider",
-                name = "Provider",
-                desc = "A list of bikeshare providers.",
+                name = "Provider URL",
+                desc = "Public HTTPS GBFS provider URL (kept for existing installations and host approval).",
                 icon = "building",
-                options = providers,
-                default = providers[7].value,
+                default = DEFAULT_STATUS_URL,
             ),
-            schema.Generated(
-                id = "locations",
-                source = "provider",
-                handler = locations,
+            schema.Text(
+                id = "station_status_url",
+                name = "Station status URL",
+                desc = "Public HTTPS GBFS station_status feed.",
+                icon = "link",
+                default = DEFAULT_STATUS_URL,
+            ),
+            schema.Text(
+                id = "station_start",
+                name = "Start station ID",
+                desc = "Station ID for available bikes; legacy saved selections still work.",
+                icon = "bicycle",
+                default = DEFAULT_START["id"],
+            ),
+            schema.Text(
+                id = "station_stop",
+                name = "Stop station ID",
+                desc = "Station ID for available docks; legacy saved selections still work.",
+                icon = "squareParking",
+                default = DEFAULT_STOP["id"],
             ),
         ],
     )

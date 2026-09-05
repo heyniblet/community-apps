@@ -5,7 +5,7 @@ Description: See your latest Bird Buddy feeder visitors.
 Author: Brombomb
 """
 
-load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/default_finch_icon.webp", DEFAULT_FINCH_ICON_ASSET = "file")
 load("render.star", "render")
@@ -19,6 +19,8 @@ BIRD_BUDDY_GRAPHQL_URL = "https://graphql.app-api.prod.aws.mybirdbuddy.com/graph
 
 # Cache TTL (5 minutes)
 CACHE_TTL = 300
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_FEED_ITEMS = 100
 
 # Display constants
 BIRD_ICON_SIZE = 32
@@ -60,7 +62,7 @@ def main(config):
     feeders = get_feeders(token)
     if feeders == None:
         print("Token expired or auth error. Re-authenticating...")
-        token = get_auth_token(username, password, force_refresh = True)
+        token = get_auth_token(username, password)
         if not token:
             return render_error("Authentication failed.\nCheck credentials")
         feeders = get_feeders(token)
@@ -89,25 +91,14 @@ def main(config):
     if diff_seconds > 3600:  # older than 1 hour
         return []
 
-    # Inject random bird icon for mystery visitors
-    if latest_sighting.get("bird_name") == "Mystery Visitor" and not latest_sighting.get("icon_url"):
-        print("Mystery visitor found! Fetching random avatar from the full Bird Buddy catalog...")
-        random_species = get_random_collection_species(token)
-        if random_species and random_species.get("iconUrl"):
-            print("Selected random avatar: {}".format(random_species.get("name", "Unknown")))
-            latest_sighting["icon_url"] = random_species["iconUrl"]
-
     return render_bird_display(latest_sighting)
 
-def get_auth_token(username, password, force_refresh = False):
+def response_json(response):
+    body = response.body()
+    return json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+
+def get_auth_token(username, password):
     """Authenticate with Bird Buddy API and get access token"""
-
-    cache_key = "bb_token_{}".format(username)
-    cached_token = None if force_refresh else cache.get(cache_key)
-
-    if cached_token:
-        print("Using cached token")
-        return cached_token
 
     # GraphQL mutation for authentication based on PyBirdBuddy
     auth_mutation = {
@@ -139,12 +130,10 @@ def get_auth_token(username, password, force_refresh = False):
         url = BIRD_BUDDY_GRAPHQL_URL,
         json_body = auth_mutation,
         headers = headers,
-        ttl_seconds = 60,
     )
 
     if response.status_code != 200:
         print("Auth failed with status: {}".format(response.status_code))
-        print("Response body: {}".format(response.body()))
         if response.status_code == 400:
             print("Invalid credentials - check username/password")
         elif response.status_code == 401:
@@ -153,7 +142,7 @@ def get_auth_token(username, password, force_refresh = False):
             print("Forbidden - account may be locked")
         return None
 
-    auth_response = response.json()
+    auth_response = response_json(response)
     if not auth_response:
         print("Failed to parse auth JSON response")
         return None
@@ -165,8 +154,6 @@ def get_auth_token(username, password, force_refresh = False):
             if auth_data.get("__typename") == "Auth":
                 token = auth_data.get("accessToken")
                 if token:
-                    # Cache token for 14 minutes (tokens usually last 15 min)
-                    cache.set(cache_key, token, ttl_seconds = 840)
                     return token
 
                 # Check if it's a different response type (Problem, etc.)
@@ -242,12 +229,10 @@ def get_feeders(token):
         url = BIRD_BUDDY_GRAPHQL_URL,
         json_body = feeders_query,
         headers = headers,
-        ttl_seconds = CACHE_TTL,
     )
 
     if response.status_code != 200:
         print("Feeders request failed: {}".format(response.status_code))
-        print("Feeders response body: {}".format(response.body()))
         if response.status_code == 429:
             print("RATE LIMITED: Too many requests to Bird Buddy API")
         elif response.status_code == 500:
@@ -256,7 +241,7 @@ def get_feeders(token):
             print("UNAUTHORIZED: Token may be expired")
         return None
 
-    feeders_response = response.json()
+    feeders_response = response_json(response)
     if not feeders_response:
         print("Failed to parse JSON response")
         return []
@@ -280,7 +265,7 @@ def get_feeders(token):
         me_data = data.get("me") or {}
         if me_data:
             feeders_data = me_data.get("feeders", [])
-            return feeders_data
+            return [feeder for feeder in feeders_data[:50] if type(feeder) == "dict"] if type(feeders_data) == "list" else []
         else:
             print("No 'me' data in response. Response: {}".format(feeders_response))
             return []
@@ -288,7 +273,7 @@ def get_feeders(token):
         print("Failed to parse feeders response. Response: {}".format(feeders_response))
         return []
 
-def get_latest_sighting(token, feeders, ttl_seconds = CACHE_TTL):
+def get_latest_sighting(token, feeders):
     """Get the most recent bird sighting from feed using GraphQL"""
 
     if not feeders:
@@ -385,11 +370,10 @@ def get_latest_sighting(token, feeders, ttl_seconds = CACHE_TTL):
         url = BIRD_BUDDY_GRAPHQL_URL,
         json_body = feed_query,
         headers = headers,
-        ttl_seconds = ttl_seconds,
     )
 
     if response.status_code == 200:
-        feed_response = response.json()
+        feed_response = response_json(response)
         if not feed_response:
             print("Failed to parse feed JSON response")
         elif "data" in feed_response:
@@ -400,7 +384,7 @@ def get_latest_sighting(token, feeders, ttl_seconds = CACHE_TTL):
                 feed_edges = feed.get("edges") or []
                 if feed_edges:
                     # Look for the most recent BIRD-related feed item only
-                    for edge in feed_edges:
+                    for edge in feed_edges[:MAX_FEED_ITEMS]:
                         node = edge.get("node", {})
                         node_type = node.get("__typename", "")
 
@@ -412,25 +396,11 @@ def get_latest_sighting(token, feeders, ttl_seconds = CACHE_TTL):
                                 # Check if this is a postcard that needs bird detail lookup
                                 if "postcard_id" in parsed_result:
                                     postcard_id = parsed_result["postcard_id"]
-                                    raw_data = parsed_result.get("raw_data", {})
-                                    execution_mode = raw_data.get("inferenceExecutionMode", "")
-                                    if execution_mode == "MANUAL_NOT_STARTED":
-                                        print("Postcard execution mode is MANUAL_NOT_STARTED. Triggering AI reanalysis...")
-                                        reanalyze_postcard(token, postcard_id)
-
-                                    sighting_result = get_postcard_sighting(token, postcard_id)
+                                    sighting_result = reanalyze_postcard(token, postcard_id)
                                     if sighting_result:
-                                        # Use the postcard timestamp but bird name from sighting
-                                        sighting_result["timestamp"] = parsed_result["timestamp"]
-                                        print("Successfully claimed postcard: {}".format(sighting_result))
+                                        sighting_result["timestamp"] = parsed_result["timestamp"] or sighting_result.get("timestamp")
                                         return sighting_result
-                                    elif ttl_seconds > 0:
-                                        # If claiming the cached postcard failed, re-fetch feed with no cache
-                                        print("Postcard claim failed (likely already collected). Re-fetching fresh feed...")
-                                        return get_latest_sighting(token, feeders, ttl_seconds = 0)
                                     else:
-                                        # Skip this failed postcard and try the next feed item
-                                        print("Skipping failed postcard, trying next feed item...")
                                         continue
                                 else:
                                     print("Returning valid sighting from feed: {}".format(parsed_result))
@@ -449,7 +419,6 @@ def get_latest_sighting(token, feeders, ttl_seconds = CACHE_TTL):
             print("No data in feed response")
     else:
         print("Feed request failed: {}".format(response.status_code))
-        print("Feed response body: {}".format(response.body()))
         if response.status_code == 429:
             print("RATE LIMITED: Too many feed requests to Bird Buddy API")
         elif response.status_code == 500:
@@ -472,7 +441,29 @@ def reanalyze_postcard(token, postcard_id):
                         __typename
                         ... on FeedItemNewPostcard {
                             id
+                            createdAt
                             inferenceExecutionMode
+                            sightingReportPreview {
+                                sightings {
+                                    __typename
+                                    ... on SightingRecognizedBird {
+                                        species {
+                                            ... on SpeciesBird {
+                                                id
+                                                name
+                                            }
+                                        }
+                                    }
+                                    ... on SightingRecognizedBirdUnlocked {
+                                        species {
+                                            ... on SpeciesBird {
+                                                id
+                                                name
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -492,14 +483,13 @@ def reanalyze_postcard(token, postcard_id):
         url = BIRD_BUDDY_GRAPHQL_URL,
         json_body = reanalyze_mutation,
         headers = headers,
-        ttl_seconds = 0,
     )
 
     if response.status_code != 200:
         print("Postcard reanalyze request failed: {}".format(response.status_code))
         return False
 
-    reanalyze_response = response.json()
+    reanalyze_response = response_json(response)
     if not reanalyze_response:
         print("Failed to parse reanalyze JSON response")
         return False
@@ -516,10 +506,19 @@ def reanalyze_postcard(token, postcard_id):
 
     reanalyze_result = data.get("inferenceExternalPostcardReanalyze") or {}
     updated_item = reanalyze_result.get("updatedFeedItem") or {}
-    new_mode = updated_item.get("inferenceExecutionMode")
-    print("Postcard reanalyzed. New mode: {}".format(new_mode))
-
-    return True
+    preview = updated_item.get("sightingReportPreview") or {}
+    sightings = preview.get("sightings", []) if type(preview) == "dict" else []
+    for sighting in sightings[:10]:
+        species = sighting.get("species", {}) if type(sighting) == "dict" else {}
+        name = species.get("name") if type(species) == "dict" else None
+        if name:
+            return {
+                "bird_name": str(name)[:120],
+                "timestamp": updated_item.get("createdAt", ""),
+                "icon_url": "",
+                "raw_data": {},
+            }
+    return None
 
 def get_postcard_sighting(token, postcard_id):
     """Convert a postcard to sighting, identify the visitor if needed, finish/collect the postcard, and return details"""
@@ -865,12 +864,11 @@ def fetch_bird_collections(token):
         url = BIRD_BUDDY_GRAPHQL_URL,
         json_body = collections_query,
         headers = headers,
-        ttl_seconds = CACHE_TTL,
     )
 
     print("Fetching collections...")
     if response.status_code == 200:
-        collections_response = response.json()
+        collections_response = response_json(response)
         if not collections_response:
             print("Failed to parse collections JSON response")
             return []
@@ -884,7 +882,7 @@ def fetch_bird_collections(token):
 
                 if collections:
                     bird_collections = []
-                    for collection in collections:
+                    for collection in collections[:500]:
                         if collection.get("__typename") == "CollectionBird":
                             bird_collections.append(collection)
 
@@ -898,7 +896,6 @@ def fetch_bird_collections(token):
                 print("GraphQL Collections Error: {}".format(error.get("message", "Unknown error")))
     else:
         print("Collections request failed: {}".format(response.status_code))
-        print("Collections response body: {}".format(response.body()))
 
     return []
 
@@ -1122,7 +1119,6 @@ def render_bird_display(sighting):
 
     bird_name = sighting["bird_name"]
     timestamp_str = sighting["timestamp"]
-    icon_url = sighting.get("icon_url", "")
 
     # Format timestamp for display - use humanized time
     time_display = humanize_time_ago(timestamp_str)
@@ -1130,18 +1126,7 @@ def render_bird_display(sighting):
     # Calculate timestamp color based on recency - decays from green to gray over 24 hours
     timestamp_color = get_timestamp_color(timestamp_str)
 
-    # Create bird display with proper error handling for image fetching
-    bird_image_data = None
-
-    # Try to fetch the bird-specific icon first
-    if icon_url:
-        icon_response = http.get(icon_url)
-        if icon_response.status_code == 200 and icon_response.body():
-            bird_image_data = icon_response.body()
-
-    # If primary icon failed, use the embedded finch icon (no HTTP request needed)
-    if not bird_image_data:
-        bird_image_data = DEFAULT_FINCH_ICON
+    bird_image_data = DEFAULT_FINCH_ICON
 
     # Create bird display - use image if we got valid data, otherwise use text fallback
     if bird_image_data:
