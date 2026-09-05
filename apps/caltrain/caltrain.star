@@ -64,30 +64,57 @@ STATIC_STATIONS = [
     {"id": "7027", "Name": "Tamien"},
 ]
 
+API_URL = "https://api.511.org/transit/StopMonitoring"
+CLASSIC_LOGO_URL = "https://agency-logos.sfbatransit.community/caltrain-circle.png"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_LOGO_BYTES = 512 * 1024
+MAX_DEPARTURES = 100
+
 # Fetch future departures for a single 5-digit stop code
 def _fetch_future_departures(stop_code, key):
-    url = "http://api.511.org/transit/StopMonitoring?api_key=%s&agency=CT&stopCode=%s&format=json" % (key, stop_code)
-    response = http.get(url, ttl_seconds = 1)
+    response = http.get(API_URL, params = {"api_key": key, "agency": "CT", "stopCode": stop_code, "format": "json"})
+    body = response.body()
     if response.status_code != 200:
-        fail("Rate Limit")
+        print("511 request failed with status %d" % response.status_code)
+        return []
+    if not body or len(body) > MAX_RESPONSE_BYTES:
+        return []
 
-    cleaned_content = clean_response(response.body())
-    visits = json.decode(cleaned_content)["ServiceDelivery"]["StopMonitoringDelivery"]["MonitoredStopVisit"]
+    data = json.decode(clean_response(body), None)
+    if type(data) != "dict":
+        return []
+    delivery = data.get("ServiceDelivery", {}).get("StopMonitoringDelivery", {})
+    visits = delivery.get("MonitoredStopVisit", []) if type(delivery) == "dict" else []
+    if type(visits) != "list":
+        return []
 
     future = []
-    for visit in visits:
-        departure = visit["MonitoredVehicleJourney"]["MonitoredCall"]["AimedDepartureTime"]
+    for visit in visits[:MAX_DEPARTURES]:
+        journey = visit.get("MonitoredVehicleJourney", {}) if type(visit) == "dict" else {}
+        call = journey.get("MonitoredCall", {}) if type(journey) == "dict" else {}
+        departure = call.get("AimedDepartureTime") if type(call) == "dict" else None
+        if not departure:
+            continue
         if humanize.time(time.parse_time(departure)).find("from") != -1:
             future.append(visit)
     return future
 
 # Fetch raw Caltrain departure data for a stop
 def get_caltrain_departures(stop_id, key):
+    if not stop_id or len(stop_id) not in [4, 5] or not stop_id.isdigit():
+        return []
     if len(stop_id) == 4:
         departures = _fetch_future_departures(stop_id + "1", key) + _fetch_future_departures(stop_id + "2", key)
         return manual_sort(departures, compare_departures)
 
     return _fetch_future_departures(stop_id, key)
+
+def get_logo(style):
+    if style == "updated":
+        return CT_LOGO_FILE.readall()
+    response = http.get(CLASSIC_LOGO_URL, ttl_seconds = 86400)
+    body = response.body()
+    return body if response.status_code == 200 and body and len(body) <= MAX_LOGO_BYTES else CT_LOGO_FILE.readall()
 
 # Column widths for departure rows at each resolution
 # tom-thumb is ~4px/char, terminus-12 is ~6px/char
@@ -313,12 +340,6 @@ def main(config):
     demo_mode = config.bool("demo_mode", False)
     logo_style = config.get("logo_style", "classic")
 
-    if logo_style == "updated":
-        CT_LOGO = CT_LOGO_FILE.readall()
-    else:
-        CT_LOGO_RQ = http.get("https://agency-logos.sfbatransit.community/caltrain-circle.png")
-        CT_LOGO = CT_LOGO_RQ.body()
-
     # Demo mode uses fake data for preview; otherwise require API key
     if demo_mode:
         now = time.now()
@@ -355,7 +376,7 @@ def main(config):
                         expanded = True,
                         main_align = "center",
                         children = [
-                            render.Text(content = "ducks.win/511", offset = s(2), height = s(10), font = font()),
+                            render.Text(content = "511.org token", offset = s(2), height = s(10), font = font()),
                         ],
                     ),
                 ],
@@ -373,6 +394,8 @@ def main(config):
         for stop in STATIC_STATIONS:
             if stop["id"] == stationID:
                 stop_name = stop["Name"]
+
+    CT_LOGO = get_logo(logo_style)
 
     # Filter out departures closer than minimum_time
     if minimum_time > 0:
@@ -448,7 +471,7 @@ def get_schema():
             schema.Text(
                 id = "apiKey",
                 name = "511 API Token",
-                desc = "Request from https://ducks.win/511 then find key in your second email",
+                desc = "Request a personal token from https://511.org/open-data/token",
                 icon = "gears",
                 secret = True,
             ),

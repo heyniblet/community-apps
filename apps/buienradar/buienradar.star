@@ -61,7 +61,10 @@ load("time.star", "time")
 
 DEFAULT_COUNTRY = "NL"
 DEFAULT_DISPLAYING = "radar"
-DEFAULT_LOCATION = "{\"value\": \"2757783\"}"
+DEFAULT_LOCATION = "2757783"
+MAX_JSON_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_NEWS_BYTES = 512 * 1024
 
 COLOR_DIMMED = "#fff6"
 DAYS_SHORT = ["Zo", "Ma", "Di", "Wo", "Do", "Vr", "Za"]
@@ -70,74 +73,52 @@ def day_of_week(date):
     num = humanize.day_of_week(time.parse_time(date + "Z"))
     return DAYS_SHORT[num]
 
-def is_outside_benl(location):
-    lat = float(location["lat"])
-    lng = float(location["lng"])
-    return lat <= 49.49 or lat >= 53.57 or lng <= 2.57 or lng >= 7.20
-
-def convert_locations_to_options(locations):
-    filtered_locations = []
-    for location in locations:
-        if (location["countrycode"] != "BE" or location["countrycode"] != "NL") and ("hidefromsearch" in location and location["hidefromsearch"] == "False"):
-            filtered_locations.append(location)
-
-    options = []
-    for option in filtered_locations:
-        options.append(
-            schema.Option(
-                display = "{}, {}".format(option["name"], option["country"]),
-                value = "{}".format(int(option["id"])),
-            ),
-        )
-    return options
-
-def location_handler(place):
-    location = json.decode(place)
-    if is_outside_benl(location):
-        return [
-            schema.Option(
-                display = "Locatie is buiten België en Nederland",
-                value = "error",
-            ),
-        ]
-
-    data = get_locations(humanize.url_encode(location.get("locality")))
-    return convert_locations_to_options(data) or []
-
-def get_data(url, ttl_seconds):
+def get_data(url, ttl_seconds, max_bytes):
     response = http.get(url = url, ttl_seconds = ttl_seconds)
-    if response.status_code != 200:
-        fail("Buienradar request failed with status %d @ %s", response.status_code, url)
-    return response
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > max_bytes:
+        print("Buienradar request failed with status %d" % response.status_code)
+        return None
+    return body
 
-def get_locations(query, ttl_seconds = 60 * 60):
-    url = "https://location.buienradar.nl/1.1/location/search?query={}".format(query)
-    response = get_data(url, ttl_seconds)
-    return response.json()
+def get_json(url, ttl_seconds):
+    body = get_data(url, ttl_seconds, MAX_JSON_BYTES)
+    return json.decode(body, None) if body else None
 
 def get_forecast(location_id, ttl_seconds = 60 * 60):
     url = "https://forecast.buienradar.nl/2.0/forecast/{}".format(location_id)
-    response = get_data(url, ttl_seconds)
-    return response.json()
+    return get_json(url, ttl_seconds)
 
 def get_radar(country = DEFAULT_COUNTRY, ttl_seconds = 60 * 15):
     url = "https://image.buienradar.nl/2.0/image/animation/RadarMapRainWebMercator{}?width=64&height=64&renderBackground=True&renderBranding=False&renderText=False".format(country)
-    response = get_data(url, ttl_seconds)
-    return response.body()
+    return get_data(url, ttl_seconds, MAX_IMAGE_BYTES)
 
 def get_weather_news_page(ttl_seconds = 60 * 15):
     url = "https://www.buienradar.nl/nederland/weerbericht/weerbericht#readarea"
-    response = get_data(url, ttl_seconds)
-    return response.body()
+    return get_data(url, ttl_seconds, MAX_NEWS_BYTES)
 
 def get_rain_data(lat, lon, ttl_seconds = 60 * 5):
     # url = "https://graphdata.buienradar.nl/2.0/forecast/geo/RainEU3Hour?lat={}&lon={}".format(lat, lon)
     url = "https://graphdata.buienradar.nl/2.0/forecast/geo/RainHistoryForecast?lat={}&lon={}".format(lat, lon)
-    response = get_data(url, ttl_seconds)
-    return response.json()
+    return get_json(url, ttl_seconds)
+
+def error(message):
+    return render.Root(child = render.WrappedText(message, font = "tom-thumb"))
+
+def location_id(value):
+    value = str(value or DEFAULT_LOCATION).strip()
+    decoded = json.decode(value, None)
+    if type(decoded) == "dict":
+        value = str(decoded.get("value") or "").strip()
+    for char in value.elems():
+        if char not in "0123456789":
+            return ""
+    return value if value and len(value) <= 12 else ""
 
 def render_radar(country):
     radar = get_radar(country)
+    if not radar:
+        return error("Buienradar unavailable")
     radar_image = render.Image(
         src = radar,
         width = 64,
@@ -167,10 +148,16 @@ def render_radar(country):
 
 def render_today(location):
     forecast = get_forecast(location)
+    if type(forecast) != "dict" or not forecast.get("days"):
+        return error("Forecast unavailable")
     today = forecast["days"][0]
 
     page = get_weather_news_page()
-    message = html(page).find("#readarea > p:first-child").text().strip()
+    message = "Weather report unavailable"
+    if page:
+        node = html(page).find("#readarea > p:first-child")
+        if node:
+            message = node.text().strip() or message
 
     return render.Root(
         show_full_animation = True,
@@ -255,6 +242,8 @@ def render_today(location):
 
 def render_forecast(location):
     forecast = get_forecast(location)
+    if type(forecast) != "dict" or len(forecast.get("days", [])) < 5:
+        return error("Forecast unavailable")
 
     return render.Root(
         child = render.Row(
@@ -288,7 +277,11 @@ def render_forecast(location):
 
 def render_rain_graph(location):
     forecast = get_forecast(location)
+    if type(forecast) != "dict" or type(forecast.get("location")) != "dict":
+        return error("Forecast unavailable")
     rain_data = get_rain_data(lat = forecast["location"]["lat"], lon = forecast["location"]["lon"])
+    if type(rain_data) != "dict" or not rain_data.get("forecasts"):
+        return error("Rain forecast unavailable")
 
     rain = []
     for idx, d in enumerate(rain_data["forecasts"]):
@@ -491,8 +484,11 @@ def render_weather_column(data):
 def main(config):
     country = config.str("country", DEFAULT_COUNTRY)
     displaying = config.str("displaying", DEFAULT_DISPLAYING)
-    location_id = config.get("location", DEFAULT_LOCATION)
-    location = int(json.decode(location_id)["value"])
+    country = country if country in ["NL", "BE"] else DEFAULT_COUNTRY
+    displaying = displaying if displaying in ["radar", "today", "forecast", "rain_graph"] else DEFAULT_DISPLAYING
+    location = location_id(config.get("location", DEFAULT_LOCATION))
+    if not location:
+        return error("Invalid location ID")
 
     if displaying == "radar":
         return render_radar(country)
@@ -547,12 +543,12 @@ def get_schema():
                 default = DEFAULT_COUNTRY,
                 options = options_countries,
             ),
-            schema.LocationBased(
+            schema.Text(
                 id = "location",
-                name = "Locatie",
-                desc = "Locatie weerbericht.",
+                name = "Buienradar locatie-ID",
+                desc = "Numerieke locatie-ID uit een Buienradar URL; bestaande locaties blijven werken.",
                 icon = "locationDot",
-                handler = location_handler,
+                default = DEFAULT_LOCATION,
             ),
             schema.Dropdown(
                 id = "displaying",

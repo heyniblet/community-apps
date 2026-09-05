@@ -29,6 +29,7 @@ GREEN_FUEL_TYPES = {
 CACHE_KEY = "FUEL_USAGE_DATA"
 
 DEFAULT_DELAY = "2"  # if this gets too large, not enough time to display all energy sources given app rotation
+MAX_RESPONSE_BYTES = 512 * 1024
 
 def sum(input_list):
     total = 0
@@ -60,10 +61,10 @@ def title(name, amount, color):
 # ...
 def get_raw_data():
     rep = http.get(FUEL_URL, ttl_seconds = 60 * 5)
-    if rep.status_code != 200:
-        fail("Request failed with status %d", rep.status_code)
     data = rep.body()
-
+    if rep.status_code != 200 or not data or len(data) > MAX_RESPONSE_BYTES:
+        print("CAISO request failed with status %d" % rep.status_code)
+        return None
     return data
 
 # Turn the raw CSV into a useable data structure.
@@ -121,18 +122,22 @@ def main(config):
     # Large hydro isn't on the official CAISO renewable list but is interesting enough to include (and other tools include it as a renewable)
     # but if we want to exclude it or batteries from the green list, we need to remove it from the green total, and not just hide it like biogas, etc
 
-    if config.get("large_hydro") == "false":
+    if not config.bool("large_hydro", True):
         display_fuel_types.pop("Large Hydro")
         print("removing large hydro")
-    if config.get("batteries") == "false":
+    if not config.bool("batteries", True):
         display_fuel_types.pop("Batteries")
         print("removing batteries")
 
     raw_csv = get_raw_data()
+    if not raw_csv:
+        return render.Root(child = render.Text("CAISO unavailable", font = "tom-thumb"))
     segmented, totals = process_data(raw_csv, display_fuel_types)
+    if not totals or totals[-1] <= 0:
+        return render.Root(child = render.Text("No grid data", font = "tom-thumb"))
     baseline, low = get_green_total(segmented, len(totals))
 
-    if config.get("batteries_charging") == "false":
+    if not config.bool("batteries_charging", True):
         low = 0
         print("hide charging batteries on chart")
     else:
@@ -148,22 +153,22 @@ def main(config):
     # probably a more elegant way to do this, maybe add display options to the dictionary?)
     # also, why aren't these config values really booleans?
 
-    if config.get("biogas") == "false":
+    if not config.bool("biogas", False):
         display_fuel_types.pop("Biogas")
         print("hiding biogas")
-    if config.get("biomass") == "false":
+    if not config.bool("biomass", False):
         display_fuel_types.pop("Biomass")
         print("hiding biomass")
-    if config.get("small_hydro") == "false":
+    if not config.bool("small_hydro", False):
         display_fuel_types.pop("Small hydro")
         print("hiding small hydro")
-    if config.get("geothermal") == "false":
+    if not config.bool("geothermal", False):
         display_fuel_types.pop("Geothermal")
         print("hiding geothermal")
-    if config.get("solar") == "false":
+    if not config.bool("solar", True):
         display_fuel_types.pop("Solar")
         print("hiding solar")
-    if config.get("wind") == "false":
+    if not config.bool("wind", True):
         display_fuel_types.pop("Wind")
         print("hiding wind")
 
