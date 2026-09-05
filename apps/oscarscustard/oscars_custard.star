@@ -28,8 +28,9 @@ OSCARS_ICON_HEIGHT = 23
 
 OSCARS_HOMEPAGE_EXCERPT_URL = (
     "https://www.oscarscustard.com/index.php/wp-json/wp/v2/pages/41?_fields=" +
-    "excerpt"
+    "content,excerpt"
 )
+MAX_RESPONSE_BYTES = 128 * 1024
 
 MIN_CONTRAST = 4.5
 
@@ -261,24 +262,24 @@ def get_featured_items():
     # "Flavor of the DayTuesday, May 27: OSCAR'S DELIGHT -or- BLACK
     # RASPBERRYMay FeaturesQUESO BURGER ".
     rep = http.get(OSCARS_HOMEPAGE_EXCERPT_URL, ttl_seconds = TTL_SECONDS)
-    if rep.status_code != 200:
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return {
             "error": "Oscar's status code: %s" % rep.status_code,
         }
-    text = html(rep.json()["excerpt"]["rendered"]).text()
+    payload = rep.json()
+    if type(payload) != "dict" or type(payload.get("excerpt")) != "dict" or type(payload.get("content")) != "dict":
+        return {"error": "Oscar's returned invalid data"}
+    excerpt = payload["excerpt"].get("rendered")
+    content = payload["content"].get("rendered")
+    if type(excerpt) != "string" or type(content) != "string":
+        return {"error": "Oscar's returned invalid data"}
+    text = html(excerpt).text()
 
     # Extract the sandwich of the month
-    sandwich_match = re.match(
-        r"Features([A-Z !&'\-.ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜ‘’…]+) ",
-        text,
-    )
+    sandwich_match = re.match(r"admin_label=&#8221;Sandwich&#8221;[\s\S]*?<h3><strong><br\s*/>\s*([^<]+)</strong></h3>", content)
     if sandwich_match:
-        items["sandwich"] = normalize_flavor_name(sandwich_match[0][1])
-
-        # HACK The regex doesn't properly handle when the following
-        # description starts with the capitalized word "A", so I remove
-        # it here.
-        items["sandwich"] = items["sandwich"].removesuffix(" A")
+        items["sandwich"] = normalize_flavor_name(html(sandwich_match[0][1]).text())
     else:
         items["sandwich"] = "Unrecognized sandwich"
 
