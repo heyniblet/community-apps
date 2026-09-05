@@ -8,6 +8,7 @@ Author: leoadberg
 load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("math.star", "math")
 load("random.star", "random")
 load("render.star", "render")
@@ -66,18 +67,25 @@ orderings = [
 ]
 
 API = "https://backoffice-service-t57o3dxfca-nn.a.run.app/api/"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_ITEMS = 200
+MAX_TEXT_LENGTH = 240
 
-def get(path, ttl):
-    data = http.get(API + path, ttl_seconds = ttl).body()
-    return json.decode(data)
-
-def username_to_id(user):
-    data = get("user/member/?&username__iexact=" + user, 10000000)  # Should literally never expire
-
-    if "results" not in data or len(data["results"]) != 1 or "id" not in data["results"][0]:
+def get(path, api_token):
+    response = http.get(API + path, headers = {"Authorization": "Bearer " + api_token})
+    if response.status_code != 200:
         return None
+    body = response.body()
+    return json.decode(body) if len(body) <= MAX_RESPONSE_BYTES else None
 
-    return data["results"][0]["id"]
+def username_to_id(user, api_token):
+    data = get("user/member/?username__iexact=" + humanize.url_encode(user), api_token)
+
+    results = data.get("results") if type(data) == "dict" else None
+    if type(results) != "list" or len(results) != 1 or type(results[0]) != "dict":
+        return None
+    user_id = results[0].get("id")
+    return str(user_id) if type(user_id) in ["string", "int"] else None
 
 def renderRating(rating):
     if rating == -1:
@@ -101,26 +109,35 @@ def renderRating(rating):
         Pad(Text(s, color = color), (51, 21, 0, 0)),
     )
 
-def getFriendsActivity(id, cutoff, index):
-    data = get("newsfeed-old/" + id + "/?max_items=30", 600)
-    scores = get("newsfeed-scores/" + id, 600)
+def getFriendsActivity(id, cutoff, index, api_token):
+    data = get("newsfeed-old/" + id + "/?max_items=30", api_token)
+    scores = get("newsfeed-scores/" + id, api_token)
+    results = data.get("results") if type(data) == "dict" else None
+    if type(results) != "list" or type(scores) != "list":
+        return None
     scoremap = {}
-    for score in scores:
-        scoremap[score["user_id"] + str(score["business_id"])] = score["value"]
+    for score in scores[:MAX_ITEMS]:
+        if type(score) == "dict" and type(score.get("user_id")) == "string" and type(score.get("business_id")) in ["string", "int"] and type(score.get("value")) in ["int", "float"]:
+            scoremap[score["user_id"] + str(score["business_id"])] = score["value"]
 
-    results = [x for x in data["results"] if x["event_type"] == "ADD"]
+    results = [x for x in results[:MAX_ITEMS] if type(x) == "dict" and x.get("event_type") == "ADD"]
     if cutoff > 0:
-        results = [x for x in results if (time.now() - time.parse_time(x["sent_dt"])) < time.minute * cutoff]
+        results = [x for x in results if type(x.get("sent_dt")) == "string" and len(x["sent_dt"]) <= 40 and (time.now() - time.parse_time(x["sent_dt"])) < time.minute * cutoff]
 
     if len(results) == 0:
         return None
 
     item = results[index % len(results)]
 
-    text = item["body"]
-    user, business = text.split(" ranked ")
+    text = item.get("body")
+    parts = text.split(" ranked ") if type(text) == "string" else []
+    if len(parts) != 2:
+        return None
+    user, business = parts
+    user = user[:MAX_TEXT_LENGTH]
+    business = business[:MAX_TEXT_LENGTH]
 
-    key = item["user1"] + str(item["business"])
+    key = str(item.get("user1", "")) + str(item.get("business", ""))
     rating = -1
     if key in scoremap:
         rating = scoremap[key]
@@ -134,12 +151,22 @@ def getFriendsActivity(id, cutoff, index):
         renderRating(rating),
     )
 
-def getMyActivity(id, cutoff, index):
-    profile = get("user/member/?id=" + id, 10000000)["results"][0]
-    data = get("rank-list/" + id, 600)["results"]
+def getMyActivity(id, cutoff, index, api_token):
+    profile_data = get("user/member/?id=" + id, api_token)
+    rank_data = get("rank-list/" + id, api_token)
+    profiles = profile_data.get("results") if type(profile_data) == "dict" else None
+    data = rank_data.get("results") if type(rank_data) == "dict" else None
+    if type(profiles) != "list" or not profiles or type(profiles[0]) != "dict" or type(data) != "list":
+        return None
+    profile = profiles[0]
+    data = [item for item in data[:MAX_ITEMS] if type(item) == "dict" and type(item.get("created_dt")) == "string"]
     data = sorted(data, key = lambda x: x["created_dt"], reverse = True)
 
-    name = profile["first_name"] + " " + profile["last_name"]
+    first_name = profile.get("first_name")
+    last_name = profile.get("last_name")
+    if type(first_name) != "string" or type(last_name) != "string":
+        return None
+    name = (first_name + " " + last_name)[:MAX_TEXT_LENGTH]
 
     if cutoff > 0:
         data = [x for x in data if (time.now() - time.parse_time(x["created_dt"])) < time.minute * cutoff]
@@ -148,30 +175,45 @@ def getMyActivity(id, cutoff, index):
         return None
 
     item = data[index % len(data)]
+    business = item.get("business__name")
+    score = item.get("score")
+    if type(business) != "string" or type(score) not in ["int", "float"]:
+        return None
     return Stack(
         Column(
             Marquee(Text(name, color = "#8ff"), width = 64),
             Text("ranked", color = "#aaa"),
-            WrappedText(item["business__name"], width = 52),
+            WrappedText(business[:MAX_TEXT_LENGTH], width = 52),
         ),
-        renderRating(item["score"]),
+        renderRating(score),
     )
 
 def main(config):
-    user = config.str("user", DEFAULT_WHO)
-    id = username_to_id(user)
+    api_token = config.get("api_token")
+    if type(api_token) != "string" or not api_token or len(api_token) > 2048 or "\r" in api_token or "\n" in api_token:
+        return render.Root(child = WrappedText("Beli API token required", width = 64, align = "center"))
+
+    user = config.get("user") or DEFAULT_WHO
+    if type(user) != "string" or not user or len(user) > 80:
+        return render.Root(child = WrappedText("Invalid Beli username", width = 64, align = "center"))
+    id = username_to_id(user, api_token)
     if not id:
         return render.Root(child = Text("Unknown user"))
 
     mode = config.str("mode", modes[0].value)
     order = config.str("order", orderings[0].value)
+    if mode not in [option.value for option in modes]:
+        mode = modes[0].value
+    if order not in [option.value for option in orderings]:
+        order = orderings[0].value
     cutoff_str = config.str("time", "0")
     cutoff = 0
     if cutoff_str.isdigit():
-        cutoff = int(cutoff_str)
+        cutoff = min(int(cutoff_str), 525600)
 
-    indexkey = user + mode + order + cutoff_str
-    index = int(cache.get(indexkey) or 0)
+    indexkey = "beli:" + user + ":" + mode + ":" + order + ":" + str(cutoff)
+    cached_index = cache.get(indexkey) or "0"
+    index = int(cached_index) if cached_index.isdigit() else 0
 
     cache.set(indexkey, str(index + 1), 600)  # Keep position in list for 10m
 
@@ -179,11 +221,9 @@ def main(config):
         index = random.number(0, 100000)
 
     if mode == "mine":
-        frame = getMyActivity(id, cutoff, index)
-    elif mode == "friends":
-        frame = getFriendsActivity(id, cutoff, index)
+        frame = getMyActivity(id, cutoff, index, api_token)
     else:
-        fail()
+        frame = getFriendsActivity(id, cutoff, index, api_token)
 
     if frame == None:
         return []
@@ -222,6 +262,13 @@ def get_schema():
                 desc = "Only display ratings within the last N minutes. The app will be skipped if there are none. '0' or any non-number will show ratings from any time.",
                 icon = "clock",
                 default = "0",
+            ),
+            schema.Text(
+                id = "api_token",
+                name = "Beli API token",
+                desc = "Bearer token for Beli's authenticated API.",
+                icon = "key",
+                secret = True,
             ),
         ],
     )
