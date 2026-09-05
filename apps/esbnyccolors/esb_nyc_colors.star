@@ -5,6 +5,7 @@ Description: Shows today's colors of the Empire State Building.
 Author: sklose
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -23,24 +24,23 @@ COLOR_MAP = {
     "teal": "#088",
     "burgundy": "#802",
 }
+MAX_RESPONSE_BYTES = 64 * 1024
 
 def main(config):
     rep = http.get("https://lzxe5agehadtlh2kaecrlk62c40dimdp.lambda-url.us-east-1.on.aws/", ttl_seconds = 3600)
-    if rep.status_code != 200:
-        fail("request failed with status %d", rep.status_code)
+    body = rep.body()
+    data = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    colors = data.get("colors") if type(data) == "dict" else None
+    if type(colors) != "list" or not colors:
+        return render.Root(child = render.Box(render.WrappedText("ESB colors unavailable")))
 
-    json = rep.json()
-    description = json["description"]
-    color1 = json["colors"][0]
-    color2 = json["colors"][0]
-    color3 = json["colors"][0]
-
-    if len(json["colors"]) > 1:
-        color2 = json["colors"][1]
-        color3 = json["colors"][1]
-
-    if len(json["colors"]) > 2:
-        color3 = json["colors"][2]
+    description = str(data.get("description") or "Empire State Building")[:200]
+    safe_colors = [color for color in colors[:3] if type(color) == "string" and color.lower() in COLOR_MAP]
+    if not safe_colors:
+        safe_colors = ["white"]
+    color1 = safe_colors[0].lower()
+    color2 = safe_colors[1].lower() if len(safe_colors) > 1 else color1
+    color3 = safe_colors[2].lower() if len(safe_colors) > 2 else color2
 
     verticalMode = config.bool("vertical-mode")
     if verticalMode:
