@@ -5,7 +5,6 @@ Summary: NS Timetable
 Description: Shows a timetable for a station in the Netherlands (NS).
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
@@ -13,8 +12,6 @@ load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-
-API_KEY = "20f49c5c5e43465cab9ac8812c84ab22"
 
 CORE_BACKGROUND_COLOR = "#003082"
 INFO_BACKGROUND_COLOR = "#FF7700"
@@ -36,33 +33,24 @@ NO_FRAMES_TOGGLE = 60
 DEFAULT_STATION = "ehv"
 
 def main(config):
-    station_id = config.str("station")
-    station_dest = config.str("dest_station")
-    skip_time = config.get("skiptime", 0)
+    api_key = config.str("api_key", "").strip()
+    station_id = station_value(config.str("station", DEFAULT_STATION), DEFAULT_STATION)
+    station_dest = station_value(config.str("dest_station", ""), "")
+    skip_value = config.str("skiptime", "0").strip()
+    skip_time = int(skip_value) if skip_value and len(skip_value) <= 4 and all([char in "0123456789" for char in skip_value.codepoints()]) else 0
+    skip_time = min(skip_time, 180)
     time_to_leave = config.bool("time_to_leave", False)
 
-    if station_id == None:
-        station_id = DEFAULT_STATION
-    else:
-        station_id = json.decode(station_id)["value"]
-
-    # Check if we need to convert the skip_time to Int
-    if (skip_time):
-        if type(skip_time) == "string":
-            skip_time = int(skip_time)
-
-    # Check that the skip time is valid
-    if skip_time < 0:
-        skip_time = 0
+    if not api_key:
+        return render.Root(child = render.WrappedText(content = "NS API key required", font = "tom-thumb"))
 
     # If we don't have a Trip, list trains for station.
-    if station_dest == None:
+    if not station_dest:
         # Normal Train Operations
-        stops = getTrains(station_id, skip_time)
+        stops = getTrains(station_id, skip_time, api_key)
 
     else:
-        station_dest = json.decode(station_dest)["value"]
-        stops = getTrip(station_id, station_dest, skip_time)
+        stops = getTrip(station_id, station_dest, skip_time, api_key)
 
     if stops == None or len(stops) == 0:
         return render.Root(
@@ -284,19 +272,26 @@ def parse_time(time_string):
     time_obj = time.parse_time(time_string[0:19], format = "2006-01-02T15:04:05", location = "Europe/Amsterdam")
     return time_obj
 
-def getTrip(station_id, station_dest, skip_time):
-    resp = http.get("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips", params = {"fromStation": station_id, "toStation": station_dest}, headers = {"Ocp-Apim-Subscription-Key": API_KEY}, ttl_seconds = 30)
+def getTrip(station_id, station_dest, skip_time, api_key):
+    resp = http.get("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips", params = {"fromStation": station_id, "toStation": station_dest}, headers = {"Ocp-Apim-Subscription-Key": api_key}, ttl_seconds = 30)
 
     if resp.status_code != 200:
         return []
-    else:
-        departures = json.decode(resp.body())
+    body = resp.body()
+    if not body or len(body) > 1048576:
+        return []
+    departures = json.decode(body)
+    trips = departures.get("trips", []) if type(departures) == "dict" else []
+    if type(trips) != "list":
+        return []
 
     # Create return list
     stops = []
 
     # Loop through all returned stations
-    for trip in departures["trips"][0:4]:
+    for trip in trips[0:4]:
+        if type(trip) != "dict" or type(trip.get("legs")) != "list" or not trip["legs"]:
+            continue
         origin = trip["legs"][0]["origin"]
         originTime = origin.get("actualDateTime", origin.get("plannedDateTime"))
 
@@ -338,18 +333,21 @@ def getTrip(station_id, station_dest, skip_time):
 
     return stops
 
-def getTrains(station_id, skip_time):
-    resp = http.get("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/departures", params = {"station": station_id}, headers = {"Ocp-Apim-Subscription-Key": API_KEY}, ttl_seconds = 30)
+def getTrains(station_id, skip_time, api_key):
+    resp = http.get("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/departures", params = {"station": station_id}, headers = {"Ocp-Apim-Subscription-Key": api_key}, ttl_seconds = 30)
 
     if resp.status_code != 200:
-        cache.set("ns_%s" % station_id, json.encode([]), ttl_seconds = 30)
         return []
-    else:
-        departures = json.decode(resp.body())
-        cache.set("ns_%s" % station_id, resp.body(), ttl_seconds = 30)
+    body = resp.body()
+    if not body or len(body) > 1048576:
+        return []
+    departures = json.decode(body)
 
     # Return the trains
-    departuresTrains = departures["payload"]["departures"]
+    payload = departures.get("payload", {}) if type(departures) == "dict" else {}
+    departuresTrains = payload.get("departures", []) if type(payload) == "dict" else []
+    if type(departuresTrains) != "list":
+        return []
 
     startID = 0
 
@@ -364,62 +362,33 @@ def getTrains(station_id, skip_time):
 
     return departuresTrains[startID:]
 
-def search_station(pattern):
-    ns_dict = {"q": pattern}  # Provide the pattern with a dict, as this will be encoded
-    resp = http.get("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/stations", params = ns_dict, headers = {"Ocp-Apim-Subscription-Key": API_KEY}, ttl_seconds = 8600)
-
-    if resp.status_code != 200:
-        # Return an Error
-        return [
-            schema.Option(
-                display = "No stations found",
-                value = "No stations found",
-            ),
-        ]
-
-    resp = json.decode(resp.body())
-
-    # Check if the response is empty
-    if len(resp["payload"]) == 0:
-        return [
-            schema.Option(
-                display = "No stations found",
-                value = "No stations found",
-            ),
-        ]
-
-    # Create Return list
-    options = []
-
-    # Loop through all returned stations
-    for station in resp["payload"]:
-        options.append(
-            schema.Option(
-                display = station["namen"]["lang"],
-                value = station["code"],
-            ),
-        )
-
-    # Return the station options
-    return options
+def station_value(value, fallback):
+    value = value.strip()
+    if value.startswith("{"):
+        decoded = json.decode(value)
+        value = decoded.get("value", "") if type(decoded) == "dict" else ""
+    value = value.strip().lower() if type(value) == "string" else ""
+    if not value or len(value) > 10 or not all([char in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in value.codepoints()]):
+        return fallback
+    return value
 
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "station",
                 name = "Station",
-                desc = "Station from which the timetable shall be shown.",
+                desc = "NS station code, for example ehv.",
                 icon = "train",
-                handler = search_station,
+                default = DEFAULT_STATION,
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "dest_station",
                 name = "Destination Station",
-                desc = "Trains will be filtered by destination (optional).",
+                desc = "Optional NS destination station code.",
                 icon = "train",
-                handler = search_station,
+                default = "",
             ),
             schema.Text(
                 id = "skiptime",
@@ -432,6 +401,13 @@ def get_schema():
                 name = "Time To Leave",
                 desc = "Shows a green/orange/red line to indicate how soon you need to leave your house to catch the train. (uses Departure Offset to render the indicator).",
                 icon = "personWalking",
+            ),
+            schema.Text(
+                id = "api_key",
+                name = "NS API Key",
+                desc = "Injected by Niblet from its NS API subscription.",
+                icon = "key",
+                secret = True,
             ),
         ],
     )
