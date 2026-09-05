@@ -5,19 +5,16 @@ Description: Displays the ordered standings with team name and team record.
 Author: gmatthews1182
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
+load("time.star", "time")
 
-FANTASY_BASE_ENDPOINT = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/"
-FANTASY_SPORTS = {
-    "nfl": "ffl",
-}
-
+FANTASY_ENDPOINT = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{}/segments/0/leagues/{}?view=mTeam&view=mStandings"
 DEFAULT_LEAGUE_ID = "1524051886"
-DEFAULT_YEAR = "2024"
-DEFAULT_SWID_COOKIE = "AE876AEC-73E2-4871-826D-C37E201A80E8"
-DEFAULT_ESPN_S2_COOKIE = "AEAr0sZC9CqbI1vcUezBy4ni61%2B1Y3kmRD72n%2BHCBTIkgm5ckYEe7sMw8d%2FDp1o9nSswId5J9uFgzlO6YQVeapm%2Fd3%2BAtXbuPgjbbFJNBDZZ9P9Bi3N0APLVaoUn1N1Tda5eqsWFU2jvtKl0ooGTRdOVPUNyrkUUj7x4fzXb1qFbnDuMhKf0r3slw7i8WAvruh26MhOo7BDlYNsqnWfOMjOF7wAu24CJe%2BDU4luJ632%2BRyFpPCKiZVODSgZirBMvauCodUYEmY5PeZCWJ3Cv8q0g4pKUgCLSswW249idO%2BxE0e0RoU17uY7LT5MOIN1%2Fqfs%3D"
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_TEAMS = 100
 
 def get_schema():
     return schema.Schema(
@@ -53,22 +50,22 @@ def get_schema():
     )
 
 def main(config):
-    # Get user config values
-    league_id = config.str("fantasy_league_id", DEFAULT_LEAGUE_ID)
-    year = config.get("year", DEFAULT_YEAR)
-    espn_s2 = config.str("schema_espn_s2", DEFAULT_ESPN_S2_COOKIE)
-    swid = config.get("schema_swid", DEFAULT_SWID_COOKIE)
+    league_id = safe_digits(config.str("fantasy_league_id", DEFAULT_LEAGUE_ID), DEFAULT_LEAGUE_ID, 20)
+    current_year = str(time.now().year)
+    year = safe_year(config.get("year", current_year), current_year)
+    espn_s2 = safe_cookie(config.str("schema_espn_s2", ""))
+    swid = safe_cookie(config.str("schema_swid", ""))
+    headers = {}
+    if espn_s2 and swid:
+        headers["Cookie"] = "espn_s2={}; SWID={}".format(espn_s2, swid)
 
-    # Initialize base league data with values from user
-    LEAGUE_DATA = init_base_league(league_id, int(year), "nfl", espn_s2, swid)  #add args)
+    response = http.get(url = FANTASY_ENDPOINT.format(year, league_id), headers = headers)
+    body = response.body()
+    payload = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    list_of_teams = normalized_teams(payload)
+    if not list_of_teams:
+        return error_root("League unavailable")
 
-    # Initialize requests data
-    LEAGUE_DATA = init_requests_data(LEAGUE_DATA)
-
-    # Initialize specific league data
-    LEAGUE_DATA = league_get_request(LEAGUE_DATA, "")
-    list_of_teams = get_team_data(LEAGUE_DATA)
-    print(list_of_teams)
     render_category = []
     teams_per_view = 3  # Number of teams to display at once
 
@@ -137,87 +134,51 @@ def main(config):
 
     # Return the rendered animation with the title at the top
     return render.Root(
-        delay = int("4") * 1000,
+        delay = 4000,
         show_full_animation = True,
         child = render.Column(
             children = [
                 title,
-                render.Animation(children = render_category),  # Animated team display below
+                render.Animation(children = render_category),
             ],
         ),
     )
 
-def init_base_league(league_id, year, sport, espn_s2, swid):
-    LEAGUE_DATA = {
-        "league_id": None,
-        "year": None,
-        "sport": None,
-        "espn_s2": None,
-        "swid": None,
-        "cookies": None,
-    }
-    LEAGUE_DATA["league_id"] = league_id
-    LEAGUE_DATA["year"] = year
-    LEAGUE_DATA["sport"] = sport
-    if espn_s2 and swid:
-        s2_cookie = "espn_s2=" + espn_s2 + ";"
-        swid_cookie = " SWID=" + swid
-        cookie_combined = s2_cookie + swid_cookie
-        LEAGUE_DATA["espn_s2"] = espn_s2
-        LEAGUE_DATA["swid"] = swid
-        LEAGUE_DATA["cookies"] = cookie_combined
-
-    return LEAGUE_DATA
-
-def league_get_request(league_data, extend):
-    # Set HTTP query values
-    headers = {}
-    cookies = league_data["cookies"]
-    endpoint = league_data["LEAGUE_ENDPOINT"] + extend
-    url = endpoint + "?view=mTeam&view=mStandings"
-    headers["Cookie"] = str(cookies)
-
-    # Make the http request
-    response = http.get(url = url, headers = headers, ttl_seconds = 3600)  # cache for 1 hour
-
-    if response.status_code != 200:
-        fail("GET %s failed with status %d: %s", endpoint, response.status_code, response.body())
-
-    league_data["league_request_data"] = response.json()
-    return league_data
-
-def init_requests_data(league_data):
-    ## Init data
-    league_data["ENDPOINT"] = FANTASY_BASE_ENDPOINT + FANTASY_SPORTS["nfl"] + "/seasons/" + str(league_data["year"])
-    league_data["LEAGUE_ENDPOINT"] = FANTASY_BASE_ENDPOINT + FANTASY_SPORTS["nfl"] + "/seasons/" + str(league_data["year"]) + "/segments/0/leagues/" + str(league_data["league_id"])
-    return league_data
-
-# Gets team data like name, rank, record.
-def get_team_data(league_data):
-    headers = {}
-    headers["Cookie"] = str(league_data["cookies"])
-    url = league_data["LEAGUE_ENDPOINT"] + "?view=mTeam&view=mStandings"
-
-    # Make request
-    data = http.get(url = url, headers = headers, ttl_seconds = 3600)  # cache for 1 hour
-    if data.status_code != 200:
-        fail("GET %s failed with status %d: %s", url, data.status_code, data.body())
-
-    # Grab the info
-    json_data = data.json()
-
-    # Get team name from team id
+def normalized_teams(payload):
+    teams = payload.get("teams") if type(payload) == "dict" else None
+    if type(teams) != "list":
+        return []
     team_values = []
-    for team in json_data["teams"]:
-        team_name = team["name"]
-        team_rank = team["playoffSeed"]
-        team_win = team["record"]["overall"]["wins"]
-        team_loss = team["record"]["overall"]["losses"]
-        team_record = str(int(team_win)) + "-" + str(int(team_loss))
-        team_info = {
-            "team_name": team_name,
-            "team_rank": team_rank,
-            "team_record": team_record,
-        }
-        team_values.append(team_info)
+    for team in teams[:MAX_TEAMS]:
+        if type(team) != "dict":
+            continue
+        overall = team.get("record", {}).get("overall") if type(team.get("record")) == "dict" else None
+        rank = team.get("playoffSeed")
+        if type(overall) != "dict" or type(rank) not in ["int", "float"]:
+            continue
+        wins = overall.get("wins")
+        losses = overall.get("losses")
+        if type(wins) not in ["int", "float"] or type(losses) not in ["int", "float"]:
+            continue
+        team_values.append({
+            "team_name": str(team.get("name") or "Team")[:80],
+            "team_rank": max(0, min(1000, int(rank))),
+            "team_record": "{}-{}".format(max(0, min(1000, int(wins))), max(0, min(1000, int(losses)))),
+        })
     return sorted(team_values, key = lambda team: (team["team_rank"]))
+
+def safe_digits(value, fallback, max_length):
+    value = str(value or "").strip()
+    return value if value and len(value) <= max_length and value.isdigit() else fallback
+
+def safe_year(value, fallback):
+    value = safe_digits(value, fallback, 4)
+    year = int(value)
+    return value if year >= 2000 and year <= 2100 else fallback
+
+def safe_cookie(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 4096 and "\r" not in value and "\n" not in value and ";" not in value else ""
+
+def error_root(message):
+    return render.Root(child = render.Box(render.WrappedText(message, font = "tom-thumb")))
