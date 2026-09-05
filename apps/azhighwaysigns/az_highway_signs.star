@@ -7,26 +7,31 @@ Author: CJ Sturgess
 
 load("encoding/json.star", "json")
 load("http.star", "http")
-load("math.star", "math")
 load("random.star", "random")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
 AZ_511_API_URL = "https://az511.com/api/v2/get/messagesigns"
-AZ_511_API_KEY_ENC = "AV6+xWcElNUxy13PiZk50KSeRVpd8LanTKPhbBsOqWjCsGYoidZXDXWG2XxTbXZrXTSk8q4aqxWjXxwkITyHHD5P2oDFI1MP9eTfJqu5EPEYOcBRi/WboQgauip1dwKhNtCMtchXuygRw6xj/18Zy9zUgGQ9L+lneYKLO2TLssMkEc+Yt2U="
-
 DEFAULT_SIGN = """{"value": "AZ--858d88ac-89d8-4760-97cc-642bfe3ca07c"}"""
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_SIGNS = 2000
 
 def get_all_signs(api_key):
-    if api_key == None:
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
         return []
 
     # Returns a list of all AZ Highway signs from the 511 API.
-    rep = http.get(AZ_511_API_URL + "?key=" + api_key, ttl_seconds = 300)
+    rep = http.get(AZ_511_API_URL, params = {"key": api_key})
     if rep.status_code != 200:
-        print("Failed to get message signs with status code %d.", rep.status_code)
+        return []
 
-    return rep.json()
+    body = rep.body()
+    signs = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    return [sign for sign in signs[:MAX_SIGNS] if valid_sign(sign)] if type(signs) == "list" else []
+
+def valid_sign(sign):
+    return type(sign) == "dict" and type(sign.get("Id")) == "string" and len(sign.get("Id")) <= 128 and type(sign.get("Name")) == "string" and len(sign.get("Name")) <= 240 and type(sign.get("Messages", [])) == "list"
 
 def get_sign(api_key, id):
     # Returns a single sign from the AZ 511 API for a given ID.
@@ -37,34 +42,13 @@ def get_sign(api_key, id):
             return sign
     return None
 
-def get_sign_options(loc, config):
-    # Gets all sign options to allow the user to choose one during app installation.
-
-    loc = json.decode(loc)
-    api_key = config.get("api_key")
-    all_signs = get_all_signs(api_key)
-
-    for sign in all_signs:
-        sign["dist"] = math.sqrt(math.pow(sign["Latitude"] - float(loc["lat"]), 2) + math.pow(sign["Longitude"] - float(loc["lng"]), 2))
-
-    all_signs = sorted(all_signs, key = lambda s: s["dist"])
-
-    sign_options = []
-    for sign in all_signs:
-        sign_options.append(
-            schema.Option(
-                display = sign["Name"],
-                value = sign["Id"],
-            ),
-        )
-
-    return sign_options
-
 def get_message_lines(sign):
     if sign == None:
         return []
 
-    messages = sign["Messages"]
+    messages = [message for message in sign.get("Messages", [])[:10] if type(message) == "string" and len(message) <= 1000]
+    if not messages:
+        return ["NO_MESSAGE"]
     message_idx = 0
 
     if len(messages) > 1:
@@ -177,11 +161,11 @@ def render_message(sign):
     lines = get_message_lines(sign)
 
     # If this is a "minutes-to" message, render appropriately
-    if "MIN" in lines[0]:
+    if lines and "MIN" in lines[0]:
         return render_message_minutesto(lines)
 
     # If this message is "NO_MESSAGE", make it cleaner
-    if lines[0] == "NO_MESSAGE":
+    if lines and lines[0] == "NO_MESSAGE":
         return render_message_nomessage(sign)
 
     # Otherwise, render using default method
@@ -189,13 +173,9 @@ def render_message(sign):
 
 def main(config):
     api_key = config.get("api_key")
-    if api_key == None:
-        print("An AZ 511 API Key must be provided.")
+    sign_id = parse_sign_id(config.get("sign", DEFAULT_SIGN))
 
-    SELECTED_SIGN = json.decode(config.get("sign", DEFAULT_SIGN))
-    SIGN_ID = SELECTED_SIGN["value"]
-
-    sign = get_sign(api_key, SIGN_ID)
+    sign = get_sign(api_key, sign_id)
 
     return render.Root(
         child = render.Column(
@@ -217,12 +197,18 @@ def get_schema():
                 icon = "key",
                 secret = True,
             ),
-            schema.LocationBased(
+            schema.Text(
                 id = "sign",
-                name = "Message Sign",
-                desc = "The message sign to check.",
+                name = "Message Sign ID",
+                desc = "AZ 511 message-board ID. Existing nearby-sign selections continue to work.",
                 icon = "car",
-                handler = get_sign_options,
             ),
         ],
     )
+
+def parse_sign_id(value):
+    value = str(value or "").strip()
+    if value.startswith("{"):
+        legacy = re.findall(r'"value"\s*:\s*"([^"\\]+)"', value)
+        value = legacy[0] if legacy else ""
+    return value if value and len(value) <= 128 and "\r" not in value and "\n" not in value else "AZ--858d88ac-89d8-4760-97cc-642bfe3ca07c"

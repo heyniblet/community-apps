@@ -44,25 +44,32 @@ load("xpath.star", "xpath")
 LOGO = LOGO_ASSET.readall()
 
 def main(config):
+    api_key = config.get("bgg_api_key")
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
+        return render.Root(child = render.WrappedText(content = "BGG API token required", align = "center"))
+
     now = time.now().unix
 
     data = cache.get(KEY)
-    data = json.decode(data) if data else None
+    data = json.decode(data, None) if data else None
+    data = data if valid_cached_data(data) else None
 
     if not data or (now - data["timestamp"]) > EXPIRY:
-        print("Getting " + URL)
-        api_key = config.get("bgg_api_key")
         content = http.get(URL, headers = {"Authorization": "Bearer %s" % api_key})
         if content.status_code == 200:
-            content = xpath.loads(content.body())
+            body = content.body()
+            content = xpath.loads(body) if body and len(body) <= MAX_XML_BYTES else None
+        else:
+            content = None
+        if content:
             content = {
                 "timestamp": now,
                 "list": [
                     {
                         "name": "%d. %s (%s)" % (
                             rank,
-                            content.query(NAME_PATH_FMT % rank) or "{no name}",
-                            content.query(YEAR_PATH_FMT % rank) or "????",
+                            str(content.query(NAME_PATH_FMT % rank) or "{no name}")[:120],
+                            str(content.query(YEAR_PATH_FMT % rank) or "????")[:8],
                         ),
                         "image_url": content.query(IMAGE_PATH_FMT % rank),
                     }
@@ -85,7 +92,6 @@ def main(config):
             data = content
 
             cache.set(KEY, json.encode(data), TTL)
-            #print(json.encode(data))
 
     if not data:
         # dummy data
@@ -139,13 +145,24 @@ def get_schema():
     )
 
 def get_image(url):
-    if url:
-        print("Getting " + url)
+    if type(url) == "string" and url.startswith("https://cf.geekdo-images.com/") and len(url) <= 2048:
         response = http.get(url)
         if response.status_code == 200:
-            return base64.encode(response.body())
+            body = response.body()
+            return base64.encode(body) if body and len(body) <= MAX_IMAGE_BYTES else None
 
     return None
+
+def valid_cached_data(data):
+    if type(data) != "dict" or type(data.get("timestamp")) != "int" or type(data.get("list")) != "list" or len(data.get("list")) > COUNT:
+        return False
+    for item in data.get("list"):
+        if type(item) != "dict" or type(item.get("name")) != "string" or len(item.get("name")) > 160:
+            return False
+        image = item.get("image")
+        if image and (type(image) != "string" or len(image) > 6 * 1024 * 1024):
+            return False
+    return True
 
 def data_frame(i, item):
     name = item.get("name", "")
@@ -204,7 +221,9 @@ def scroll_frames(item, next_item):
         for offset in range(SCROLL_SIZE, SCROLL_LIMIT, SCROLL_SIZE)
     ]
 
-URL = "http://boardgamegeek.com/xmlapi2/hot?type=boardgame"
+URL = "https://boardgamegeek.com/xmlapi2/hot?type=boardgame"
+MAX_XML_BYTES = 2 * 1024 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 NAME_PATH_FMT = "/items/item[@rank=%s]/name/@value"
 YEAR_PATH_FMT = "/items/item[@rank=%s]/yearpublished/@value"

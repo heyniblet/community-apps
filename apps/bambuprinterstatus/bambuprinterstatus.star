@@ -7,11 +7,14 @@ Authors: Robert Ison
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 DEFAULT_STATUS_URL = ""
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_PRINTERS = 50
 
 PALETTE = {
     "bg": "0F1115",
@@ -41,56 +44,10 @@ def _safe_get(map_obj, key, default = None):
 
 def _status_url(config):
     direct = config.get("status_url")
-    if direct:
-        return str(direct)
-
-    base = config.get("base_url")
-    if not base:
+    if type(direct) != "string":
         return DEFAULT_STATUS_URL
-
-    base = str(base)
-    if base.endswith("/status.json"):
-        return base
-    if base.endswith("/"):
-        return base + "status.json"
-    return base + "/status.json"
-
-def printer_field(status_url):
-    if not status_url:
-        return []
-
-    resp = http.get(str(status_url))
-    if resp.status_code != 200:
-        return []
-
-    data = json.decode(resp.body())
-    printers = data.get("printers", [])
-
-    options = []
-    for p in printers:
-        pid = str(p.get("id", ""))
-        pname = str(p.get("name", pid))
-        if pid:
-            options.append(
-                schema.Option(
-                    display = pname + " (" + pid + ")",
-                    value = pid,
-                ),
-            )
-
-    if len(options) == 0:
-        return []
-
-    return [
-        schema.Dropdown(
-            id = "printer_id",
-            name = "Printer",
-            desc = "Choose which printer to display.",
-            icon = "print",
-            default = options[0].value,
-            options = options,
-        ),
-    ]
+    direct = direct.strip()
+    return direct if len(direct) <= 2048 and direct.startswith("https://") and "@" not in direct.split("/")[2] else DEFAULT_STATUS_URL
 
 def get_schema():
     scroll_speed_options = [
@@ -124,38 +81,63 @@ def get_schema():
                 icon = "play",
                 default = False,
             ),
-            schema.Generated(
-                id = "printer_picker",
-                source = "status_url",
-                handler = printer_field,
+            schema.Text(
+                id = "printer_id",
+                name = "Printer ID",
+                desc = "Optional printer ID from status.json. Leave blank to use the first printer.",
+                icon = "print",
+                default = "",
             ),
         ],
     )
 
 def _first_printer(data, selected_id = None):
-    printers = _safe_get(data, "printers", [])
+    printers = [printer for printer in _safe_get(data, "printers", [])[:MAX_PRINTERS] if type(printer) == "dict"]
     if not printers or len(printers) == 0:
         return {}
 
+    selected_id = str(selected_id or "")[:128]
     if selected_id:
         for p in printers:
             if str(_safe_get(p, "id", "")) == str(selected_id):
-                return p
+                return _safe_printer(p)
 
-    return printers[0]
+    return _safe_printer(printers[0])
+
+def _safe_printer(printer):
+    if type(printer) != "dict":
+        return {}
+    result = {}
+    for key in ["id", "name", "job_name", "plate_name", "job_objects", "idle_since", "last_completed_job_objects", "last_completed_job_name", "last_completed_end_time", "estimated_duration_text", "last_completed_duration_text"]:
+        value = printer.get(key)
+        result[key] = str(value)[:300] if value != None else None
+    state = str(printer.get("state", "UNKNOWN")).upper()
+    result["state"] = state if state in ["PRINTING", "PAUSED", "OFFLINE", "IDLE"] else "UNKNOWN"
+    for key in ["progress", "time_left", "last_completed_duration_seconds"]:
+        result[key] = _nonnegative_int(printer.get(key))
+    result["progress"] = min(100, result["progress"]) if result["progress"] != None else None
+    return result
+
+def _nonnegative_int(value):
+    if type(value) in ["int", "float"]:
+        return max(0, int(value))
+    value = str(value or "")
+    return int(value) if value.isdigit() and len(value) <= 12 else None
 
 def _parse_iso_utc(s):
     if not s:
         return None
     t = str(s)
+    if re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})$", t) == None:
+        return None
     if t.endswith("Z"):
         t = t[:-1] + "+00:00"
     return time.parse_time(t, "2006-01-02T15:04:05Z07:00")
 
 def _fmt_duration_from_seconds(total):
+    total = _nonnegative_int(total)
     if total == None:
         return "?"
-    total = int(total)
     if total < 60:
         return str(total) + "s"
     mins = total // 60
@@ -300,7 +282,8 @@ def _footer(printer):
 def main(config):
     font = "tb-8"
     screen_width = 64
-    delay = int(config.get("scroll", "45"))
+    delay_value = str(config.get("scroll", "45"))
+    delay = int(delay_value) if delay_value in ["30", "45", "60"] else 45
     font_width = 5
     max_text_length = 150
 
@@ -341,7 +324,10 @@ def main(config):
             delay = delay,
         )
 
-    data = json.decode(resp.body())
+    body = resp.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    if type(data) != "dict" or type(data.get("printers")) != "list":
+        return render.Root(child = render.WrappedText("Invalid status data", color = PALETTE["error"]))
     printer = _first_printer(data, config.get("printer_id"))
 
     printer_name = _truncate(_safe_get(printer, "name", "Bambu Printer"), max_text_length)

@@ -23,6 +23,7 @@ load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -47,6 +48,8 @@ YELLOW_COLOR = "#FFFF00"
 RED_COLOR = "#FF0000"
 FLIGHT_RADAR_URL = "https://flight-radar1.p.rapidapi.com/flights/list-in-boundary"
 WIDTH = 64  # Radar width
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_DISPLAY_FLIGHTS = 12
 
 RADAR_X = 0  # x-position
 RADAR_Y = 1  # y-position
@@ -117,6 +120,8 @@ def get_bounding_box(centrePoint, distance):
 
 def reduce_accuracy(coord):
     coord_list = coord.split(".")
+    if len(coord_list) == 1:
+        return coord_list[0]
     coord_remainder = coord_list[1]
     if len(coord_remainder) > 3:
         coord_remainder = coord_remainder[0:3]
@@ -217,7 +222,7 @@ def main(config):
 
     api_key = config.get("key")
 
-    if (api_key == "") or (api_key == None):
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
         text = [
             render.Text("Add RapidAPI"),
             render.Text("Flight Radar"),
@@ -228,18 +233,18 @@ def main(config):
         )
 
     hide_when_nothing_to_display = config.bool("hide", True)
-    hide_data_older_than_seconds = int(config.get("hideold", 600))
+    hide_data_older_than_seconds = configured_int(config, "hideold", 900, TIME_VALUES)
 
-    location = json.decode(config.get("location", DEFAULT_LOCATION))
-    cache_tty = int(config.get("cache", 60))
+    location = configured_location(config.get("location", DEFAULT_LOCATION))
+    cache_tty = configured_int(config, "cache", 300, TIME_VALUES)
 
-    orig_lat = location["lat"]
-    orig_lng = location["lng"]
+    orig_lat = float(location["lat"])
+    orig_lng = float(location["lng"])
 
-    lat = reduce_accuracy(orig_lat)
-    lng = reduce_accuracy(orig_lng)
+    lat = reduce_accuracy(str(orig_lat))
+    lng = reduce_accuracy(str(orig_lng))
 
-    search_distance = int(config.get("distance", DEFAULT_DISTANCE))
+    search_distance = configured_int(config, "distance", int(DEFAULT_DISTANCE), DISTANCE_VALUES)
 
     if (config.bool("info_bar", True)):
         radar_height = 31
@@ -252,9 +257,8 @@ def main(config):
     data_from_date = None
 
     if flights == None:
-        #print("Contacting Flight Radar")
         centrePoint = [float(lat), float(lng)]
-        boundingBox = get_bounding_box(centrePoint, 100)
+        boundingBox = get_bounding_box(centrePoint, search_distance)
 
         if TESTMODE:
             flights = [["32b96cff", "AAB100", 27.9, -88.5, 103.0, 5000.0, 552.0, "", "F-KMOB1", "B737", "N7883A", 1.69924097, "AUS", "MCO", "WN562", 0.0, 0.0, "SWA562", 0.0], ["32b96c79", "A8A4C7", 28.8316, -88.5084, 107.0, 33000.0, 535.0, "", "F-KMOB1", "B763", "N656UA", 1.699241512, "IAH", "GIG", "UA129", 0.0, 0.0, "UAL129", 0.0], ["32b9590f", "ADABFE", 28.723, -88.0323, 284.0, 30025.0, 413.0, "", "F-KMOB1", "A321", "N980JT", 1.699241512, "FLL", "SFO", "B6277", 0.0, 0.0, "JBU277", 0.0], ["32b9652c", "AD084E", 28.697, -87.9279, 284.0, 36025.0, 369.0, "", "F-KNEW1", "A20N", "N939NK", 1.699241512, "FLL", "SAT", "NK1738", 0.0, -64.0, "NKS1738", 0.0], ["32b96cff", "AAB100", 28.6329, -87.8272, 106.0, 39000.0, 550.0, "", "F-KNEW1", "B737", "N7883A", 1.699241512, "AUS", "MCO", "WN562", 0.0, 0.0, "SWA562", 0.0]]
@@ -267,18 +271,14 @@ def main(config):
                 headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "flight-radar1.p.rapidapi.com"},
             )
 
-            if rep.status_code != 200:
-                fail("Failed to fetch flights with status code:", rep.status_code)
-
-            if rep.json()["aircraft"]:
-                flights = rep.json()["aircraft"]
+            body = rep.body()
+            data = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+            aircraft = data.get("aircraft", []) if type(data) == "dict" else []
+            flights = valid_flights(aircraft)
+            if flights:
                 set_cache_flight_data(flights_cache_key, cache_tty, flights)
                 data_from_date = time.now()
-
-            else:
-                flights = []
     else:
-        #print("Got flight data from cache")
         data_from_date = get_time_from_cache(flights_cache_key)
 
     # calculate the area of the map we want to display
@@ -288,11 +288,11 @@ def main(config):
     nearest_flight = 0
 
     if flights:
-        for flight in flights:
+        for flight in valid_flights(flights):
             distance = get_distance(orig_lat, orig_lng, flight[2], flight[3])
 
             #update extremes with each flight we want to plot
-            if distance < search_distance:
+            if distance < search_distance and len(display_flights) < MAX_DISPLAY_FLIGHTS:
                 nearest_flight = distance if nearest_flight == 0 else (distance if distance < nearest_flight else nearest_flight)
                 extremes = update_extremes(flight[2], flight[3], extremes)
                 display_flights.append(flight)
@@ -318,6 +318,34 @@ def main(config):
         child = update_display(text),
         show_full_animation = True,
     )
+
+TIME_VALUES = [60, 120, 180, 240, 300, 600, 900, 1200, 1500, 1800, 2700, 3600]
+DISTANCE_VALUES = [1, 5, 10, 20, 50, 75, 100]
+
+def configured_int(config, key, default, allowed):
+    value = str(config.get(key, default))
+    return int(value) if value.isdigit() and int(value) in allowed else default
+
+def configured_location(raw):
+    location = json.decode(raw, None) if type(raw) == "string" else None
+    if type(location) != "dict" or not valid_coordinate(location.get("lat"), -90, 90) or not valid_coordinate(location.get("lng"), -180, 180):
+        location = json.decode(DEFAULT_LOCATION)
+    return location
+
+def valid_coordinate(value, lower, upper):
+    if value == None or re.match(r"^-?[0-9]+(?:\.[0-9]+)?$", str(value)) == None:
+        return False
+    number = float(value)
+    return number >= lower and number <= upper
+
+def valid_flights(flights):
+    if type(flights) != "list":
+        return []
+    result = []
+    for flight in flights[:500]:
+        if type(flight) == "list" and len(flight) > 5 and valid_coordinate(flight[2], -90, 90) and valid_coordinate(flight[3], -180, 180) and valid_coordinate(flight[4], 0, 360) and valid_coordinate(flight[5], -2000, 100000):
+            result.append(flight)
+    return result
 
 def get_stale_warning_color(seconds, max_seconds):
     percentage = seconds / max_seconds
@@ -347,19 +375,16 @@ def get_flights_from_cache(key):
     cache_data = cache.get(key)
     if cache_data == None:
         return None
-    else:
-        cache_data = json.decode(cache_data)
-        return cache_data[0]
+    cache_data = json.decode(cache_data, None)
+    return cache_data[0] if type(cache_data) == "list" and len(cache_data) == 2 and type(cache_data[0]) == "list" else None
 
 def get_time_from_cache(key):
     cache_data = cache.get(key)
-    #print("Cache_data: %s" % cache_data)
-
     if cache_data == None:
         return None
-    else:
-        cache_data = json.decode(cache_data)
-        return time.from_timestamp(int(cache_data[1][0]))
+    cache_data = json.decode(cache_data, None)
+    timestamp = cache_data[1][0] if type(cache_data) == "list" and len(cache_data) == 2 and type(cache_data[1]) == "list" and cache_data[1] else None
+    return time.from_timestamp(timestamp) if type(timestamp) == "int" else None
 
 def set_cache_flight_data(key, tty, flights):
     cache_data = []

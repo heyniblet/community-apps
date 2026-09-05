@@ -10,7 +10,7 @@ load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
-CLOUD_API_TTL = 300  # 5 minutes, see README.md
+MAX_RESPONSE_BYTES = 256 * 1024
 
 def get_schema():
     return schema.Schema(
@@ -38,10 +38,35 @@ def get_schema():
                 default = API_CONNECTION_TYPE_OPTIONS[0].value,
                 options = API_CONNECTION_TYPE_OPTIONS,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "api_connection_type",
-                handler = api_connection_options,
+            schema.Text(
+                id = "ip_address",
+                name = "Awair Local API HTTPS URL",
+                desc = "Optional public HTTPS relay for an Awair Local API. Private LAN addresses cannot be reached by Niblet Cloud.",
+                icon = "computer",
+                default = "",
+            ),
+            schema.Text(
+                id = "bearer_token",
+                name = "Access token for Awair Developer API",
+                desc = "Used only with the Cloud API option. Create a token at https://developer.getawair.com/.",
+                icon = "key",
+                default = "",
+                secret = True,
+            ),
+            schema.Text(
+                id = "device_id",
+                name = "Awair device id",
+                desc = "Used only with the Cloud API option. Find deviceID with the official GET Devices endpoint.",
+                icon = "server",
+                default = "",
+            ),
+            schema.Dropdown(
+                id = "device_type",
+                name = "Awair device type",
+                desc = "Used only with the Cloud API option.",
+                icon = "shapes",
+                default = API_DEVICE_TYPE_OPTIONS[0].value,
+                options = API_DEVICE_TYPE_OPTIONS,
             ),
         ],
     )
@@ -50,46 +75,6 @@ API_CONNECTION_TYPE_OPTIONS = [
     schema.Option(display = "Awair Local API", value = "local"),
     schema.Option(display = "Awair Cloud API (Token)", value = "cloud_token"),
 ]
-
-def api_connection_options(api_connection_type):
-    if api_connection_type == "local":
-        return [
-            schema.Text(
-                id = "ip_address",  # original schema's name for this field
-                name = "Public IP address and port of Awair device",
-                desc = "Requires a public IP address with port forwarding to an Awair device configured for Local API access.",
-                icon = "computer",
-                default = "",
-            ),
-        ]
-    elif api_connection_type == "cloud_token":
-        return [
-            schema.Text(
-                id = "bearer_token",
-                name = "Access token for Awair Developer API",
-                desc = "Your API access token from your Awair developer console at https://developer.getawair.com/.",
-                icon = "key",
-                default = "",
-                secret = True,
-            ),
-            schema.Text(
-                id = "device_id",
-                name = "Awair device id",
-                desc = "The device's integer deviceID, see 'GET Devices' at https://developer.getawair.com/.",
-                icon = "server",
-                default = "",
-            ),
-            schema.Dropdown(
-                id = "device_type",
-                name = "Awair device type",
-                desc = "The device's deviceType, see 'GET Devices' at https://developer.getawair.com/.",
-                icon = "shapes",
-                default = API_DEVICE_TYPE_OPTIONS[0].value,
-                options = API_DEVICE_TYPE_OPTIONS,
-            ),
-        ]
-    else:
-        return []
 
 API_DEVICE_TYPE_OPTIONS = [
     schema.Option(display = "awair-element", value = "awair-element"),
@@ -108,41 +93,44 @@ def fetch_data(config):
         if "error" in data:
             return data
 
-        sensors = data["data"][0]["sensors"]
-        return {
+        rows = data.get("data", [])
+        row = rows[0] if type(rows) == "list" and rows and type(rows[0]) == "dict" else {}
+        sensors = row.get("sensors", [])
+        reading = {
             "temp": sensor_value(sensors, "temp"),
             "humid": sensor_value(sensors, "humid"),
             "co2": sensor_value(sensors, "co2"),
             "pm25": sensor_value(sensors, "pm25"),
             "voc": sensor_value(sensors, "voc"),
-            "score": data["data"][0]["score"],
+            "score": row.get("score"),
         }
+        return reading if valid_reading(reading) else {"error": "Invalid Awair response."}
 
     else:  # local API
-        ip_address = config.str("ip_address", "")
-        if not ip_address:
+        base_url = config.str("ip_address", "").strip().rstrip("/")
+        if not base_url:
             return {
-                "error": "Displaying mock " + "data.           " + "Please configure" + "the API.",
+                "error": "Please configure the Awair Local API HTTPS URL or select Cloud API.",
                 "mock": True,
             }
+        if len(base_url) > 2048 or not base_url.startswith("https://") or "@" in base_url.split("/")[2]:
+            return {"error": "Local API requires a public HTTPS relay."}
 
-        response = http.get("http://{}/air-data/latest".format(ip_address))
-        if response.status_code != 200:
-            return {"error": "status {}".format(response.status_code)}
-
-        return json.decode(response.body())
+        url = base_url if base_url.endswith("/air-data/latest") else base_url + "/air-data/latest"
+        reading = read_json(http.get(url))
+        return reading if valid_reading(reading) else {"error": reading.get("error", "Invalid Awair response.")}
 
 def fetch_cloud_data_by_token(config):
     bearer_token = config.get("bearer_token")
-    if not bearer_token:
+    if type(bearer_token) != "string" or not bearer_token or len(bearer_token) > 2048 or "\r" in bearer_token or "\n" in bearer_token:
         return {"error": "No token. Get one at developer.getawair.com"}
 
     device_id = config.get("device_id")
-    if not device_id:
+    if type(device_id) != "string" or not device_id.isdigit() or len(device_id) > 20:
         return {"error": "No device ID. See how to look yours up at developer.getawair.com"}
 
     device_type = config.get("device_type")
-    if not device_type:
+    if device_type not in [option.value for option in API_DEVICE_TYPE_OPTIONS]:
         return {"error": "No device type. See how to look yours up at developer.getawair.com"}
 
     url = "https://developer-apis.awair.is/v1/users/self/devices/{}/{}/air-data/latest".format(
@@ -151,17 +139,16 @@ def fetch_cloud_data_by_token(config):
     )
     headers = {"authorization": "Bearer {}".format(bearer_token)}
 
-    response = http.get(
-        url = url,
-        headers = headers,
-        ttl_seconds = CLOUD_API_TTL,
-    )
-    if response.status_code != 200:
-        data = response.json()
-        data["error"] = "status {}".format(response.status_code)
-        return data
+    response = http.get(url = url, headers = headers)
+    return read_json(response)
 
-    return json.decode(response.body())
+def read_json(response):
+    body = response.body()
+    data = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    return data if type(data) == "dict" else {"error": "status {}".format(response.status_code)}
+
+def valid_reading(reading):
+    return type(reading) == "dict" and all([type(reading.get(key)) in ["int", "float"] for key in ["temp", "humid", "co2", "pm25", "voc", "score"]])
 
 def fetch_mock_data():
     return {
@@ -174,9 +161,11 @@ def fetch_mock_data():
     }
 
 def sensor_value(sensors, key):
-    for sensor in sensors:
-        if sensor["comp"] == key:
-            return sensor["value"]
+    if type(sensors) != "list":
+        return None
+    for sensor in sensors[:50]:
+        if type(sensor) == "dict" and sensor.get("comp") == key:
+            return sensor.get("value")
     return None
 
 #

@@ -30,7 +30,7 @@ Note that Awair's published quota is 300 calls per day, which works out to about
 
 <img src="./screenshot-quota-exceeded.webp" width="320" height="160">
 
-To ensure this quota is not exceeded during a 24-hour period, data is cached for 5 minutes (meaning it may be up to five minutes out of date).
+Niblet Cloud refreshes this app at most every 5 minutes and keeps rendered data tenant-scoped; it does not share token-bearing API responses between users.
 
 
 ## API choices and authentications
@@ -51,7 +51,7 @@ https://support.getawair.com/hc/en-us/search?query=Awair+Local+API+Feature
 
 Read the docs linked above to learn how to enable this feature on your Awair device.
 
-PLEASE NOTE: that you must make your device available via an internet-routable IP address and port, so that the Tidbyt servers can connect to it.
+Niblet Cloud cannot connect to a private LAN address. To use this mode there, expose the Local API through a user-owned public HTTPS relay and enter its base URL. Private addresses, plain HTTP, and embedded URL credentials are rejected. Self-hosted Pixlet users can keep the original LAN workflow in an older pinned release; the Awair Cloud API option below is the simplest hosted setup.
 
 ### Cloud API using a Bearer Token
 
