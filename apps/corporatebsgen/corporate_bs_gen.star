@@ -42,10 +42,14 @@ def main(config):
 
     # fetch the corporate BS phrase
     rep = http.get(CORPORATE_BS, ttl_seconds = 43200)
-    if rep.status_code != 200:
-        fail("Corporate BS request failed with status %d", rep.status_code)
+    if rep.status_code != 200 or len(rep.body()) > 4096:
+        return render.Root(child = render.Text("BS unavailable"))
 
-    phrase = rep.json()["phrase"]
+    data = rep.json()
+    phrase = data.get("phrase", "") if type(data) == "dict" else ""
+    if type(phrase) != "string" or not phrase:
+        return render.Root(child = render.Text("BS unavailable"))
+    phrase = phrase[:500]
 
     if SCROLL_DIRECTION == "horizontal":
         return render.Root(
