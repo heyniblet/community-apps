@@ -117,7 +117,8 @@ def checkCustomSubSchema(subNum, config, currentArray):
 # Removes any /r or /r/ characters users might have put on the sub name.
 def buildSubPrefix(name):
     name = name.strip().lower()
-    for prefix in ["https://www.reddit.com/r/", "http://www.reddit.com/r/", "/r/", "r/"]:
+    name = name.replace("http:", "https:")
+    for prefix in ["https://www.reddit.com/r/", "/r/", "r/"]:
         if name.startswith(prefix):
             name = name[len(prefix):]
             break

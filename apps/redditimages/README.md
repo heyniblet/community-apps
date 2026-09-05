@@ -2,7 +2,7 @@
 
 Displays a random image post from subreddits you specify and/or a list of default subreddits, along with its name, subreddit, and post ID.
 
-To access any posts on reddit, tack the ID onto the end of the URL. For example, the post below is located at http://www.reddit.com/td4fnp.
+To access any posts on reddit, tack the ID onto the end of the URL. For example, the post below is located at <https://www.reddit.com/td4fnp>.
 
 ![Sample Shuffle](image-shuffler-example.png)
 
