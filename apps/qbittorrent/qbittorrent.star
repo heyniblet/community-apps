@@ -6,6 +6,7 @@ Author: DoubleGremlin181
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("math.star", "math")
@@ -17,21 +18,24 @@ DEVICE_HEIGHT = 32
 HEADER_HEIGHT = 8
 ROW_HEIGHT = 12
 DELAY_MS = 60
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 def main(config):
-    servername = config.get("servername", "My Seedbox")
-    base_url = config.get("base_url", None)
-    username = config.get("username", None)
-    password = config.get("password", None)
-    category = config.get("category", None)
+    servername = config.str("servername", "My Seedbox")[:80]
+    base_url = config.str("base_url", "")
+    username = config.str("username", "")
+    password = config.str("password", "")
+    category = config.str("category", "")
 
     if not category:
         category = ""
     else:
         category = "&category={}".format(humanize.url_encode(category))
 
-    torrent_count = int(config.get("torrent_count", 1))
-    if not base_url or not username or not password:
+    torrent_count_raw = config.get("torrent_count", "1")
+    torrent_count = int(torrent_count_raw) if str(torrent_count_raw).isdigit() else 1
+    torrent_count = min(3, max(0, torrent_count))
+    if not valid_base_url(base_url) or not username or not password:
         return render_header(servername, [render.WrappedText(content = "Enter server details")])
 
     else:
@@ -46,7 +50,7 @@ def main(config):
 
             if (torrent_count > 0):
                 torrents = get_latest_torrents(base_url, category, sid, torrent_count)
-                if not speeds or not active_counts or not torrents:
+                if not speeds or not active_counts or torrents == None:
                     return render_header(servername, [render.WrappedText(content = "Failed to get data")])
             else:
                 torrents = None
@@ -82,67 +86,78 @@ def server_login(base_url, username, password):
 
     # Login to the server and return the session ID
     url = "{}/api/v2/auth/login".format(base_url)
-    response = http.post(url, form_body = form_body, ttl_seconds = 60)
-
-    if response.body() == "Ok.":
-        return response.headers["Set-Cookie"].split(";")[0][4:]
-    else:
+    origin = base_url.split("/")[0] + "//" + base_url.split("/")[2]
+    headers = {"Origin": origin, "Referer": base_url + "/"}
+    response = http.post(url, form_body = form_body, headers = headers)
+    if response.status_code != 200 or response.body() != "Ok.":
         return None
+    cookie = response.headers.get("Set-Cookie", "")
+    for part in cookie.split(";"):
+        part = part.strip()
+        if part.startswith("SID=") and len(part) > 4 and len(part) <= 260:
+            return part[4:]
+    return None
 
 def get_transfer_speeds(base_url, sid):
-    url = "{}/api/v2/transfer/info?SID={}".format(base_url, sid)
+    url = "{}/api/v2/transfer/info".format(base_url)
     headers = {"Cookie": "SID={}".format(sid)}
-    response = http.get(url, headers = headers, ttl_seconds = 60)
-
-    if response.status_code != 200:
+    data = get_json(url, headers)
+    if type(data) != "dict":
         return None
-    else:
-        data = response.json()
-        download_speed = speed_to_human(data["dl_info_speed"])
-        upload_speed = speed_to_human(data["up_info_speed"])
-        return {
-            "download_speed": download_speed,
-            "upload_speed": upload_speed,
-        }
+    download_speed = number(data.get("dl_info_speed"))
+    upload_speed = number(data.get("up_info_speed"))
+    return {
+        "download_speed": speed_to_human(download_speed),
+        "upload_speed": speed_to_human(upload_speed),
+    }
 
 def get_active_torrents(base_url, category, sid):
-    url = "{}/api/v2/torrents/info?filter=active{}&SID={}".format(base_url, category, sid)
+    url = "{}/api/v2/torrents/info?filter=active{}".format(base_url, category)
     headers = {"Cookie": "SID={}".format(sid)}
-    response = http.get(url, headers = headers, ttl_seconds = 60)
-    print(response.body())
-
-    if response.status_code != 200:
+    data = get_json(url, headers)
+    if type(data) != "list":
         return None
-    else:
-        data = response.json()
-        active_torrents = len(data)
-        active_downloads = len([torrent for torrent in data if torrent["progress"] < 1])
-        active_uploads = len([torrent for torrent in data if torrent["progress"] == 1])
-        return {
-            "active_torrents": active_torrents,
-            "active_downloads": active_downloads,
-            "active_uploads": active_uploads,
-        }
+    progress = [number(torrent.get("progress")) for torrent in data if type(torrent) == "dict"]
+    return {
+        "active_torrents": len(progress),
+        "active_downloads": len([value for value in progress if value < 1]),
+        "active_uploads": len([value for value in progress if value >= 1]),
+    }
 
 def get_latest_torrents(base_url, category, sid, torrent_count):
-    url = "{}/api/v2/torrents/info?limit={}&sort=added_on&reverse=true{}&SID={}".format(base_url, torrent_count, category, sid)  # Get the latest torrents
+    url = "{}/api/v2/torrents/info?limit={}&sort=added_on&reverse=true{}".format(base_url, torrent_count, category)  # Get the latest torrents
     headers = {"Cookie": "SID={}".format(sid)}
-    response = http.get(url, headers = headers, ttl_seconds = 60)
-
-    if response.status_code != 200:
+    data = get_json(url, headers)
+    if type(data) != "list":
         return None
-    else:
-        data = response.json()
-        torrents = []
-        for torrent in data:
-            torrents.append({
-                "name": torrent["name"],
-                "progress": torrent["progress"],
-                "added_on": torrent["added_on"],
-                "download_speed": speed_to_human(torrent["dlspeed"], 0),
-                "upload_speed": speed_to_human(torrent["upspeed"], 0),
-            })
-        return torrents
+    torrents = []
+    for torrent in data[:torrent_count]:
+        if type(torrent) != "dict":
+            continue
+        name = torrent.get("name", "")
+        if type(name) != "string":
+            continue
+        torrents.append({
+            "name": name[:128],
+            "progress": min(1, max(0, number(torrent.get("progress")))),
+            "download_speed": speed_to_human(number(torrent.get("dlspeed")), 0),
+            "upload_speed": speed_to_human(number(torrent.get("upspeed")), 0),
+        })
+    return torrents
+
+def get_json(url, headers):
+    response = http.get(url, headers = headers)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    return json.decode(body, None)
+
+def number(value):
+    return max(0, value) if type(value) in ["int", "float"] else 0
+
+def valid_base_url(value):
+    parts = value.split("/")
+    return type(value) == "string" and (value.startswith("https://") or value.startswith("http://")) and len(parts) >= 3 and parts[2] != "" and "@" not in value and "?" not in value and "#" not in value and "\\" not in value and " " not in value and "\n" not in value and "\r" not in value
 
 def speed_to_human(speed, precision = 2):
     if speed < 1024:

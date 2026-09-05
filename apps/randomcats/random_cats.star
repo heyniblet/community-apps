@@ -9,16 +9,22 @@ load("http.star", "http")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+TTL_SECONDS = 300
+
 def main(config):
     height = canvas.height()
+    width = canvas.width()
 
     cat_type = "/gif" if config.bool("gifs", True) else ""
-    url = "https://cataas.com/cat{}?height={}".format(cat_type, height)
+    url = "https://cataas.com/cat{}?width={}&height={}".format(cat_type, width, height)
 
     # Preview
     # url = https://cataas.com/cat/vHWxUr3RH8Gp0bke?height=" + str(height)
 
     imgSrc = get_cached(url)
+    if imgSrc == None:
+        return render.Root(child = render.WrappedText(content = "Cat unavailable", align = "center"))
 
     return render.Root(
         child = render.Box(
@@ -29,12 +35,10 @@ def main(config):
         ),
     )
 
-def get_cached(url, ttl_seconds = 20):
+def get_cached(url, ttl_seconds = TTL_SECONDS):
     res = http.get(url, ttl_seconds = ttl_seconds)
-    if res.status_code != 200:
-        fail("status %d from %s: %s" % (res.status_code, url, res.body()))
-
-    return res.body()
+    body = res.body()
+    return body if res.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES else None
 
 def get_schema():
     return schema.Schema(
