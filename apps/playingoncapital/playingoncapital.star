@@ -24,12 +24,17 @@ icecast_json_url = "https://streaming.galaxywebsolutions.com/json/stream/capital
 #We can then retirieve the song playing right now plus the last 5 songs played.
 
 def main():
-    rep = http.get(icecast_json_url)
+    rep = http.get(icecast_json_url, ttl_seconds = 60)
     if rep.status_code != 200:
-        print("URL %s" % icecast_json_url)
-        fail("The request failed with status %d", rep.status_code)
+        print("Capital Radio request failed with status %d" % rep.status_code)
+        return message("Capital 604", "Temporarily unavailable")
 
-    now_playing = rep.json()["nowplaying"]
+    body = rep.body().strip()
+    payload = rep.json() if len(body) <= 65536 and body.startswith("{") and body.endswith("}") else {}
+    now_playing = payload.get("nowplaying", "") if type(payload) == "dict" else ""
+    if type(now_playing) != "string" or not now_playing.strip():
+        return message("Capital 604", "No track information")
+
     # last_song_1 = rep.json()["trackhistory"][0]
     # last_song_2 = rep.json()["trackhistory"][1]
     # last_song_3 = rep.json()["trackhistory"][2]
@@ -59,10 +64,22 @@ def main():
                     children = [
                         render.Marquee(
                             width = 64,
-                            child = render.Text("%s" % now_playing, font = FONT, height = 8),
+                            child = render.Text(now_playing[:200], font = FONT, height = 8),
                         ),
                     ],
                 ),
             ],
+        ),
+    )
+
+def message(title, detail):
+    return render.Root(
+        child = render.Column(
+            children = [
+                render.Text(title, font = HFONT, color = "#228ee9"),
+                render.Text(detail, font = SMALLFONT),
+            ],
+            main_align = "center",
+            cross_align = "center",
         ),
     )

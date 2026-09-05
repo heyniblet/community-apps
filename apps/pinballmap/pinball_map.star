@@ -24,24 +24,36 @@ DEFAULT_LOCATION = json.encode({
 def main(config):
     location_cfg = config.str("location", DEFAULT_LOCATION)
     location = json.decode(location_cfg)
-    max_distance = config.str("max_distance", DEFAULT_MAX_DISTANCE)
+    max_distance = config.str("max_distance", str(DEFAULT_MAX_DISTANCE)).strip()
+    if not max_distance.isdigit() or int(max_distance) < 1 or int(max_distance) > 100:
+        max_distance = str(DEFAULT_MAX_DISTANCE)
 
-    most_recent_machines_url = "http://pinballmap.com/api/v1/location_machine_xrefs/most_recent_by_lat_lon.json?lat=%s;lon=%s;max_distance=%s" % (location["lat"], location["lng"], max_distance)
-    most_recent_machines_data = http.get(most_recent_machines_url, ttl_seconds = CACHE_TIME_IN_SECONDS)
+    most_recent_machines_data = http.get(
+        "https://pinballmap.com/api/v1/location_machine_xrefs/most_recent_by_lat_lon.json",
+        params = {
+            "lat": location["lat"],
+            "lon": location["lng"],
+            "max_distance": max_distance,
+        },
+        ttl_seconds = CACHE_TIME_IN_SECONDS,
+    )
     most_recent_machines = []
 
     if most_recent_machines_data.status_code != 200:
         print("PBM request failed with status %d" % most_recent_machines_data.status_code)
     else:
         print("Cache hit!" if (most_recent_machines_data.headers.get("Tidbyt-Cache-Status") == "HIT") else "Cache miss!")
-
-    if (len(most_recent_machines_data.json()["most_recently_added_machines"]) > 0):
-        for machine in most_recent_machines_data.json()["most_recently_added_machines"]:
+        body = most_recent_machines_data.body().strip()
+        payload = json.decode(body) if len(body) <= 65536 and body.startswith("{") and body.endswith("}") else {}
+        machines = payload.get("most_recently_added_machines", []) if type(payload) == "dict" else []
+        for machine in machines[:3] if type(machines) == "list" else []:
+            if type(machine) != "string" or not machine:
+                continue
             most_recent_machines.append(
                 render.Row(
                     children = [
                         render.Marquee(
-                            child = render.Text(machine, font = "tom-thumb"),
+                            child = render.Text(machine[:160], font = "tom-thumb"),
                             width = 64,
                             offset_start = 32,
                             offset_end = 32,
