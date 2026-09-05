@@ -15,42 +15,11 @@ TTL_SECONDS = 300  # 5 minutes
 DEFAULT_USER = ""
 DEFAULT_KEY = ""
 DEFAULT_FEED_ID = ""
-JSON_DUMMY_DATA = """{
-    "feed": {
-        "id": 2635718,
-        "name": "Sensor Voltage",
-        "key": "mesh.gh-temp"
-    },
-    "parameters": {
-        "start_time": "2023-10-25T23:19:40Z",
-        "end_time": "2023-10-26T00:19:40Z",
-        "hours": 1,
-        "field": "avg"
-    },
-    "columns": [
-        "date",
-        "value"
-    ],
-    "storage": "raw",
-    "data": [
-        [
-            "2023-10-25T23:25:04Z",
-            "4.200011253357"
-        ],
-        [
-            "2023-10-25T23:55:04Z",
-            "3.74000000953674"
-        ],
-        [
-            "2023-10-26T00:10:04Z",
-            "3.54900007247925"
-        ],
-        [
-            "2023-10-26T00:10:04Z",
-            "4.04900007247925"
-        ]
-    ]
-}"""
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_POINTS = 120
+MAX_LABEL_LENGTH = 120
+MAX_PATH_PART_LENGTH = 128
+PATH_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
 YELLOW = "#ffff00"  # Firefly palette color
 GREEN = "#ADFF2F"  # Firefly palette color
 ORANGE = "#FF4500"  # Firefly palette color
@@ -61,7 +30,9 @@ def main(config):
     username = config.str("username", DEFAULT_USER)
     key = config.str("key", DEFAULT_KEY)
     feed_id = config.str("feed_id", DEFAULT_FEED_ID)
-    hours = int(config.get("hours_history", 24))
+    hours_value = str(config.get("hours_history", "24"))
+    hours = int(hours_value) if hours_value.isdigit() else 24
+    hours = min(max(hours, 1), 720)
     feed = get_feed(username, key, feed_id, hours)
 
     # Parse value range filters
@@ -70,10 +41,9 @@ def main(config):
 
     # check for feed2
     feed2 = None
-    if config.get("feed2_id", None):
-        feed2 = get_feed(username, key, config.get("feed2_id"), hours)
-
-    #print(feed)
+    feed2_id = config.get("feed2_id", None)
+    if feed2_id:
+        feed2 = get_feed(username, key, feed2_id, hours)
 
     if "error" in feed or (feed2 and "error" in feed2):  # if we have error key, then we display an error
         #debug_print("buoy_id: " + str(buoy_id))
@@ -82,11 +52,8 @@ def main(config):
             error_dict = feed
         if (feed2 and "error" in feed2):
             error_dict = feed2
-        error_string = error_dict["error"].split("-")[1]
-        if ("username" in error_string or "invalid" in error_string):
-            error_message = error_string
-        else:
-            error_message = "Feed not found"
+        error_string = error_dict.get("error", "Feed unavailable")
+        error_message = error_string[:80]
         return render.Root(
             child = render.Box(
                 render.Column(
@@ -116,18 +83,15 @@ def main(config):
         #FEED
         # build the feed_graph
         feed_graph = None
-        print(feed)
         if config.bool("display_graph") and len(feed["data"]) > 3:  # only make the graph if we have more than 3 points
             # interate through the points and convert to float and stick them an array
             points = []
             for i in range(len(feed["data"])):
                 points.append((i, float(feed["data"][i][1])))
-            print("points " + str(points))
             y_lim = (None, None)
-            min_max = config.get("y_min_max", None)
-            if min_max and "," in min_max:
-                (min, max) = min_max.split(",")
-                y_lim = (float(min), float(max))
+            limits = parse_range(config.get("y_min_max", None))
+            if limits:
+                y_lim = limits
             feed_graph = render.Plot(
                 data = points,
                 width = 64,
@@ -143,12 +107,10 @@ def main(config):
             points = []
             for i in range(len(feed2["data"])):
                 points.append((i, float(feed2["data"][i][1])))
-            print("points " + str(points))
             y2_lim = (None, None)
-            min_max = config.get("y2_min_max", None)
-            if min_max and "," in min_max:
-                (min, max) = min_max.split(",")
-                y2_lim = (float(min), float(max))
+            limits = parse_range(config.get("y2_min_max", None))
+            if limits:
+                y2_lim = limits
             feed2_graph = render.Plot(
                 data = points,
                 width = 64,
@@ -214,7 +176,7 @@ def main(config):
                                     main_align = "center",
                                     children = [
                                         render.WrappedText(
-                                            content = config.str("feed_name", None) or feed["feed"]["name"],
+                                            content = (config.str("feed_name", None) or feed["feed"]["name"])[:MAX_LABEL_LENGTH],
                                             font = "tb-8",
                                             color = config.str("feed_color", None) or GREEN,
                                         ),
@@ -230,39 +192,61 @@ def main(config):
 
 def get_feed(username, key, feed_id, hours):
     if not username or not key or not feed_id:
-        return json.decode(JSON_DUMMY_DATA)
+        return {"error": "Enter username, key, and feed"}
+    if not valid_path_part(username) or not valid_path_part(feed_id):
+        return {"error": "Invalid username or feed"}
 
     # load the feed from adafruit io
     # curl -H "X-AIO-Key: {io_key}" 'https://io.adafruit.com/api/v2/{username}/feeds/{feed_key}/data/chart?hours=1'
 
     url = "https://io.adafruit.com/api/v2/%s/feeds/%s/data/chart?hours=%s" % (username, feed_id, hours)
-    print("url:", url)
     res = http.get(url, headers = {"X-AIO-Key": key}, ttl_seconds = TTL_SECONDS)
-    feed = res.json()
-    print("feed is :" + str(feed))
-    if ("data" in feed and len(feed["data"]) == 0):
-        print("pulling bare data feed")
-
-        url = "https://io.adafruit.com/api/v2/%s/feeds/%s/data" % (username, feed_id)
-        print("url:", url)
+    body = res.body()
+    feed = json.decode(body, None) if len(body) <= MAX_RESPONSE_BYTES else None
+    if res.status_code != 200 or type(feed) != "dict":
+        return {"error": "Adafruit IO request failed"}
+    if "data" in feed and type(feed["data"]) == "list" and len(feed["data"]) == 0:
+        url = "https://io.adafruit.com/api/v2/%s/feeds/%s/data?limit=1" % (username, feed_id)
         res = http.get(url, headers = {"X-AIO-Key": key}, ttl_seconds = TTL_SECONDS)
-        dfeed = res.json()
-        print("new feed is : " + str(dfeed))
-        feed["data"] = [["0", dfeed[-1]["value"]]]
+        body = res.body()
+        dfeed = json.decode(body, None) if len(body) <= MAX_RESPONSE_BYTES else None
+        if res.status_code == 200 and type(dfeed) == "list" and len(dfeed) > 0 and type(dfeed[-1]) == "dict":
+            feed["data"] = [["0", dfeed[-1].get("value")]]
+
+    if not valid_feed(feed):
+        return {"error": "Feed returned invalid data"}
+    feed["data"] = feed["data"][-MAX_POINTS:]
 
     return feed
+
+def valid_path_part(value):
+    return type(value) == "string" and 0 < len(value) and len(value) <= MAX_PATH_PART_LENGTH and all([char in PATH_CHARS for char in value.codepoints()])
+
+def valid_feed(feed):
+    if type(feed.get("feed")) != "dict" or type(feed["feed"].get("name")) != "string" or type(feed.get("data")) != "list" or len(feed["data"]) == 0:
+        return False
+    for point in feed["data"][-MAX_POINTS:]:
+        if type(point) != "list" or len(point) < 2 or not valid_number(point[1]):
+            return False
+    return True
+
+def valid_number(value):
+    text = str(value)
+    if len(text) == 0 or len(text) > 32 or text.count(".") > 1 or text.count("-") > 1 or ("-" in text and not text.startswith("-")):
+        return False
+    return all([char in "0123456789.-" for char in text.codepoints()]) and any([char.isdigit() for char in text.codepoints()])
 
 def parse_range(range_str):
     """Parse a min-max range string like '10-20' into a tuple (min, max).
     Returns None if range_str is empty or invalid."""
     if not range_str:
         return None
-    if "-" in range_str:
-        parts = range_str.split("-")
-        if len(parts) == 2:
-            if parts[0] and parts[1]:
-                # Use float() directly - if it fails, the app will show an error
-                return (float(parts[0]), float(parts[1]))
+    separator = "," if "," in range_str else "-"
+    parts = range_str.split(separator, 1)
+    if len(parts) == 2 and valid_number(parts[0].strip()) and valid_number(parts[1].strip()):
+        lower = float(parts[0].strip())
+        upper = float(parts[1].strip())
+        return (lower, upper) if lower <= upper else None
     return None
 
 def is_in_range(value, range_tuple):
@@ -290,6 +274,7 @@ def get_schema():
             name = "AIO Key",
             desc = "AIO Acess Key",
             icon = "key",
+            secret = True,
         ),
     )
     fields.append(

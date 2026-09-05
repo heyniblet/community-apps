@@ -5,6 +5,7 @@ Description: See your favorite villagers from Animal Crossing New Horizons.
 Author: colinscruggs
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/fail.png", FAIL_IMAGE = "file")
 load("random.star", "random")
@@ -12,35 +13,40 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 CACHE_TTL_SECONDS = 3600 * 24 * 7
+MAX_DATA_BYTES = 1024 * 1024
+MAX_ICON_BYTES = 1024 * 1024
+MAX_VILLAGERS = 500
+MAX_TEXT_LENGTH = 120
 ICON_WIDTH = 26
 ICON_HEIGHT = 26
 
 FONTS = ["CG-pixel-3x5-mono", "tb-8", "tom-thumb", "Dina_r400-6", "5x8"]
 FONT_DEFAULT = FONTS[0]
 
-FAIL_MESSAGE = "%s failed with status: %d"
-
-ACNH_API_VILLAGERS = "https://raw.githubusercontent.com/alexislours/ACNHAPI/refs/heads/master/villagers.json"
-ACNH_API_ICON_TEMPLATE = "https://github.com/alexislours/ACNHAPI/raw/master/icons/villagers/{}.png"
+ACNH_DATA_REVISION = "6df0d7318a97ab8d0e4a5646bff57180fde1eec5"
+ACNH_API_VILLAGERS = "https://cdn.jsdelivr.net/gh/alexislours/ACNHAPI@{}/villagers.json".format(ACNH_DATA_REVISION)
+ACNH_API_ICON_TEMPLATE = "https://cdn.jsdelivr.net/gh/alexislours/ACNHAPI@{}/icons/villagers/{{}}.png".format(ACNH_DATA_REVISION)
+LANGUAGES = ["USen", "USes", "EUfr", "EUit", "EUde", "EUnl"]
 
 def main(config):
     language = config.get("language") or "USen"
+    if language not in LANGUAGES:
+        language = "USen"
     name_key = "name-" + language
     catch_phrase_key = "catch-" + language
 
     # Fetch and cache villager data; pick one at random
     villager_data = get_villager_data()
+    if len(villager_data) == 0:
+        return render_error("Villagers unavailable")
     random_index = random.number(0, len(villager_data) - 1)
     _, villager = list(villager_data.items())[random_index]
-    if len(villager) == 0:
-        fail("Unable to find villager :c")
+    if not valid_villager(villager, name_key, catch_phrase_key):
+        return render_error("Bad villager data")
 
     # Set villager icon
     villager_icon = ACNH_API_ICON_TEMPLATE.format(villager["file-name"])
-    if villager_icon == None:
-        villager_icon = FAIL_IMAGE.readall()
-    else:
-        villager_icon = get_villager_icon(villager_icon)
+    villager_icon = get_villager_icon(villager_icon)
 
     return render.Root(
         delay = 100,
@@ -62,7 +68,7 @@ def main(config):
                                     render.Marquee(
                                         child =
                                             render.Text(
-                                                content = get_villager_name(villager["name"][name_key]),
+                                                content = get_villager_name(villager["name"][name_key][:MAX_TEXT_LENGTH]),
                                                 font = FONT_DEFAULT,
                                                 color = villager["bubble-color"],
                                             ),
@@ -82,7 +88,7 @@ def main(config):
                                 cross_align = "center",
                                 children = [
                                     render.WrappedText(
-                                        content = villager["personality"],  # Shouldn't go over 6 characters
+                                        content = villager["personality"][:MAX_TEXT_LENGTH],
                                         font = FONT_DEFAULT,
                                         width = 28,
                                         align = "right",
@@ -90,7 +96,7 @@ def main(config):
                                     render.Marquee(
                                         child =
                                             render.Text(
-                                                content = get_villager_species(villager["species"]),
+                                                content = get_villager_species(villager["species"][:MAX_TEXT_LENGTH]),
                                                 font = FONT_DEFAULT,
                                             ),
                                         width = 28,
@@ -99,7 +105,7 @@ def main(config):
                                     render.Marquee(
                                         child =
                                             render.Text(
-                                                content = get_villager_catch_phrase(villager["catch-translations"][catch_phrase_key]),
+                                                content = get_villager_catch_phrase(villager["catch-translations"][catch_phrase_key][:MAX_TEXT_LENGTH]),
                                                 font = FONT_DEFAULT,
                                                 color = villager["text-color"],
                                             ),
@@ -116,16 +122,42 @@ def main(config):
 # Cache and encode villager data
 def get_villager_data():
     rep = http.get(ACNH_API_VILLAGERS, ttl_seconds = CACHE_TTL_SECONDS)
-    if rep.status_code != 200:
-        fail(FAIL_MESSAGE % (ACNH_API_VILLAGERS, rep.status_code))
-    return rep.json()
+    body = rep.body()
+    if rep.status_code != 200 or len(body) > MAX_DATA_BYTES:
+        return {}
+    data = json.decode(body, None)
+    return data if type(data) == "dict" and len(data) <= MAX_VILLAGERS else {}
 
 # Cache and encode villager icon
 def get_villager_icon(url):
     res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        fail(FAIL_MESSAGE % (url, res.status_code))
-    return res.body()
+    body = res.body()
+    if res.status_code != 200 or len(body) > MAX_ICON_BYTES:
+        return FAIL_IMAGE.readall()
+    return body
+
+def valid_villager(villager, name_key, catch_phrase_key):
+    if type(villager) != "dict":
+        return False
+    names = villager.get("name")
+    catches = villager.get("catch-translations")
+    required = [villager.get("file-name"), villager.get("personality"), villager.get("species"), villager.get("bubble-color"), villager.get("text-color")]
+    if type(names) != "dict" or type(catches) != "dict" or type(names.get(name_key)) != "string" or type(catches.get(catch_phrase_key)) != "string":
+        return False
+    return all([type(value) == "string" and 0 < len(value) and len(value) <= MAX_TEXT_LENGTH for value in required])
+
+def render_error(message):
+    return render.Root(
+        child = render.Column(
+            expanded = True,
+            main_align = "center",
+            cross_align = "center",
+            children = [
+                render.Image(src = FAIL_IMAGE.readall(), width = 20, height = 20),
+                render.Text(message, font = FONT_DEFAULT, color = "#fff"),
+            ],
+        ),
+    )
 
 # Adds padding for villager names that are less than 7 characters
 def get_villager_name(str):
