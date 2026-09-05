@@ -2,8 +2,9 @@
 id: ddayclock
 name: DDayClock
 summary: Displays current DD Clock
-desc: Gets the current Doomsday Clock data from https://www.doomsdayclock.net/ daily.
+desc: Gets the current Doomsday Clock data from the Bulletin of the Atomic Scientists.
 author: LLarry
+recommendedInterval: 720
 category: news
 tags:
   - clock

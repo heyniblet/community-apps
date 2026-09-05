@@ -6,7 +6,7 @@ desc: Displays the daily horoscope for a specific sign from USA Today.
 author: frame-shift
 fileName: daily_horoscope.star
 packageName: dailyhoroscope
-recommendedInterval: 5
+recommendedInterval: 60
 category: entertainment
 tags:
   - horoscope
