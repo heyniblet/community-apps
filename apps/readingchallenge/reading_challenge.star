@@ -20,6 +20,8 @@ ONE_OPEN_BOOK_ICON = ONE_OPEN_BOOK_ICON_ASSET.readall()
 THREE_BOOK_ICON = THREE_BOOK_ICON_ASSET.readall()
 
 GOODREADS_PROGRESS_URL = "https://www.goodreads.com/user_challenges/"
+MAX_RESPONSE_BYTES = 512 * 1024
+CACHE_SECONDS = 60 * 60
 
 def gen_book_image(progress):
     if progress <= 0:
@@ -99,22 +101,27 @@ def gen_book_image(progress):
     return images
 
 def main(config):
-    CHALLENGE_ID = config.str("user_challenge_id", "38950148")
+    challenge_id = config.str("user_challenge_id", "").strip()
+    if not challenge_id:
+        return message("Add challenge ID")
+    if len(challenge_id) > 20 or not all([char.isdigit() for char in challenge_id.codepoints()]):
+        return message("Invalid challenge ID")
 
-    challenge_page = http.get(GOODREADS_PROGRESS_URL + CHALLENGE_ID, ttl_seconds = 86400)
-
-    if challenge_page.status_code != 200:
-        fail("Request failed with status %d", challenge_page.status_code)
-
+    challenge_page = http.get(GOODREADS_PROGRESS_URL + challenge_id, ttl_seconds = CACHE_SECONDS)
     body = challenge_page.body()
-    progress_div = re.findall(r"<div class='progressText'>([\s\S]*?)</div>", body)
+    if challenge_page.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return message("Challenge unavailable")
+
+    progress_div = re.findall(r"""<div class=["']progressText["']>([\s\S]*?)</div>""", body)
 
     if not progress_div:
-        fail("No challenge found at {}".format(config.str("user_challenge_id", CHALLENGE_ID)))
+        return message("Challenge unavailable")
 
     progress_nums = re.findall(r"\d+", progress_div[0])
-    progress = progress_nums[0]
-    goal = progress_nums[1]
+    if len(progress_nums) < 2:
+        return message("Challenge unavailable")
+    progress = progress_nums[0][:8]
+    goal = progress_nums[1][:8]
 
     progress_text = " ".join(["Read:", str(progress), "books."])
     goal_text = " ".join(["Goal:", str(goal), "books."])
@@ -128,11 +135,15 @@ def main(config):
     ]
 
     return render.Root(
+        max_age = CACHE_SECONDS,
         child = render.Column(
             main_align = "space_around",
             children = lines,
         ),
     )
+
+def message(text):
+    return render.Root(child = render.Box(child = render.WrappedText(content = text, align = "center")))
 
 def get_schema():
     return schema.Schema(

@@ -5,6 +5,7 @@ Description: Display a random recipe from themealdb.com.
 Author: noahpodgurski
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 
@@ -13,20 +14,24 @@ TITLE = "d95b52"
 BLUE = "52c3d9"
 
 REFRESH_TIME = 600
+MAX_JSON_BYTES = 64 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+IMAGE_PREFIX = "https://www.themealdb.com/images/"
 
 def request():
     res = http.get("https://www.themealdb.com/api/json/v1/1/random.php", ttl_seconds = REFRESH_TIME)
-    if res.status_code != 200:
-        return SAMPLE_RESPONSE
-        # fail("request failed with status %d", res.status_code)
-
-    return res.json()
+    body = res.body()
+    data = json.decode(body, None) if res.status_code == 200 and body and len(body) <= MAX_JSON_BYTES else None
+    return data if valid_response(data) else SAMPLE_RESPONSE
 
 def main():
     data = request()["meals"][0]
 
     imageUrl = data["strMealThumb"]
-    imageSrc = http.get(imageUrl, ttl_seconds = REFRESH_TIME).body()
+    imageSrc = get_image(imageUrl)
+    name = data["strMeal"][:120]
+    category = data["strCategory"][:80]
+    area = data["strArea"][:80]
 
     return render.Root(
         child = render.Box(
@@ -39,31 +44,45 @@ def main():
                         cross_align = "center",
                         expanded = True,
                         children = [
-                            render.WrappedText(align = "center", content = data["strMeal"], color = TITLE) if len(data["strMeal"]) < 8 else render.Marquee(
+                            render.WrappedText(align = "center", content = name, color = TITLE) if len(name) < 8 else render.Marquee(
                                 offset_start = 32,
                                 offset_end = 32,
                                 width = 32,
                                 height = 6,
-                                child = render.Text(data["strMeal"], color = TITLE),
+                                child = render.Text(name, color = TITLE),
                             ),
                             render.Box(width = 32, height = 1, color = "ffffff"),
-                            render.WrappedText(align = "center", content = data["strCategory"], font = "tom-thumb", color = BLUE) if len(data["strCategory"]) < 8 else render.Marquee(
+                            render.WrappedText(align = "center", content = category, font = "tom-thumb", color = BLUE) if len(category) < 8 else render.Marquee(
                                 offset_start = 32,
                                 offset_end = 32,
                                 width = 32,
                                 height = 6,
-                                child = render.Text(data["strCategory"], font = "tom-thumb", color = BLUE),
+                                child = render.Text(category, font = "tom-thumb", color = BLUE),
                             ),
-                            render.WrappedText(align = "center", content = data["strArea"], font = "tom-thumb") if len(data["strArea"]) < 8 else render.Marquee(
+                            render.WrappedText(align = "center", content = area, font = "tom-thumb") if len(area) < 8 else render.Marquee(
                                 offset_start = 32,
                                 offset_end = 32,
                                 width = 32,
-                                child = render.Text(data["strArea"], font = "tom-thumb"),
+                                child = render.Text(area, font = "tom-thumb"),
                             ),
                         ],
                     ),
-                    render.Image(height = 32, width = 32, src = imageSrc),
+                    render.Image(height = 32, width = 32, src = imageSrc) if imageSrc != None else render.Box(width = 32),
                 ],
             ),
         ),
     )
+
+def valid_response(data):
+    meals = data.get("meals") if type(data) == "dict" else None
+    if type(meals) != "list" or len(meals) == 0 or type(meals[0]) != "dict":
+        return False
+    meal = meals[0]
+    return all([type(meal.get(field)) == "string" for field in ["strMeal", "strCategory", "strArea", "strMealThumb"]])
+
+def get_image(url):
+    if not url.startswith(IMAGE_PREFIX):
+        return None
+    res = http.get(url, ttl_seconds = REFRESH_TIME)
+    body = res.body()
+    return body if res.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES else None
