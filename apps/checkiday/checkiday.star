@@ -12,6 +12,8 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 CHECKIDAY_API_URL = "https://api.apilayer.com/checkiday/events"
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_EVENTS = 100
 
 DEFAULT_COLORS = ["#777", "#FFF"]
 CUSTOM_COLORS_BY_DATE = {
@@ -108,19 +110,18 @@ def get_schema():
 
 def get_timezone(config):
     location = config.get("location")
-    loc = json.decode(location) if location else {}
+    loc = json.decode(location, {}) if location else {}
+    if type(loc) != "dict":
+        loc = {}
     return loc.get("timezone", time.tz())
 
 def get_events(config):
     api_key = config.get("api_key", "")
-    if not api_key:
+    if not api_key or len(api_key) > 512:
         return [{"name": "Add API key in settings", "id": ""}]
 
     timezone = get_timezone(config)
     adult = config.bool("adult")
-    now = time.now().in_location(timezone)
-    end_of_day = time.time(year = now.year, month = now.month, day = now.day, hour = 23, minute = 59, second = 59, location = timezone)
-    time_left_in_day = end_of_day - now
     params = {"adult": str(adult).lower()}
     if not config.bool("free_plan"):
         params["timezone"] = timezone
@@ -129,12 +130,19 @@ def get_events(config):
         CHECKIDAY_API_URL,
         headers = {"apikey": api_key},
         params = params,
-        ttl_seconds = int(min(3600, time_left_in_day.seconds)),  # cache until midnight or an hour, whichever is first
     )
-    if rep.status_code != 200:
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return [{"name": "Error loading holidays...", "id": ""}]
-
-    return rep.json()["events"]
+    data = json.decode(body, None)
+    raw_events = data.get("events") if type(data) == "dict" else None
+    if type(raw_events) != "list":
+        return [{"name": "Error loading holidays...", "id": ""}]
+    events = []
+    for event in raw_events[:MAX_EVENTS]:
+        if type(event) == "dict" and event.get("name"):
+            events.append({"name": str(event["name"])[:300], "id": str(event.get("id") or "")[:80]})
+    return events or [{"name": "No holidays today", "id": ""}]
 
 def get_colors(date, events):
     colors = CUSTOM_COLORS_BY_DATE.get((date.month, date.day))
