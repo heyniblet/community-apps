@@ -33,20 +33,23 @@ def generate_root(temperature, datetime):
     )
 
 def main(config):
-    location_code = config.get("station", "WEIN3")
+    location_code = config.get("station", "WEIN3").strip().upper()
 
-    if not location_code:
-        return generate_root("No station")
+    if not location_code or len(location_code) > 20 or any([char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in location_code.codepoints()]):
+        return generate_root("Bad station")
 
     timeseries_api_url = "{}/timeseries/sparse/?location__code={}".format(BASE_URL, location_code)
     res = http.get(timeseries_api_url, ttl_seconds = TTL_SECONDS)
 
-    if res.status_code != 200 or type(res.json()) != "list":
+    if res.status_code != 200:
+        return generate_root("No timeseries")
+    timeseries = res.json()
+    if type(timeseries) != "list":
         return generate_root("No timeseries")
 
     timeseries_id = None
 
-    for item in res.json():
+    for item in timeseries:
         if type(item) == "dict" and item.get("name") == "Water Temperature":
             timeseries_id = item.get("id")
             break
@@ -62,20 +65,22 @@ def main(config):
     data_api_url = "{}/timeseries/{}/values?start={}&end={}".format(BASE_URL, timeseries_id, start_iso, end_iso)
     res = http.get(data_api_url, ttl_seconds = TTL_SECONDS)
 
-    if res.status_code != 200 or type(res.json()) != "list" or len(res.json()) == 0:
+    if res.status_code != 200:
         return generate_root("No data")
 
     data = res.json()
+    if type(data) != "list" or len(data) == 0:
+        return generate_root("No data")
     data = data[len(data) - 1]
 
-    if type(data) != "dict" or not data.get("num_value"):
+    if type(data) != "dict" or data.get("num_value") == None or not data.get("datetime"):
         return generate_root("No data")
 
     temperature = data.get("num_value")
+    if type(temperature) != "int" and type(temperature) != "float":
+        return generate_root("No data")
 
-    # Formatting to 6 decimal places
-    temperature = str(int(math.round(temperature * 1000000)))
-    temperature = (temperature[0:-6] + "." + temperature[-6:]) + " °F"
+    temperature = str(math.round(temperature * 10) / 10.0) + " °F"
 
     # Get the timestamp of the last update and format it for US/Eastern (New Hampshire's timezone)
     datetime = time.parse_time(data.get("datetime")).in_location("US/Eastern").format("01/02/2006 3:04 PM")

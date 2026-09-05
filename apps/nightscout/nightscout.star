@@ -7,9 +7,7 @@ For support, join the Nightscout for Tidbyt Facebook group.
 Authors: Paul Murphy, Jason Hanson, Jeremy Tavener, gabe565
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
-load("hash.star", "hash")
 load("http.star", "http")
 load("math.star", "math")
 load("render.star", "canvas", "render")
@@ -89,9 +87,6 @@ DEFAULT_SHOW_24_HOUR_TIME = False
 DEFAULT_NIGHT_MODE = False
 GRAPH_BOTTOM = 40
 
-MIN_CACHE_TTL = 10 * time.second
-READING_AGE_THRESHOLD = 5 * time.minute + 30 * time.second
-
 # Readings outside this range are reported as LOW/HIGH instead of a number.
 LOW_READING = 39
 HIGH_READING = 401
@@ -134,8 +129,8 @@ def main(config):
     lat, lng = float(loc["lat"]), float(loc["lng"])
     sun_rise = sunrise.sunrise(lat, lng, now)
     sun_set = sunrise.sunset(lat, lng, now)
-    nightscout_url = config.get("nightscout_url", DEFAULT_NSURL)
-    nightscout_token = config.get("nightscout_token", DEFAULT_NSTOKEN)
+    nightscout_url = config.get("nightscout_url", DEFAULT_NSURL).strip()
+    nightscout_token = config.get("nightscout_token", DEFAULT_NSTOKEN).strip()
     show_graph = config.bool("show_graph", DEFAULT_SHOW_GRAPH)
     show_graph_hour_bars = config.bool("show_graph_hour_bars", DEFAULT_SHOW_GRAPH_HOUR_BARS)
     expand_graph_height = config.bool("expand_graph_height", DEFAULT_EXPAND_GRAPH_HEIGHT)
@@ -162,8 +157,12 @@ def main(config):
         sample_data = True
         nightscout_data = get_sample_data(display_unit)
     else:
+        if not nightscout_url.startswith("https://"):
+            return display_failure("Nightscout: URL must use HTTPS")
+        if nightscout_token and any([char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for char in nightscout_token.codepoints()]):
+            return display_failure("Nightscout: Invalid access token")
         nightscout_data, status_code = get_nightscout_data(nightscout_url, nightscout_token, show_graph, display_unit)
-        if status_code > 200:
+        if status_code != 200:
             return display_failure("Nightscout Error: " + str(status_code) + " " + http.status_text(status_code))
 
     # Pull the data from the cache
@@ -1007,7 +1006,7 @@ def build_two_column_output(left_column_string, graph_plot, graph_hour_bars, gra
         ),
     ]
 
-def display_unit_options(display_unit):
+def display_unit_options(display_unit, include_common = True):
     if display_unit == "mgdl":
         graph_height = DEFAULT_GRAPH_HEIGHT
         normal_high = DEFAULT_NORMAL_HIGH
@@ -1023,7 +1022,7 @@ def display_unit_options(display_unit):
         urgent_low = mgdl_to_mmol(DEFAULT_URGENT_LOW)
         unit = "mmol/L"
 
-    return [
+    options = [
         schema.Text(
             id = display_unit + "_graph_height",
             name = "Graph Height",
@@ -1115,6 +1114,7 @@ def display_unit_options(display_unit):
             palette = PALETTE,
         ),
     ]
+    return options if include_common else [options[0], options[3], options[5], options[7], options[9]]
 
 def get_schema():
     clock_options = [
@@ -1159,13 +1159,13 @@ def get_schema():
             schema.Text(
                 id = "nightscout_url",
                 name = "Nightscout URL",
-                desc = "Your Nightscout URL (i.e. yournightscoutID.heroku.com)",
+                desc = "Your base HTTPS Nightscout URL (for example, https://your-site.example.com)",
                 icon = "link",
             ),
             schema.Text(
                 id = "nightscout_token",
                 name = "Nightscout Token",
-                desc = "Token for Nightscout Subject with 'readable' Role (optional)",
+                desc = "Optional Nightscout access token for a subject with only the readable role. Do not use API_SECRET or an admin token.",
                 icon = "key",
                 secret = True,
             ),
@@ -1199,11 +1199,7 @@ def get_schema():
                 icon = "chartColumn",
                 default = DEFAULT_SHOW_GRAPH_HOUR_BARS,
             ),
-            schema.Generated(
-                id = "graph_options",
-                source = "display_unit",
-                handler = display_unit_options,
-            ),
+        ] + display_unit_options("mgdl") + display_unit_options("mmol", False) + [
             schema.Dropdown(
                 id = "clock_option",
                 name = "Show Clock/IOB/COB",
@@ -1262,28 +1258,24 @@ def get_schema():
     )
 
 def build_url(url, path):
-    proto = "http" if url.startswith("http://") else "https"
-    host = url.removeprefix(proto + "://")
+    host = url.removeprefix("https://")
     host = host.split("/")[0]
-    return proto + "://" + host + path
+    return "https://" + host + path
+
+def add_access_token(url, token):
+    if not token:
+        return url
+    separator = "&" if "?" in url else "?"
+    return url + separator + "token=" + token
 
 # This method returns a tuple of a nightscout_data and a status_code.
 def get_nightscout_data(nightscout_url, nightscout_token, show_graph, display_unit):
-    json_url = build_url(nightscout_url, "/api/v2/properties/bgnow,iob,delta,direction,cob")
-    encoded_token = hash.sha1(nightscout_token) if nightscout_token else ""
-    headers = {"API-Secret": encoded_token} if encoded_token else {}
-    cache_key = json_url + ":" + hash.sha1(encoded_token)
+    json_url = add_access_token(build_url(nightscout_url, "/api/v2/properties/bgnow,iob,delta,direction,cob"), nightscout_token)
+    resp = http.get(json_url)
+    if resp.status_code != 200:
+        return None, resp.status_code
 
-    cached = cache.get(cache_key)
-    if cached:
-        ns_properties = json.decode(cached)
-    else:
-        # Request latest properties from the Nightscout URL
-        resp = http.get(json_url, headers = headers)
-        if resp.status_code != 200:
-            return None, resp.status_code
-
-        ns_properties = resp.json()
+    ns_properties = resp.json()
 
     sgv_current = ""
     sgv_delta = 0
@@ -1324,16 +1316,8 @@ def get_nightscout_data(nightscout_url, nightscout_token, show_graph, display_un
         if "display" in ns_properties["cob"]:
             cob = str(ns_properties["cob"]["display"]) + "g"
 
-    ttl = MIN_CACHE_TTL
-    if latest_reading_date:
-        reading_age = time.now() - latest_reading_date
-        ttl = max(READING_AGE_THRESHOLD - reading_age, MIN_CACHE_TTL)
-
-    if not cached:
-        cache.set(cache_key, json.encode(ns_properties), ttl_seconds = int(ttl.seconds))
-
     if show_graph:
-        nightscout_history, status = get_nightscout_history(nightscout_url, nightscout_token, latest_reading_date, ttl)
+        nightscout_history, status = get_nightscout_history(nightscout_url, nightscout_token, latest_reading_date)
         if status != 200:
             nightscout_history = []
 
@@ -1349,16 +1333,14 @@ def get_nightscout_data(nightscout_url, nightscout_token, show_graph, display_un
 
     return data, 200
 
-def get_nightscout_history(nightscout_url, nightscout_token, latest_reading_date, ttl):
+def get_nightscout_history(nightscout_url, nightscout_token, latest_reading_date):
     if not latest_reading_date:
         latest_reading_date = time.now()
     oldest_reading = str((latest_reading_date - 4 * time.hour).unix)
-    json_url = build_url(nightscout_url, "/api/v2/entries.json?count=200&find[date][$gte]=" + oldest_reading)
-    encoded_token = hash.sha1(nightscout_token) if nightscout_token else None
-    headers = {"API-Secret": encoded_token} if encoded_token else {}
+    json_url = add_access_token(build_url(nightscout_url, "/api/v2/entries.json?count=200&find[date][$gte]=" + oldest_reading), nightscout_token)
 
     # Request latest entries from the Nightscout URL
-    resp = http.get(json_url, headers = headers, ttl_seconds = int(ttl.seconds))
+    resp = http.get(json_url)
     if resp.status_code != 200:
         return [], resp.status_code
 
