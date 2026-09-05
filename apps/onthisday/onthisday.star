@@ -13,6 +13,7 @@ load("time.star", "time")
 
 OTD_URL = "https://byabbe.se/on-this-day/{0}/{1}/events.json"
 CACHE_TIMEOUT = 3600
+MAX_RESPONSE_BYTES = 128 * 1024
 
 #selection options
 COLORS = [
@@ -44,8 +45,15 @@ def main(config):
     # get event JSON
     eventJson = get_eventJson()
 
+    events = eventJson.get("events", []) if type(eventJson) == "dict" else []
+    if type(events) == "list":
+        events = [event for event in events if type(event) == "dict" and type(event.get("year")) == "string" and type(event.get("description")) == "string"]
+        eventJson["events"] = events
+    if type(events) != "list" or not events:
+        return render.Root(child = render.WrappedText(content = "No events available", color = descriptionColor))
+
     # select random event from today's events
-    index = random.number(0, len(eventJson["events"]) - 1)
+    index = random.number(0, len(events) - 1)
 
     # render display
     return render.Root(
@@ -109,14 +117,14 @@ def get_eventJson():
 def call_otd_api(url):
     # Return events of the day JSON
     now = time.now()
-    response = http.get(url = OTD_URL.format(now.month, now.day), ttl_seconds = CACHE_TIMEOUT)
+    response = http.get(url = url.format(now.month, now.day), ttl_seconds = CACHE_TIMEOUT)
 
-    if response.status_code != 200:
-        fail("status %d from %s: %s" % (response.status_code, url, response.body()))
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return {}
 
     eventJson = response.json()
-
-    return eventJson
+    return eventJson if type(eventJson) == "dict" else {}
 
 def get_schema():
     return schema.Schema(

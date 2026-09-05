@@ -8,11 +8,11 @@ Author: Thomas Hutterer
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-DEFAULT_KEY = None
 DEFAULT_LOCATION = """{
     "lat": "48.185051",
     "lng": "16.377473",
@@ -21,7 +21,9 @@ DEFAULT_LOCATION = """{
 	"timezone": "Europe/Zurich"
 }"""
 UNDERLINE = [(0, 0), (1, 0)]
-TIMEOUT = 10
+STOP_TTL_SECONDS = 3600
+DEPARTURE_TTL_SECONDS = 900
+MAX_RESPONSE_BYTES = 512 * 1024
 BASE_REST_CALL = """https://routenplaner.verkehrsauskunft.at/vao/restproxy/v1.6.0/{endpoint}?accessId={api_key}&format=json"""
 
 def main(config):
@@ -42,25 +44,28 @@ def main(config):
         "next_departure_times": ["No next departures"],
         "next_departure_dates": ["No next departures"],
         "next_departure_destinations": ["No next departures"],
-        "next_departure_colors": ["No next departures"],
         "next_departure_times_until": [],
     }
 
     #Render a preview if no API key is set
-    if config.get("key", DEFAULT_KEY) == None:
+    api_key = config.str("key", "").strip()
+    if not api_key:
         response_dict["stop_name"] = "Wien Westbahnhof (preview)"
         response_dict["next_departure_lines"] = ["U1", "U2", "U3"]
         response_dict["next_departure_destinations"] = ["Leopoldau", "Seestadt", "Ottakring"]
-        response_dict["next_departure_colors"] = ["#FF0000", "#FF0000", "#FF0000"]
         response_dict["next_departure_times_until"] = ["1", "2", "3"]
 
     else:
+        if not re.match(r"^[A-Za-z0-9._~-]{1,128}$", api_key):
+            response_dict["error"] = "Invalid API key format"
+            return render_error(response_dict)
+
         #Get the infos of the nearest stop
-        response_dict = get_stop_infos(config, response_dict)
+        response_dict = get_stop_infos(config, response_dict, api_key)
 
         #Get the next departures if stop was found
         if ((response_dict["error"] == "No error") and (response_dict["stop_id"] != "No stop id") and (response_dict["stop_name"] != "No stop name")):
-            response_dict = get_next_departures(config, response_dict)
+            response_dict = get_next_departures(response_dict, api_key)
 
         #Calculate the time until the next departures
         response_dict = calculate_time_until(response_dict)
@@ -90,7 +95,7 @@ def main(config):
             ),
         )
 
-def get_stop_infos(config, response_dict):
+def get_stop_infos(config, response_dict, api_key):
     """gets the stop infos from the VAO API.
 
     Args:
@@ -105,8 +110,8 @@ def get_stop_infos(config, response_dict):
 
     rest_call_stop_info = BASE_REST_CALL.format(
         endpoint = "location.nearbystops",
-        api_key = config.get("key", DEFAULT_KEY),
-    ) + "&originCoordLat={lat}&originCoordLong={long}&maxNo{maxNo}".format(
+        api_key = api_key,
+    ) + "&originCoordLat={lat}&originCoordLong={long}&maxNo={maxNo}".format(
         lat = loc["lat"],
         long = loc["lng"],
         maxNo = "1",
@@ -114,26 +119,35 @@ def get_stop_infos(config, response_dict):
 
     #remove whitespaces from rest_call_stop_info, because API doesn't throw 400 error, but app crashes
     rest_call_stop_info = rest_call_stop_info.replace(" ", "")
-    response = http.get(url = rest_call_stop_info, ttl_seconds = TIMEOUT)
+    response = http.get(url = rest_call_stop_info, ttl_seconds = STOP_TTL_SECONDS)
     if response.status_code != 200:
         response_dict["error"] = "Error code {statuscode} when trying to find nearby stops".format(
             statuscode = response.status_code,
         )
         return response_dict
 
-    data = json.decode(response.body())
+    body = response.body()
+    if not body or len(body) > MAX_RESPONSE_BYTES:
+        response_dict["error"] = "Invalid nearby-stop response"
+        return response_dict
+    data = json.decode(body)
 
     #if key 'stopLocationOrCoordLocation' is not in data, set response_dict["error"] to "No stop found within 1000 meters" and return
-    if "stopLocationOrCoordLocation" not in data:
+    locations = data.get("stopLocationOrCoordLocation", []) if type(data) == "dict" else []
+    if type(locations) != "list" or not locations:
         response_dict["error"] = "No stop found within 1000 meters"
         return response_dict
     else:
-        response_dict["stop_name"] = data["stopLocationOrCoordLocation"][0]["StopLocation"]["name"]
-        response_dict["stop_id"] = data["stopLocationOrCoordLocation"][0]["StopLocation"]["extId"]
+        location = locations[0].get("StopLocation", {}) if type(locations[0]) == "dict" else {}
+        if type(location) != "dict" or type(location.get("name")) != "string" or type(location.get("extId")) != "string":
+            response_dict["error"] = "Invalid nearby-stop response"
+            return response_dict
+        response_dict["stop_name"] = location["name"]
+        response_dict["stop_id"] = location["extId"]
 
     return response_dict
 
-def get_next_departures(config, response_dict):
+def get_next_departures(response_dict, api_key):
     """gets the next departures from the VAO API.
 
     Args:
@@ -144,34 +158,53 @@ def get_next_departures(config, response_dict):
 
     rest_call_next_departures = BASE_REST_CALL.format(
         endpoint = "departureBoard",
-        api_key = config.get("key", DEFAULT_KEY),
+        api_key = api_key,
     ) + "&id={stop_id}".format(
         stop_id = response_dict["stop_id"],
     )
 
     #remove whitespaces from rest_call_stop_info, because API doesn't throw 400 error, but app crashes
     rest_call_next_departures = rest_call_next_departures.replace(" ", "")
-    response = http.get(url = rest_call_next_departures, ttl_seconds = TIMEOUT)
+    response = http.get(url = rest_call_next_departures, ttl_seconds = DEPARTURE_TTL_SECONDS)
     if response.status_code != 200:
         response_dict["error"] = "Error code {statuscode} when trying to find departures".format(
             statuscode = response.status_code,
         )
         return response_dict
 
-    data = json.decode(response.body())
+    body = response.body()
+    if not body or len(body) > MAX_RESPONSE_BYTES:
+        response_dict["error"] = "Invalid departures response"
+        return response_dict
+    data = json.decode(body)
 
     #if key 'Departure' is not in data, set response_dict["error"] to "No departures found" and return
-    if "Departure" not in data:
+    departures = data.get("Departure", []) if type(data) == "dict" else []
+    if type(departures) != "list" or not departures:
         response_dict["error"] = "No departures found"
         return response_dict
     else:
-        response_dict["next_departure_lines"] = [entry["name"] for entry in data["Departure"]]
-        response_dict["next_departure_times"] = [entry["time"] for entry in data["Departure"]]
-        response_dict["next_departure_dates"] = [entry["date"] for entry in data["Departure"]]
-        response_dict["next_departure_colors"] = [entry["ProductAtStop"]["icon"]["backgroundColor"]["hex"] for entry in data["Departure"]]
-        response_dict["next_departure_destinations"] = [entry["direction"] for entry in data["Departure"]]
+        departures = [entry for entry in departures[:20] if valid_departure(entry)]
+        if not departures:
+            response_dict["error"] = "No valid departures found"
+            return response_dict
+        response_dict["next_departure_lines"] = [entry["name"] for entry in departures]
+        response_dict["next_departure_times"] = [entry["time"] for entry in departures]
+        response_dict["next_departure_dates"] = [entry["date"] for entry in departures]
+        response_dict["next_departure_destinations"] = [entry["direction"] for entry in departures]
 
     return response_dict
+
+def valid_departure(entry):
+    return (
+        type(entry) == "dict" and
+        type(entry.get("name")) == "string" and
+        type(entry.get("direction")) == "string" and
+        type(entry.get("date")) == "string" and
+        type(entry.get("time")) == "string" and
+        re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", entry["date"]) and
+        re.match(r"^[0-9]{2}:[0-9]{2}:[0-9]{2}$", entry["time"])
+    )
 
 def calculate_time_until(response_dict):
     """calculates the time until the next departures.
@@ -189,15 +222,13 @@ def calculate_time_until(response_dict):
     for t, d in zip(response_dict["next_departure_times"], response_dict["next_departure_dates"]):
         if t != "No next departures":
             time_from_response = d + "T" + t
-            deptime = time.parse_time(time_from_response, "2006-01-02T15:04:05", "Europe/Berlin")
+            deptime = time.parse_time(time_from_response, "2006-01-02T15:04:05", "Europe/Vienna")
             duration_until_departure = humanize.relative_time(now, deptime)
 
-            #humanize.relative_time has no negative time, if now is greater than deptime, so calculate differently
-            real_time_difference = now - deptime
-            if now + real_time_difference < now:
+            if deptime >= now:
                 #split the string at the first space
                 duration_until_departure = duration_until_departure.split(" ", 1)
-                if "seconds" in duration_until_departure[1]:
+                if len(duration_until_departure) > 1 and "seconds" in duration_until_departure[1]:
                     duration_until_departure[0] = "now"
             else:
                 duration_until_departure = ["missed departure"]
@@ -296,7 +327,6 @@ def drop_missed_departures(response_dict):
     response_dict["next_departure_times"] = response_dict["next_departure_times"][count:]
     response_dict["next_departure_dates"] = response_dict["next_departure_dates"][count:]
     response_dict["next_departure_destinations"] = response_dict["next_departure_destinations"][count:]
-    response_dict["next_departure_colors"] = response_dict["next_departure_colors"][count:]
     response_dict["next_departure_times_until"] = response_dict["next_departure_times_until"][count:]
 
     return response_dict

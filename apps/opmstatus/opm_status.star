@@ -1,7 +1,7 @@
 """
 Applet: OPM Status
 Summary: Displays current OPM status
-Description: Displays the current Office of Personnel Management status, which is used by federal employees to know if the normal working conditions have been changed by inclement weather, health hazards, or other alerts. Updates every 2 hours.
+Description: Displays the current Office of Personnel Management status, which is used by federal employees to know if the normal working conditions have been changed by inclement weather, health hazards, or other alerts. Updates every 5 minutes.
 Author: AdamMoses-GitHub
 Reference: https://www.opm.gov/policy-data-oversight/snow-dismissal-procedures/current-status/
 """
@@ -19,7 +19,9 @@ load("render.star", "render")
 OPM_JSON_URL = "https://www.opm.gov/json/operatingstatus.json"
 
 # how often to refresh the feed, in seconds
-EXPIRE_URL_DATA = 7200
+EXPIRE_URL_DATA = 300
+MAX_RESPONSE_BYTES = 64 * 1024
+USER_AGENT = "Niblet/1.0 (heyniblet.com)"
 
 DARK_YELLOW = "#AB9144"
 DARK_RED = "#8B0000"
@@ -31,15 +33,17 @@ DARK_BLUE = "#00008B"
 # takes the data from the URL get of the json and formats for display
 def format_opm_url_data(opm_status_summary, opm_applies_to_date):
     # add period to end of status, if needed
-    if (opm_status_summary[:-1] != "."):
+    if not opm_status_summary.endswith("."):
         opm_status_summary += "."
 
     # split date into parts
     opm_date_split = opm_applies_to_date.split(" ")
 
     # extract the month name, day of month, and the year
+    if len(opm_date_split) < 3:
+        return opm_status_summary, opm_applies_to_date
     month_name = opm_date_split[0]
-    day_value = opm_date_split[1][:-1]  # remove the trailing comma
+    day_value = opm_date_split[1].rstrip(",")
     year_value = opm_date_split[-1]
 
     # if month is more than 4 characters, reduce to 3 and add period
@@ -54,19 +58,26 @@ def format_opm_url_data(opm_status_summary, opm_applies_to_date):
 # -------------------------
 
 def main():
-    print("-- opm_status_v1.star::main() START")
-
     # query the JSON url to get the opm status data
-    url_response = http.get(OPM_JSON_URL, ttl_seconds = EXPIRE_URL_DATA)
+    url_response = http.get(
+        OPM_JSON_URL,
+        headers = {"User-Agent": USER_AGENT},
+        ttl_seconds = EXPIRE_URL_DATA,
+    )
 
-    # if the request failed, write out error
-    if url_response.status_code != 200:
-        fail("OPM Status request failed with status %d", url_response.status_code)
+    body = url_response.body()
+    if url_response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return render.Root(child = render.WrappedText(content = "OPM status unavailable", color = DARK_YELLOW))
 
     # grab relevant parts from the JSON dict
-    statussummary_val = url_response.json()["StatusSummary"]
-    appliesto_val = url_response.json()["AppliesTo"]
-    statustype_val = url_response.json()["Icon"]
+    data = url_response.json()
+    if type(data) != "dict":
+        return render.Root(child = render.WrappedText(content = "OPM status unavailable", color = DARK_YELLOW))
+    statussummary_val = data.get("StatusSummary")
+    appliesto_val = data.get("AppliesTo")
+    statustype_val = data.get("Icon")
+    if type(statussummary_val) != "string" or type(appliesto_val) != "string":
+        return render.Root(child = render.WrappedText(content = "OPM status unavailable", color = DARK_YELLOW))
 
     # format the parts using function
     opm_status_summary, opm_applies_to_date = format_opm_url_data(statussummary_val, appliesto_val)
@@ -77,12 +88,12 @@ def main():
     if (opm_status_type == "Alert"):
         status_color = DARK_YELLOW
     elif (opm_status_type == "Closed"):
-        status_color = DARK_GREEN
+        status_color = DARK_RED
 
     # build the relevant text widgets
     status_title_text = render.Text("OPM Status:")
     status_text = render.Marquee(
-        width = len(opm_status_summary),
+        width = 64,
         child = render.Text(opm_status_summary, color = status_color),
         offset_start = 64,
     )
@@ -99,8 +110,6 @@ def main():
         for_date_text,
         applies_to_text,
     ])
-
-    print("-- opm_status_v1.star::main() END")
 
     # return the rendered rows widget
     return render.Root(

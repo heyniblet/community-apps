@@ -6,7 +6,6 @@ desc: Displays messages from overhead signs on Ohio highways.
 author: noahcolvin
 fileName: oh_highway_signs.star
 packageName: ohhighwaysigns
-broken: true
 recommendedInterval: 5
 category: transit
 tags:

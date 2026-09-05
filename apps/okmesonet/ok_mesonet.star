@@ -28,6 +28,7 @@ load("time.star", "time")
 
 CSV_URL = "https://www.mesonet.org/data/public/mesonet/current/current.csv.txt"
 TTL_SECONDS = 300  # match the feed's 5-minute cadence; do not lower
+MAX_RESPONSE_BYTES = 64 * 1024
 USER_AGENT = "tronbyt-okmesonet/1.0 (github.com/jonfishr/tronbyt-okmesonet; personal non-commercial display)"
 
 ICON_DROP = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAACAcVaiAAAAG0lEQVR4nGNgAIKEpb/+M8AAnANiwDAqB1kZABP4Gu9o5QC5AAAAAElFTkSuQmCC")
@@ -78,14 +79,20 @@ def render_frame(view):
 def main(config):
     stid = config.get("station") or DEFAULT_STATION
     secondary = config.get("secondary") or "humidity"
+    station_ids = [station[0] for station in STATIONS]
+    if stid not in station_ids:
+        stid = DEFAULT_STATION
+    if secondary not in ["humidity", "dewpoint"]:
+        secondary = "humidity"
     colorize = config.bool("colorize", True)
     name = station_name(stid)
 
     rep = http.get(CSV_URL, ttl_seconds = TTL_SECONDS, headers = {"User-Agent": USER_AGENT})
-    if rep.status_code != 200 or len(rep.body()) == 0:
+    body = rep.body()
+    if rep.status_code != 200 or len(body) == 0 or len(body) > MAX_RESPONSE_BYTES:
         return render_frame(offline_view(name))
 
-    row = parse_current_csv(rep.body(), stid)
+    row = parse_current_csv(body, stid)
     if row == None:
         return render_frame(no_report_view(name))
 
