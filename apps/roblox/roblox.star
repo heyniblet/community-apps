@@ -12,7 +12,6 @@ load("images/roblox_dark_logo.png", ROBLOX_DARK_LOGO_ASSET = "file")
 load("images/roblox_light_logo.png", ROBLOX_LIGHT_LOGO_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 ROBLOX_DARK_LOGO = ROBLOX_DARK_LOGO_ASSET.readall()
 ROBLOX_LIGHT_LOGO = ROBLOX_LIGHT_LOGO_ASSET.readall()
@@ -320,18 +319,6 @@ def main(config):
     )
 
 def get_schema():
-    userIcons = ("userAstronaut", "userDoctor", "userTie", "userNurse", "userNinja")
-    randomUserIcon = userIcons[time.now().second % 5]
-
-    cubesIcons = ("cube", "cubes", "cubesStacked")
-    randomCubeIcon = cubesIcons[time.now().second % 3]
-
-    colorIcons = ("droplet", "palette", "eyeDropper")
-    randomColorIcon = colorIcons[time.now().second % 3]
-
-    darkModeIcons = ("sun", "moon", "lightbulb")
-    randomDarkModeIcon = darkModeIcons[time.now().second % 3]
-
     view_mode_options = [
         schema.Option(
             display = "Online Friends",
@@ -393,14 +380,14 @@ def get_schema():
                 id = "username",
                 name = "Roblox username",
                 desc = "Enter a Roblox username",
-                icon = randomUserIcon,
+                icon = "userAstronaut",
                 default = "",
             ),
             schema.Dropdown(
                 id = "view_mode",
                 name = "View mode",
                 desc = "Display your friends or games",
-                icon = randomCubeIcon,
+                icon = "cubes",
                 default = view_mode_options[0].value,
                 options = view_mode_options,
             ),
@@ -408,7 +395,7 @@ def get_schema():
                 id = "accent_color",
                 name = "Accent color",
                 desc = "Choose an accent color",
-                icon = randomColorIcon,
+                icon = "palette",
                 default = accent_color_options[0].value,
                 options = accent_color_options,
             ),
@@ -416,7 +403,7 @@ def get_schema():
                 id = "dark_mode",
                 name = "Dark mode",
                 desc = "Toggle between light and dark modes",
-                icon = randomDarkModeIcon,
+                icon = "moon",
                 default = True,
             ),
         ],

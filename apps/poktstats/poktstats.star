@@ -1,3 +1,4 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/pokt_icon.png", POKT_ICON_ASSET = "file")
 load("render.star", "render")
@@ -5,12 +6,15 @@ load("render.star", "render")
 POKT_ICON = POKT_ICON_ASSET.readall()
 
 PRICE_URL = "https://api.coingecko.com/api/v3/simple/price?ids=pocket-network&vs_currencies=usd"
+TTL_SECONDS = 300
+MAX_RESPONSE_BYTES = 4096
 
 def main():
-    rep = http.get(PRICE_URL, ttl_seconds = 7200)
-    if rep.status_code != 200:
-        fail("Price request failed with status %d", rep.status_code)
-    price = rep.json().get("pocket-network", {}).get("usd", "0.00")
+    rep = http.get(PRICE_URL, ttl_seconds = TTL_SECONDS)
+    body = rep.body()
+    data = json.decode(body, None) if rep.status_code == 200 and len(body) <= MAX_RESPONSE_BYTES and body.startswith("{") and body.endswith("}") else {}
+    price = data.get("pocket-network", {}).get("usd") if type(data) == "dict" else None
+    price_text = "$%s" % price if type(price) in ("int", "float") else "Unavailable"
 
     return render.Root(
         child = render.Box(
@@ -31,7 +35,7 @@ def main():
                         cross_align = "start",  # Controls vertical alignment
                         children = [
                             render.Text(content = "POKT", font = "Dina_r400-6"),
-                            render.Text("$%s" % price),
+                            render.Text(price_text),
                             render.Text("USD"),
                         ],
                     ),

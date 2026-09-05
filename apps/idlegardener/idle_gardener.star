@@ -222,9 +222,8 @@ def get_schema():
             schema.Text(
                 id = "garden_id",
                 name = "Garden ID",
-                desc = "Your Garden ID is unique. WARNING: Changing this will erase your progress.",
+                desc = "Choose a unique Garden ID. WARNING: Changing it will erase your progress.",
                 icon = "houseChimneyUser",
-                default = "Garden #{id}".format(id = str(random.number(9999, 999999))),
             ),
         ],
     )

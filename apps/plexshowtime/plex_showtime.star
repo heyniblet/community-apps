@@ -13,14 +13,29 @@ load("images/plex_icon.jpg", PLEX_ICON_ASSET = "file")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 PLEX_BANNER = PLEX_BANNER_ASSET.readall()
 PLEX_BANNER_PORTRAIT = PLEX_BANNER_PORTRAIT_ASSET.readall()
 PLEX_ICON = PLEX_ICON_ASSET.readall()
 
 MAX_TEXT_LENGTH = 1000
+MAX_RESPONSE_BYTES = 4194304
 GET_TOP = 15
+
+def server_url(value):
+    value = (value or "").strip().rstrip("/")
+    if not value.startswith("https://") or "@" in value or " " in value or "\t" in value or "\n" in value:
+        return None
+    return value
+
+def decode_json(content):
+    if type(content) != "string" or not content.startswith("{") or not content.endswith("}"):
+        return None
+    data = json.decode(content, None)
+    container = data.get("MediaContainer") if type(data) == "dict" else None
+    if type(container) != "dict" or type(container.get("size")) not in ("int", "float"):
+        return None
+    return data
 
 def main(config):
     plex_server_url = config.str("plex_server_url", "")
@@ -39,6 +54,11 @@ def main(config):
     show_playing = config.bool("show_playing", False)
     fit_screen = config.bool("fit_screen", True)
     debug_output = config.bool("debug_output", False)
+
+    normalized_server_url = server_url(plex_server_url) if plex_server_url else ""
+    if plex_server_url and not normalized_server_url:
+        return display_message(True, [{"message": "Use a public HTTPS Plex URL", "color": "#FF0000"}])
+    plex_server_url = normalized_server_url
 
     if show_only_artwork:
         show_heading = False
@@ -68,7 +88,6 @@ def main(config):
     if debug_output:
         print("------------------------------")
         print("CONFIG - plex_server_url: " + plex_server_url)
-        print("CONFIG - plex_token: " + plex_token)
         print("CONFIG - ttl_seconds: " + str(ttl_seconds))
         print("CONFIG - debug_output: " + str(debug_output))
         print("CONFIG - endpoint_map: " + str(endpoint_map))
@@ -103,6 +122,7 @@ def get_text(plex_server_url, plex_token, endpoint_map, debug_output, fit_screen
         headerMap = {
             "Accept": "application/json",
             "X-Plex-Token": plex_token,
+            "X-Plex-Client-Identifier": "niblet-plex-showtime",
         }
 
         api_endpoint = plex_server_url
@@ -115,7 +135,7 @@ def get_text(plex_server_url, plex_token, endpoint_map, debug_output, fit_screen
         content = get_data(api_endpoint, debug_output, headerMap, ttl_seconds)
 
         if content != None and len(content) > 0:
-            output = json.decode(content, None)
+            output = decode_json(content)
 
             if output != None:
                 output_keys = output.keys()
@@ -173,7 +193,7 @@ def get_text(plex_server_url, plex_token, endpoint_map, debug_output, fit_screen
                                         for library in library_list:
                                             if library["type"] == allowed_media:
                                                 library_type = library["type"]
-                                                library_key = library["key"]
+                                                library_key = str(library["key"])
                                                 break
 
                                         #  1 = movie 2 = show 3 = season 4 = episode
@@ -193,7 +213,7 @@ def get_text(plex_server_url, plex_token, endpoint_map, debug_output, fit_screen
                                             library_url = base_url + "/library/sections/" + library_key + "/all?type=" + str(library_type_enum)
 
                                         library_content = get_data(library_url, debug_output, headerMap, ttl_seconds)
-                                        library_output = json.decode(library_content, None)
+                                        library_output = decode_json(library_content)
                                         if library_output != None and library_output["MediaContainer"]["size"] > 0:
                                             metadata_list = library_output["MediaContainer"]["Metadata"]
                                         else:
@@ -236,7 +256,7 @@ def get_text(plex_server_url, plex_token, endpoint_map, debug_output, fit_screen
                                 if library_type == "artist":
                                     # Try to find albums
                                     library_content = get_data(base_url + metadata_list[random_index]["key"], debug_output, headerMap, ttl_seconds)
-                                    library_output = json.decode(library_content, None)
+                                    library_output = decode_json(library_content)
                                     if library_output != None and library_output["MediaContainer"]["size"] > 0:
                                         metadata_list = library_output["MediaContainer"]["Metadata"]
                                         random_index = random.number(0, len(metadata_list) - 1)
@@ -307,7 +327,7 @@ def get_text(plex_server_url, plex_token, endpoint_map, debug_output, fit_screen
                                     # Check if summary exists
                                     if contains_summary == False and has_key:
                                         child_metadata = get_data(base_url + metadata_list[random_index]["key"], debug_output, headerMap, ttl_seconds)
-                                        child_metadata_output = json.decode(child_metadata, None)
+                                        child_metadata_output = decode_json(child_metadata)
 
                                         if child_metadata_output != None:
                                             valid = False
@@ -370,7 +390,7 @@ def get_text(plex_server_url, plex_token, endpoint_map, debug_output, fit_screen
                                             print("Only thumbnails found, looking further for art")
                                     single_metadata = base_url + metadata_list[random_index]["key"]
                                     single_metadata_json = get_data(single_metadata, debug_output, headerMap, ttl_seconds)
-                                    metadata_output = json.decode(single_metadata_json, None)
+                                    metadata_output = decode_json(single_metadata_json)
 
                                     if metadata_output != None:
                                         valid = False
@@ -573,26 +593,14 @@ def display_message(debug_output, message_array = [], show_summary = False):
     else:
         img = PLEX_BANNER
 
-    if debug_output == False:
-        return render.Root(
-            render.Row(
-                expanded = True,
-                main_align = "space_evenly",
-                cross_align = "center",
-                children = [
-                    render.Image(src = img, width = 64),
-                ],
-            ),
-        )
-    else:
-        if len(message_array) == 0:
-            message_array.append({"message": "Oops, something went wrong", "color": "#FF0000"})
+    if len(message_array) == 0:
+        message_array.append({"message": "Oops, something went wrong", "color": "#FF0000"})
 
-        rendered_image = render.Image(
-            width = 64,
-            src = img,
-        )
-        return render_marquee(False, message_array, rendered_image, show_summary, debug_output)
+    rendered_image = render.Image(
+        width = 64,
+        src = img,
+    )
+    return render_marquee(False, message_array, rendered_image, show_summary, debug_output)
 
 def render_marquee(show_only_artwork, message_array, image, show_summary, debug_output, using_portrait_banner = False):
     icon_img = PLEX_ICON
@@ -846,6 +854,8 @@ def wrap_line(line, line_length):
     return str_builder
 
 def get_data(url, debug_output, headerMap = {}, ttl_seconds = 20):
+    if not url.startswith("https://"):
+        return None
     res = None
     if headerMap != {}:
         res = http.get(url, headers = headerMap, ttl_seconds = ttl_seconds)
@@ -863,6 +873,8 @@ def get_data(url, debug_output, headerMap = {}, ttl_seconds = 20):
         return None
     else:
         data = res.body()
+        if len(data) > MAX_RESPONSE_BYTES:
+            return None
 
         return data
 
@@ -873,7 +885,7 @@ def get_schema():
             schema.Text(
                 id = "plex_server_url",
                 name = "Plex server URL (required)",
-                desc = "Your Plex server URL.",
+                desc = "Your public HTTPS Plex or reverse-proxy URL.",
                 icon = "globe",
                 default = "",
             ),
