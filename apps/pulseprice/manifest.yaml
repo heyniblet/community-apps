@@ -6,7 +6,7 @@ desc: Displays USD prices for PLS, PLSX and INC tokens on Pulsechain.
 author: kmphua
 fileName: pulseprice.star
 packageName: pulseprice
-recommendedInterval: 5
+recommendedInterval: 10
 category: finance
 tags:
   - crypto

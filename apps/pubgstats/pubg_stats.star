@@ -6,6 +6,7 @@ Author: joes-io
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/pubg_logo.png", PUBG_LOGO_ASSET = "file")
@@ -18,6 +19,8 @@ PUBG_LOGO = PUBG_LOGO_ASSET.readall()
 DEFAULT_PLAYER_NAME = "chocoTaco"
 DEFAULT_PLATFORM = "steam"
 DEFAULT_SELECTED_STAT = "wins"
+PLATFORMS = ["steam", "psn", "xbox", "stadia", "kakao"]
+MAX_RESPONSE_BYTES = 262144
 
 # App display options
 background_color = "#eba919"
@@ -78,8 +81,12 @@ stat_details = [
 ]
 
 def main(config):
+    api_key = config.str("pubg_api_key", "")
+    if not api_key:
+        return pretty_message("ADD PUBG API KEY")
+
     header = {
-        "Authorization": "Bearer {}".format(config.get("pubg_api_key")),
+        "Authorization": "Bearer {}".format(api_key),
         "Accept": "application/vnd.api+json",
     }
 
@@ -87,6 +94,10 @@ def main(config):
     player_name = config.str("player_name", DEFAULT_PLAYER_NAME)
     platform = config.str("platform", DEFAULT_PLATFORM)
     selected_stat = config.str("selected_stat", DEFAULT_SELECTED_STAT)
+    if platform not in PLATFORMS:
+        platform = DEFAULT_PLATFORM
+    if selected_stat not in [stat[1] for stat in stat_details]:
+        selected_stat = DEFAULT_SELECTED_STAT
 
     # App defaults
     display_label = ""
@@ -94,7 +105,7 @@ def main(config):
 
     # Get the player id from the player name and platform
     # URL to request player data
-    url = "https://api.pubg.com/shards/{}/players?filter[playerNames]={}".format(platform, player_name)
+    url = "https://api.pubg.com/shards/{}/players?filter[playerNames]={}".format(platform, humanize.url_encode(player_name))
 
     # Request player data
     resp = http.get(url, headers = header, ttl_seconds = ttl_player_id)
@@ -105,7 +116,11 @@ def main(config):
         return pretty_error(resp)
 
     # Get player id from API response
-    player_id = resp.json()["data"][0]["id"]
+    player_data = decode_response(resp)
+    players = player_data.get("data", []) if type(player_data) == "dict" else []
+    if type(players) != "list" or len(players) == 0 or type(players[0]) != "dict" or type(players[0].get("id")) != "string":
+        return pretty_message("PLAYER NOT FOUND")
+    player_id = players[0]["id"]
 
     # URL to request lifetime stats for player
     url = "https://api.pubg.com/shards/{}/players/{}/seasons/lifetime".format(platform, player_id)
@@ -123,7 +138,9 @@ def main(config):
         return pretty_error(resp)
 
     # Encode JSON data to be stored in cache
-    lifetime_stats = resp.json()
+    lifetime_stats = decode_response(resp)
+    if type(lifetime_stats) != "dict":
+        return pretty_message("INVALID API RESPONSE")
 
     # Find label and unit type to display for selected stat
     for i in stat_details:
@@ -252,8 +269,14 @@ def pretty_error(resp):
     if resp.status_code == 401:
         error = "BAD AUTHORIZATION"
     else:
-        error = resp.json()["errors"][0]["detail"].upper()
+        data = decode_response(resp)
+        errors = data.get("errors", []) if type(data) == "dict" else []
+        detail = errors[0].get("detail") if type(errors) == "list" and len(errors) > 0 and type(errors[0]) == "dict" else None
+        error = detail.upper() if type(detail) == "string" else "REQUEST FAILED"
 
+    return pretty_message(error)
+
+def pretty_message(message):
     # Return render of error to Tidbyt
     return render.Root(
         render.Stack(
@@ -267,7 +290,7 @@ def pretty_error(resp):
                     child = render.Padding(
                         pad = (0, 11, 0, 0),
                         child = render.Text(
-                            content = "PUBG STATS ERROR: {}".format(error),
+                            content = "PUBG STATS: {}".format(message),
                             color = text_color,
                         ),
                     ),
@@ -278,15 +301,17 @@ def pretty_error(resp):
 
 # Return stat total from across all game modes
 def calc_lifetime_stat(lifetime_stats, selected_stat):
-    duo_stat = lifetime_stats["data"]["attributes"]["gameModeStats"]["duo"][selected_stat]
-    duo_fpp_stat = lifetime_stats["data"]["attributes"]["gameModeStats"]["duo-fpp"][selected_stat]
-    solo_stat = lifetime_stats["data"]["attributes"]["gameModeStats"]["solo"][selected_stat]
-    solo_fpp_stat = lifetime_stats["data"]["attributes"]["gameModeStats"]["solo-fpp"][selected_stat]
-    squad_stat = lifetime_stats["data"]["attributes"]["gameModeStats"]["squad"][selected_stat]
-    squad_fpp_stat = lifetime_stats["data"]["attributes"]["gameModeStats"]["squad-fpp"][selected_stat]
-
-    # Total stat count from all game modes
-    lifetime_total_stat = (duo_stat + duo_fpp_stat + solo_stat + solo_fpp_stat + squad_stat + squad_fpp_stat)
+    data = lifetime_stats.get("data", {})
+    attributes = data.get("attributes", {}) if type(data) == "dict" else {}
+    game_modes = attributes.get("gameModeStats", {}) if type(attributes) == "dict" else {}
+    if type(game_modes) != "dict":
+        return "NO DATA"
+    lifetime_total_stat = 0
+    for mode in ["duo", "duo-fpp", "solo", "solo-fpp", "squad", "squad-fpp"]:
+        stats = game_modes.get(mode, {})
+        value = stats.get(selected_stat, 0) if type(stats) == "dict" else 0
+        if type(value) in ("int", "float"):
+            lifetime_total_stat += value
 
     # Convert timeSurvived from seconds to minutes
     if selected_stat == "timeSurvived":
@@ -301,6 +326,10 @@ def calc_lifetime_stat(lifetime_stats, selected_stat):
 
     # Return total lifetime stat
     return lifetime_total_stat
+
+def decode_response(resp):
+    body = resp.body()
+    return json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
 
 # Defines app configuration settings available on Tidbyt mobile app
 def get_schema():

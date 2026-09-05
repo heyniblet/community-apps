@@ -5,11 +5,12 @@ Twitter: [@bretep](https://twitter.com/bretep)
 Telegram: [bretep](https://t.me/+1YjcyTCG4sJhY2U5)  
 
 
-### Displays the price of PulseChain PLS and PulseX PLSX
+### Displays the USD price of PulseChain PLS, PulseX PLSX, and optionally HEX
 
-- Toggle between PulseChain Mainnet and Testnet prices
+- Current mainnet prices use the keyless CoinGecko API.
+- Existing custom GraphQL mainnet and testnet endpoints remain supported.
 
-**NOTE: PulseChain Mainnet displays testnet prices until after launch. An update will be made to this app to point to the mainnet prices.**
+The former default Graph-hosted testnet endpoint has been retired. Testnet mode therefore needs a custom GraphQL endpoint; without one, PLS and PLSX display as unavailable rather than showing incorrect mainnet prices.
 
 Please reach out to me on [Telegram](https://t.me/+1YjcyTCG4sJhY2U5) if you have a feature request or find a bug.
 

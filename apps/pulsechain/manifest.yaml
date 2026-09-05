@@ -1,8 +1,8 @@
 ---
 id: pulsechain
 name: PulseChain
-summary: Price of PLS and PLSX
-desc: Display the price of PLS and PLSX. Choose between testnet and mainnet prices. After PulseChain mainnet launch, an update will be pushed to this app to display the correct mainnet price.
+summary: Price of PLS, PLSX, and HEX
+desc: Display current USD prices for PLS, PLSX, and optionally HEX. Custom GraphQL endpoints remain supported.
 author: bretep
 fileName: pulsechain.star
 packageName: pulsechain

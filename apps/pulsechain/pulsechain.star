@@ -5,8 +5,9 @@ Description: Display the price of PLS, PLSX, and HEX. Choose between testnet and
 Author: bretep
 """
 
-load("encoding/base64.star", "base64")
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("images/hex_icon_sm.png", HEX_ICON_SM_ASSET = "file")
 load("images/pls_icon_sm.png", PLS_ICON_SM_ASSET = "file")
 load("images/plsx_icon_sm.png", PLSX_ICON_SM_ASSET = "file")
@@ -18,70 +19,35 @@ PLSX_ICON_SM = PLSX_ICON_SM_ASSET.readall()
 PLS_ICON_SM = PLS_ICON_SM_ASSET.readall()
 
 NO_PRICE = "$  ------- "
+COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=pulsechain,pulsex,hex&vs_currencies=usd"
+DEFAULT_PULSE_URL = "https://api.thegraph.com/subgraphs/name/pulsechaincom/pulsechain-main"
+DEFAULT_TESTNET_URL = "https://api.thegraph.com/subgraphs/name/pulsechaincom/pulsechain-testnet-v4"
+DEFAULT_QUERY = """{"query":"{\n  pls: bundle(id: \"1\") {\n    derivedUSD\n  }\n  plsx: token(id: \"0x07890c29ed6dcf8cc59a686b24a317924d63a923\") {\n    derivedUSD\n  }\n}","variables":null}"""
+MAX_RESPONSE_BYTES = 262144
+CACHE_TTL_SECONDS = 300
 
 POST_HEADERS = {
     "Content-Type": "application/json",
 }
 
-def hasData(json):
-    return "data" in json
-
 def main(config):
-    PULSE_URL = config.str("pulse_url", "https://api.thegraph.com/subgraphs/name/pulsechaincom/pulsechain-main")
-    PULSE_TESTNET_URL = config.str("pulse_testnet_url", "https://api.thegraph.com/subgraphs/name/pulsechaincom/pulsechain-testnet-v4")
-    PULSE_QUERY = config.str("pulse_query", """{"query":"{\n  pls: bundle(id: \"1\") {\n    derivedUSD\n  }\n  plsx: token(id: \"0x07890c29ed6dcf8cc59a686b24a317924d63a923\") {\n    derivedUSD\n  }\n}","variables":null}""")
-    ETH_MAINNET_URL = "https://api.thegraph.com/subgraphs/name/toihoang12/uniswapv3"
-    ETH_MAINNET_HEX_QUERY_ENC = "eyJxdWVyeSI6IntcbiAgZXRoOiBidW5kbGUoaWQ6IFwiMVwiKSB7ICAgIFxuICAgIGV0aFByaWNlVVNEXG4gIGh1eDogdG9rZW4oaWQ6IFwiMHgyYjU5MWU5OWFmZTlmMzJlYWE2MjE0ZjdiNzYyOTc2OGM0MGVlYjM5XCIpIHtcbiAgICBzeW1ib2xcbiAgICBkZXJpdmVkRVRIXG4gIFxuICB9XG4gIH0iLCJ2YXJpYWJsZXMiOm51bGx9Cg=="
-    ETH_MAINNET_HEX_QUERY = base64.decode(ETH_MAINNET_HEX_QUERY_ENC)
+    prices = coingecko_prices()
+    is_testnet = config.bool("testnet")
+    pulse_url = config.str("pulse_testnet_url", DEFAULT_TESTNET_URL) if is_testnet else config.str("pulse_url", DEFAULT_PULSE_URL)
+    default_url = DEFAULT_TESTNET_URL if is_testnet else DEFAULT_PULSE_URL
 
-    print("Cache miss, updating price...")
+    if pulse_url != default_url:
+        custom = graph_prices(pulse_url, config.str("pulse_query", DEFAULT_QUERY))
+        prices["pls"] = custom.get("pls", NO_PRICE)
+        prices["plsx"] = custom.get("plsx", NO_PRICE)
+    elif is_testnet:
+        # The retired default testnet feed has no trustworthy replacement.
+        prices["pls"] = NO_PRICE
+        prices["plsx"] = NO_PRICE
 
-    mainnetResponse = http.post(PULSE_URL, body = PULSE_QUERY, headers = POST_HEADERS, ttl_seconds = 30)
-    if mainnetResponse.status_code != 200:
-        fail("Mainnet request failed with status %d", mainnetResponse.status_code)
-
-    testnetResponse = http.post(PULSE_TESTNET_URL, body = PULSE_QUERY, headers = POST_HEADERS, ttl_seconds = 30)
-    if testnetResponse.status_code != 200:
-        fail("Testnet request failed with status %d", testnetResponse.status_code)
-
-    ethMainnetResponse = http.post(ETH_MAINNET_URL, body = ETH_MAINNET_HEX_QUERY, headers = POST_HEADERS, ttl_seconds = 30)
-    if ethMainnetResponse.status_code != 200:
-        fail("Eth Mainnet request failed with status %d", ethMainnetResponse.status_code)
-
-    if hasData(mainnetResponse.json()):
-        PLS = mainnetResponse.json()["data"]["pls"]["derivedUSD"]
-        PLSX = mainnetResponse.json()["data"]["plsx"]["derivedUSD"]
-        mainnet_pls = str("$%f" % float(PLS))
-        mainnet_plsx = str("$%f" % float(PLSX))
-    else:
-        mainnet_pls = NO_PRICE
-        mainnet_plsx = NO_PRICE
-
-    if hasData(ethMainnetResponse.json()):
-        ETH_HEX_DERIVED_ETH = ethMainnetResponse.json()["data"]["hex"]["derivedETH"]
-        ETH_HEX_ETH_PRICE_USD = ethMainnetResponse.json()["data"]["eth"]["ethPriceUSD"]
-        ETH_HEX_DERIVED_PRICE = float(ETH_HEX_DERIVED_ETH) * float(ETH_HEX_ETH_PRICE_USD)
-        eth_hex = str("$%f" % ETH_HEX_DERIVED_PRICE)
-    else:
-        eth_hex = NO_PRICE
-
-    if hasData(testnetResponse.json()):
-        PLS_TESTNET = testnetResponse.json()["data"]["pls"]["derivedUSD"]
-        PLSX_TESTNET = testnetResponse.json()["data"]["plsx"]["derivedUSD"]
-        testnet_pls = str("$%f" % float(PLS_TESTNET))
-        testnet_plsx = str("$%f" % float(PLSX_TESTNET))
-    else:
-        testnet_pls = NO_PRICE
-        testnet_plsx = NO_PRICE
-
-    if config.bool("testnet"):
-        display_pls_price = testnet_pls
-        display_plsx_price = testnet_plsx
-        display_eth_hex_price = eth_hex
-    else:
-        display_pls_price = mainnet_pls
-        display_plsx_price = mainnet_plsx
-        display_eth_hex_price = eth_hex
+    display_pls_price = prices.get("pls", NO_PRICE)
+    display_plsx_price = prices.get("plsx", NO_PRICE)
+    display_eth_hex_price = prices.get("hex", NO_PRICE)
 
     defaultDisplayRows = [
         render.Row(
@@ -133,6 +99,47 @@ def main(config):
             ],
         ),
     )
+
+def coingecko_prices():
+    response = http.get(COINGECKO_URL, ttl_seconds = CACHE_TTL_SECONDS)
+    data = decode_response(response)
+    return {
+        "pls": coin_price(data, "pulsechain"),
+        "plsx": coin_price(data, "pulsex"),
+        "hex": coin_price(data, "hex"),
+    }
+
+def coin_price(data, coin):
+    item = data.get(coin, {}) if type(data) == "dict" else {}
+    return format_price(item.get("usd") if type(item) == "dict" else None)
+
+def graph_prices(url, query):
+    if not url.startswith("https://") or not query or len(query) > 16384:
+        return {}
+    response = http.post(url, body = query, headers = POST_HEADERS, ttl_seconds = CACHE_TTL_SECONDS)
+    payload = decode_response(response)
+    data = payload.get("data", {}) if type(payload) == "dict" else {}
+    pls = data.get("pls", {}) if type(data) == "dict" else {}
+    plsx = data.get("plsx", {}) if type(data) == "dict" else {}
+    return {
+        "pls": format_decimal_price(pls.get("derivedUSD") if type(pls) == "dict" else None),
+        "plsx": format_decimal_price(plsx.get("derivedUSD") if type(plsx) == "dict" else None),
+    }
+
+def decode_response(response):
+    body = response.body()
+    return json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+
+def format_price(value):
+    return "$" + humanize.float("#.########", value) if type(value) in ("int", "float") and value > 0 else NO_PRICE
+
+def format_decimal_price(value):
+    if type(value) != "string" or len(value) == 0 or len(value) > 32:
+        return NO_PRICE
+    parts = value.split(".")
+    if len(parts) > 2 or not parts[0].isdigit() or (len(parts) == 2 and (not parts[1] or not parts[1].isdigit())):
+        return NO_PRICE
+    return format_price(float(value))
 
 def get_schema():
     return schema.Schema(
