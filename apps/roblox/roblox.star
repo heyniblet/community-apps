@@ -5,7 +5,6 @@ Description: Real time views of your Roblox experiences.
 Author: Chad Milburn / CODESTRONG
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/roblox_dark_logo.png", ROBLOX_DARK_LOGO_ASSET = "file")
@@ -19,52 +18,87 @@ ROBLOX_LIGHT_LOGO = ROBLOX_LIGHT_LOGO_ASSET.readall()
 ### CONSTANTS
 TTL_SECONDS = 240
 TRIO_CIRCLES_TOP_OFFSET = 12
+MAX_JSON_BYTES = 256 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+IMAGE_PREFIX = "https://tr.rbxcdn.com/"
 
 ### DEFAULTS
 DEFAULT_DARK_MODE = True
-DEFAULT_USER_NAME = "C0DESTR0NG"
 DEFAULT_ACCENT_COLOR = "#f77a24"
 
 ### VIEW MODES
 VIEW_FRIENDS = "view_friends"
 VIEW_FAVORITE_GAMES = "view_favorite_games"
 
+def request_json(url, json_body = None, max_bytes = MAX_JSON_BYTES):
+    response = http.get(url, ttl_seconds = TTL_SECONDS) if json_body == None else http.post(url, json_body = json_body, ttl_seconds = TTL_SECONDS)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > max_bytes:
+        return None
+    return json.decode(body, None)
+
+def load_image(url):
+    if type(url) != "string" or not url.startswith(IMAGE_PREFIX):
+        return ""
+    response = http.get(url, ttl_seconds = 86400)
+    body = response.body()
+    return body if response.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES else ""
+
+def thumbnail_urls(kind, ids):
+    if len(ids) == 0:
+        return {}
+    if kind == "users":
+        url = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%s&size=60x60&format=Png&isCircular=true" % ",".join([str(id) for id in ids])
+    else:
+        url = "https://thumbnails.roblox.com/v1/games/icons?universeIds=%s&size=50x50&format=Png&isCircular=false" % ",".join([str(id) for id in ids])
+    data = request_json(url, max_bytes = 64 * 1024)
+    rows = data.get("data", []) if type(data) == "dict" else []
+    return {
+        str(row.get("targetId")): row.get("imageUrl")
+        for row in rows[:len(ids)]
+        if type(row) == "dict" and row.get("targetId") != None and type(row.get("imageUrl")) == "string" and row.get("imageUrl").startswith(IMAGE_PREFIX)
+    }
+
+def presence_by_user(ids):
+    data = request_json("https://presence.roblox.com/v1/presence/users", json_body = {"userIds": ids}, max_bytes = 128 * 1024)
+    rows = data.get("userPresences", []) if type(data) == "dict" else []
+    return {
+        str(row.get("userId")): row.get("userPresenceType", 0) != 0
+        for row in rows[:len(ids)]
+        if type(row) == "dict" and row.get("userId") != None
+    }
+
 def main(config):
     ### SET VIEW MODE FROM APP CONFIG SETTINGS
-    view_mode = config.str("view_mode") if config.str("view_mode") != None and config.str("view_mode") != "" else VIEW_FRIENDS
+    view_mode = config.str("view_mode", VIEW_FRIENDS)
+    if view_mode not in [VIEW_FRIENDS, VIEW_FAVORITE_GAMES]:
+        view_mode = VIEW_FRIENDS
 
     ### SET ACCENT COLOR FROM APP CONFIG SETTINGS
-    accent_color = config.str("accent_color") if config.str("accent_color") != None and config.str("accent_color") != "" else DEFAULT_ACCENT_COLOR
+    accent_color = config.str("accent_color", DEFAULT_ACCENT_COLOR)
+    if accent_color not in ["#fff", "#f72525", "#f77a24", "#f7cd25", "#25f739", "#1a57f0", "#8329e9", "#fe2fe8", "#444", "#000"]:
+        accent_color = DEFAULT_ACCENT_COLOR
 
     ### SET IS DARK MODE FROM APP CONFIG SETTINGS
-    dark_mode = config.bool("dark_mode") if config.bool("dark_mode") != None and config.bool("dark_mode") != "" else DEFAULT_DARK_MODE
+    dark_mode = config.bool("dark_mode", DEFAULT_DARK_MODE)
 
     ### SET USERNAME
-    username = config.str("username") if config.str("username") != None and config.str("username") != "" else DEFAULT_USER_NAME
+    username = config.str("username", "").strip()
 
     renderGame = []
     renderFriend = []
 
     ### GET USER ID
-    user_id_cached = cache.get("user_id_%s" % username)
-    if user_id_cached != None and user_id_cached != str(""):
-        print("Using cached user id")
-        userRobloxId = str(user_id_cached)
-    else:
-        getUserId = "https://users.roblox.com/v1/users/search?keyword=%s&limit=10" % username
-        repGetUserId = http.get(getUserId, ttl_seconds = TTL_SECONDS)
-        if repGetUserId.status_code == 200:
-            print("Fetching user id")
-            userId = "%d" % repGetUserId.json()["data"][0]["id"] if len(repGetUserId.json()["data"]) > 0 else ""
-            userRobloxId = "%s" % userId
-
-        else:
-            userRobloxId = ""
+    lookup = request_json(
+        "https://users.roblox.com/v1/usernames/users",
+        json_body = {"usernames": [username], "excludeBannedUsers": True},
+        max_bytes = 64 * 1024,
+    ) if 3 <= len(username) and len(username) <= 20 and username.replace("_", "").isalnum() else None
+    users = lookup.get("data", []) if type(lookup) == "dict" else []
+    userRobloxId = str(users[0].get("id")) if len(users) > 0 and type(users[0]) == "dict" and users[0].get("id") != None else ""
 
     ### RETURN AND SHOW 'USER NOT FOUND' SCREEN IF FAILS TO GET USER ID
     if userRobloxId == None or userRobloxId == "":
-        print("User id not found")
-
         return render.Root(
             child = render.Stack(
                 children = [
@@ -94,7 +128,7 @@ def main(config):
                         pad = (9, 25, 0, 0),
                         child = render.Marquee(
                             width = 64,
-                            child = render.Text(content = "User not found. User not found.", font = "tom-thumb"),
+                            child = render.Text(content = "Set a Roblox username" if username == "" else "User not found", font = "tom-thumb"),
                         ),
                     ),
                     render.Padding(
@@ -106,78 +140,33 @@ def main(config):
         )
 
     ### GET USER AVATAR
-    user_avatar_cached = cache.get("user_avatar_%s" % username)
-    if user_avatar_cached != None and user_avatar_cached != str(""):
-        print("Using cached user avatar")
-        profilePhotoImg = str(user_avatar_cached)
-    else:
-        print("Fetching user avatar")
-        getProfilePhoto = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%s&size=60x60&format=Png&isCircular=true" % userRobloxId
-        repGetProfilePhoto = http.get(getProfilePhoto)
-        if repGetProfilePhoto.status_code != 200:
-            print("Fetching user avatar failed with status %d" % repGetProfilePhoto.status_code)
-            profilePhotoImg = ""
-        else:
-            profilePhotoUrl = repGetProfilePhoto.json()["data"][0]["imageUrl"]
-            profilePhotoImg = http.get(profilePhotoUrl, ttl_seconds = TTL_SECONDS).body()
-
-    ### GET ONLINE STYLE
-    user_online_status_cached = cache.get("user_online_status_%s" % username)
-    if user_online_status_cached != None and user_online_status_cached != str(""):
-        print("Using cached user online status")
-        isOnline = json.decode(user_online_status_cached)
-    else:
-        print("Fetching user online status")
-        getUserOnlineStatus = "https://presence.roblox.com/v1/presence/users"
-        repGetUserOnlineStatus = http.post(getUserOnlineStatus, json_body = {"userIds": [int(userRobloxId)]}, ttl_seconds = TTL_SECONDS)
-        if repGetUserOnlineStatus.status_code != 200:
-            print("Fetching user online status failed with status %d" % repGetUserOnlineStatus.status_code)
-            isOnline = False
-        else:
-            isOnline = repGetUserOnlineStatus.json()["userPresences"][0]["userPresenceType"] != 0
+    profilePhotoImg = load_image(thumbnail_urls("users", [userRobloxId]).get(userRobloxId, ""))
+    isOnline = presence_by_user([int(userRobloxId)]).get(userRobloxId, False)
 
     ### FRIEND MODE
     if view_mode == VIEW_FRIENDS:
         ### GET USER FRIENDS
-        user_friend_list_cached = cache.get("user_friend_list_%s" % username)
-        if user_friend_list_cached != None and user_friend_list_cached != str(""):
-            print("Using cached user friend list")
-            userFriends = json.decode(user_friend_list_cached)
-        else:
-            print("Fetching user friend list")
-            getUsersFriends = "https://friends.roblox.com/v1/users/%s/friends?userSort=StatusFrequents" % userRobloxId
-            repGetUsersFriends = http.get(getUsersFriends, ttl_seconds = TTL_SECONDS)
-            if repGetUsersFriends.status_code != 200:
-                print("Fetching user friend list failed with status %d" % repGetUsersFriends.status_code)
-                userFriends = []
-            else:
-                userFriends = repGetUsersFriends.json()["data"]
+        friends_data = request_json("https://friends.roblox.com/v1/users/%s/friends" % userRobloxId)
+        userFriends = friends_data.get("data", [])[:50] if type(friends_data) == "dict" and type(friends_data.get("data")) == "list" else []
+        friend_ids = [friend.get("id") for friend in userFriends if type(friend) == "dict" and friend.get("id") != None]
+        online = presence_by_user([int(userRobloxId)] + friend_ids)
+        isOnline = online.get(userRobloxId, isOnline)
 
         ### POPULATE FRIENDS LIST
         friendsList = []
         for friend in userFriends:
-            getUserAvatar = "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=%d&size=48x48&format=Png&isCircular=true" % friend["id"]
-            repGetUserAvatar = http.get(getUserAvatar)
-            friendObject = {"username": friend["name"], "id": "%d" % friend["id"], "isOnline": False, "avatarUrl": repGetUserAvatar.json()["data"][0]["imageUrl"]}
-            friendsList.append(friendObject)
+            if type(friend) == "dict" and friend.get("id") != None:
+                friend_id = str(friend["id"])
+                friendsList.append({"id": friend_id, "isOnline": online.get(friend_id, False)})
 
         ### SORT BY ONLINE STATUS
         friendsList = sorted(friendsList, key = lambda f: f["isOnline"], reverse = True)
+        friend_avatars = thumbnail_urls("users", [friend["id"] for friend in friendsList[:3]])
 
         ### BUILD FRIEND RENDER LIST
         renderFriend = []
         for friend in range(3):
-            friend_avatar_cached = cache.get("user_avatar_%s" % friendsList[friend]["username"]) if friend < len(userFriends) else ""
-
-            if friend_avatar_cached != None and friend_avatar_cached != str(""):
-                print("Using cached friend avatar")
-                friendAvatar = str(friend_avatar_cached)
-            else:
-                print("Fetching friend avatar")
-                friendAvatar = ""
-                if len(userFriends) != 0 and friend < len(userFriends):
-                    friendAvatarUrl = friendsList[friend]["avatarUrl"]
-                    friendAvatar = http.get(friendAvatarUrl, ttl_seconds = TTL_SECONDS).body()
+            friendAvatar = load_image(friend_avatars.get(friendsList[friend]["id"], "")) if friend < len(friendsList) else ""
 
             renderFriend.append(
                 render.Padding(
@@ -194,7 +183,7 @@ def main(config):
                                     render.Padding(
                                         pad = (10, 10, 0, 0),
                                         child = render.Circle(
-                                            color = "#0f0" if len(userFriends) != 0 and friend < len(userFriends) and friend != len(userFriends) and friendsList[friend]["isOnline"] else "#888",
+                                            color = "#0f0" if friend < len(friendsList) and friendsList[friend]["isOnline"] else "#888",
                                             diameter = 1,
                                         ),
                                     ),
@@ -208,42 +197,20 @@ def main(config):
         ### FAVORITE GAME MODE
     else:
         ### GET USER FAVORITE GAMES
-        user_favorite_games_list_cached = cache.get("user_favorite_games_list_%s" % username)
-        if user_favorite_games_list_cached != None and user_favorite_games_list_cached != str(""):
-            print("Using cached user favorite game list")
-            userFavoriteGames = json.decode(user_favorite_games_list_cached)
-        else:
-            print("Fetching user favorite game list")
-            getUsersFavoriteGames = "https://games.roblox.com/v2/users/%s/favorite/games?accessFilter=Public&sortOrder=Desc&limit=10" % userRobloxId
-            repGetUsersFavoriteGames = http.get(getUsersFavoriteGames, ttl_seconds = TTL_SECONDS)
-            if repGetUsersFavoriteGames.status_code != 200:
-                print("Fetching user favorite game list failed with status %d" % repGetUsersFavoriteGames.status_code)
-                userFavoriteGames = []
-            else:
-                userFavoriteGames = repGetUsersFavoriteGames.json()["data"]
+        games_data = request_json("https://games.roblox.com/v2/users/%s/favorite/games?accessFilter=Public&sortOrder=Desc&limit=10" % userRobloxId)
+        userFavoriteGames = games_data.get("data", [])[:3] if type(games_data) == "dict" and type(games_data.get("data")) == "list" else []
 
         ### POPULATE FAVORITE GAMES RENDER LIST
         favoriteGamesList = []
         for game in userFavoriteGames:
-            getGameAvatar = "https://thumbnails.roblox.com/v1/games/icons?universeIds=%d&size=50x50&format=Png&isCircular=false" % game["id"]
-            repGetUserGame = http.get(getGameAvatar)
-            gameObject = {"gameId": "%d" % game["id"], "avatarUrl": repGetUserGame.json()["data"][0]["imageUrl"]}
-            favoriteGamesList.append(gameObject)
+            if type(game) == "dict" and game.get("id") != None:
+                favoriteGamesList.append(str(game["id"]))
+        game_avatars = thumbnail_urls("games", favoriteGamesList)
 
         ### BUILD POPULATE FAVORITE GAMES
         renderGame = []
         for game in range(3):
-            game_avatar_cached = cache.get("game_avatar_%s" % favoriteGamesList[game]["gameId"]) if game < len(userFavoriteGames) else ""
-
-            if game_avatar_cached != None and game_avatar_cached != str(""):
-                print("Using cached game avatar")
-                gameAvatar = str(game_avatar_cached)
-            else:
-                print("Fetching game avatar")
-                gameAvatar = ""
-                if len(userFavoriteGames) != 0 and game < len(userFavoriteGames):
-                    gameAvatarUrl = favoriteGamesList[game]["avatarUrl"]
-                    gameAvatar = http.get(gameAvatarUrl, ttl_seconds = TTL_SECONDS).body()
+            gameAvatar = load_image(game_avatars.get(favoriteGamesList[game], "")) if game < len(favoriteGamesList) else ""
 
             renderGame.append(
                 render.Padding(
