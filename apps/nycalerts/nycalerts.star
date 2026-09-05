@@ -4,14 +4,11 @@
 # Description: Scrolls live NYC emergency alerts from the official
 #              Notify NYC / Everbridge RSS feed on your Tidbyt 64x32 display.
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 RSS_URL = "https://feeds.everbridge.net/feeds/453003085617722/rss/rss.xml"
-CACHE_KEY = "nycalerts_v2"
 CACHE_TTL = 300  # 5 minutes — emergency data must be fresh
 
 BLACK = "#000000"
@@ -40,7 +37,7 @@ def parse_feed(body, max_items):
     for item in items[1:]:
         author_start = item.find("<author>")
         author_end = item.find("</author>")
-        if author_start == -1:
+        if author_start == -1 or author_end == -1:
             continue
         author = item[author_start + 8:author_end]
         if "[English]" not in author:
@@ -48,7 +45,7 @@ def parse_feed(body, max_items):
 
         t_start = item.find("<title>")
         t_end = item.find("</title>")
-        if t_start == -1:
+        if t_start == -1 or t_end == -1:
             continue
         title = item[t_start + 7:t_end].strip()
         if title.startswith("Notify NYC - "):
@@ -57,7 +54,7 @@ def parse_feed(body, max_items):
         d_start = item.find("<description>")
         d_end = item.find("</description>")
         desc = ""
-        if d_start != -1:
+        if d_start != -1 and d_end != -1:
             desc = item[d_start + 13:d_end].strip()
             desc = desc.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
             cut = desc.find("To view this message in")
@@ -70,13 +67,13 @@ def parse_feed(body, max_items):
         c_start = item.find("<category>")
         c_end = item.find("</category>")
         category = "Safety"
-        if c_start != -1:
+        if c_start != -1 and c_end != -1:
             category = item[c_start + 10:c_end].strip()
 
         if title:
             alerts.append({
-                "title": title,
-                "desc": desc,
+                "title": title[:240],
+                "desc": desc[:1000],
                 "category": category,
             })
 
@@ -86,30 +83,29 @@ def parse_feed(body, max_items):
     return alerts
 
 def get_alerts(max_items):
-    cached = cache.get(CACHE_KEY)
-    if cached:
-        return json.decode(cached)[:max_items]
-
     resp = http.get(RSS_URL, ttl_seconds = CACHE_TTL, headers = {
-        "User-Agent": "tidbyt-nycalerts/1.0",
+        "User-Agent": "Niblet/1.0 (https://heyniblet.com)",
     })
 
     if resp.status_code != 200:
         return [{"title": "NYC alerts unavailable", "desc": "", "category": "Safety"}]
 
-    alerts = parse_feed(resp.body(), max_items)
+    body = resp.body()
+    if not body or len(body) > 1048576:
+        return [{"title": "NYC alerts unavailable", "desc": "", "category": "Safety"}]
+    alerts = parse_feed(body, max_items)
 
     if not alerts:
         return [{"title": "No active NYC alerts", "desc": "", "category": "Safety"}]
 
-    cache.set(CACHE_KEY, json.encode(alerts), ttl_seconds = CACHE_TTL)
     return alerts
 
 def alert_color(category):
     return CAT_COLORS.get(category, RED)
 
 def main(config):
-    max_alerts = int(config.get("max_alerts") or "5")
+    max_alerts_config = config.str("max_alerts", "5")
+    max_alerts = int(max_alerts_config) if max_alerts_config in ["3", "5", "8"] else 5
     alerts = get_alerts(max_alerts)
     total = len(alerts)
     no_alerts = total == 1 and "No active" in alerts[0]["title"]

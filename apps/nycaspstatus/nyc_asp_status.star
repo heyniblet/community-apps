@@ -70,20 +70,25 @@ def main(config):
     )
 
 def get_asp_status(url, timeout, config):
-    headers = {"Cache-Control": "no-cache", "Ocp-Apim-Subscription-Key": config.get("nyc_asp_api_key") or "demo"}
+    headers = {"Cache-Control": "no-cache", "Ocp-Apim-Subscription-Key": config.str("nyc_asp_api_key", "") or "demo"}
     if headers["Ocp-Apim-Subscription-Key"] == "demo":
         return ["IN EFFECT", "- DEMO MODE"]
     response = http.get(url = url, headers = headers, ttl_seconds = timeout)
     if response.status_code != 200:
         return ["ERROR", "- Couldn't load ASP status"]
-        #fail("status %d from %s: %s" % (response.status_code, url, response.body()))
-
-    asp_status = response.json()["days"][0]["items"][0]["status"]
+    body = response.body()
+    if not body or len(body) > 524288:
+        return ["ERROR", "- Invalid ASP response"]
+    payload = response.json()
+    days_data = payload.get("days", []) if type(payload) == "dict" else []
+    day = days_data[0] if type(days_data) == "list" and days_data and type(days_data[0]) == "dict" else {}
+    items = day.get("items", []) if type(day) == "dict" else []
+    item = items[0] if type(items) == "list" and items and type(items[0]) == "dict" else {}
+    asp_status = item.get("status", "UNKNOWN")
     if asp_status == "SUSPENDED":
-        asp_exception = response.json()["days"][0]["items"][0]["exceptionName"]
-        return [asp_status, "- " + asp_exception]
+        asp_exception = item.get("exceptionName", "")
+        return [asp_status, "- " + str(asp_exception)[:120]]
     if asp_status == "NOT IN EFFECT":
-        asp_exception = response.json()["days"][0]["items"][0]["details"]
         return [asp_status, ""]
     else:
         return [asp_status, ""]

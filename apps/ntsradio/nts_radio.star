@@ -16,7 +16,9 @@ NTS_IMAGE = NTS_IMAGE_ASSET.readall()
 API = "https://www.nts.live/api/v2/live"
 
 def main(config):
-    SelectedChannelName = config.get("Channel", "1")
+    SelectedChannelName = config.str("Channel", "1")
+    if SelectedChannelName not in ["1", "2"]:
+        SelectedChannelName = "1"
 
     CacheData = get_cachable_data(API, 60)
     API_JSON = json.decode(CacheData)
@@ -24,7 +26,13 @@ def main(config):
     Channel = int(SelectedChannelName) - 1
     NTS_DECODED = NTS_IMAGE
 
-    BroadcastTitle = API_JSON["results"][Channel]["now"]["broadcast_title"]
+    results = API_JSON.get("results", []) if type(API_JSON) == "dict" else []
+    if type(results) != "list" or len(results) <= Channel or type(results[Channel]) != "dict":
+        BroadcastTitle = "NTS unavailable"
+    else:
+        now = results[Channel].get("now", {})
+        BroadcastTitle = now.get("broadcast_title", "NTS unavailable") if type(now) == "dict" else "NTS unavailable"
+        BroadcastTitle = BroadcastTitle[:160] if type(BroadcastTitle) == "string" else "NTS unavailable"
 
     return render.Root(
         delay = 75,
@@ -84,6 +92,9 @@ def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
 
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        fail("NTS request failed with status code: %d" % res.status_code)
 
-    return res.body()
+    body = res.body()
+    if not body or len(body) > 524288:
+        fail("NTS returned an invalid response")
+    return body
