@@ -1,5 +1,13 @@
 # Tronbyt-Apps (formerly Tidbyt's Community repo)
 
+> Niblet downstream note (2026-09-05): this checkout is the
+> `heyniblet/community-apps` source fork; `tronbyt/apps` remains upstream.
+> Niblet catalog policy, source pins, credentials review, and installability
+> belong to the separate `catalog-apps` repository. Upstream publishing guides
+> below do not describe automatic Niblet approval. Original app READMEs,
+> attribution, and historical screenshots are retained; some upstream media
+> targets are missing and are not evidence of current app functionality.
+
 [![Docs](https://img.shields.io/badge/docs-tidbyt.dev-blue?style=flat-square)](https://tidbyt.dev)
 [![Discourse](https://img.shields.io/discourse/status?server=https%3A%2F%2Fdiscuss.tidbyt.com&style=flat-square)](https://discuss.tidbyt.com/)
 [![Discord Server](https://img.shields.io/discord/928484660785336380?style=flat-square)](https://discord.gg/rsCvHFsGfX)
