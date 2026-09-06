@@ -5,8 +5,6 @@ Description: Displays last listening activity for random spotify friend.
 Author: klaffitte
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
 load("render.star", "render")
@@ -18,30 +16,32 @@ spotifyFriendUrl = "https://guc-spclient.spotify.com/presence-view/v1/buddylist"
 def main(config):
     configCookie = config.get("spDcCookie")
     username = config.get("username")
-    if type(configCookie) == "string" and type(username) == "string":
+    if type(configCookie) == "string" and len(configCookie) <= 4096 and type(username) == "string" and len(username) <= 100:
         spDcCookie = "sp_dc=" + str(configCookie)
 
-        tokenResponse = getAuthToken(spotifyTokenUrl, spDcCookie, username)
+        tokenResponse = getAuthToken(spotifyTokenUrl, spDcCookie)
         if tokenResponse["status"] != 200:
-            return render.Root(
-                child = render.WrappedText("token request failed, status: ", tokenResponse["status"]),
-            )
+            return render_error("Token request failed", tokenResponse["status"])
 
         else:
-            friendResponse = getFriendData(spotifyFriendUrl, tokenResponse["token"], username)
+            friendResponse = getFriendData(spotifyFriendUrl, tokenResponse["token"])
             if friendResponse["status"] != 200:
-                return render.Root(
-                    child = render.WrappedText("friend data request failed, status: ", friendResponse["status"]),
-                )
+                return render_error("Friend request failed", friendResponse["status"])
 
             else:
-                index = generateIndex(friendResponse["friendData"])
+                friends = friendResponse["friendData"].get("friends")
+                if type(friends) != "list" or not friends:
+                    return render_error("No friend activity")
+                friend = friends[random.number(0, min(len(friends), 50) - 1)]
+                user = friend.get("user") if type(friend) == "dict" else None
+                track = friend.get("track") if type(friend) == "dict" else None
+                artist = track.get("artist") if type(track) == "dict" else None
+                if type(user) != "dict" or type(track) != "dict" or type(artist) != "dict":
+                    return render_error("Invalid friend activity")
 
-                imageResponse = getImage(friendResponse["friendData"], index)
+                imageResponse = getImage(track.get("imageUrl"))
                 if imageResponse["status"] != 200:
-                    return render.Root(
-                        child = render.WrappedText("image request failed, status: ", imageResponse["status"]),
-                    )
+                    return render_error("Image request failed", imageResponse["status"])
 
                 else:
                     return render.Root(
@@ -54,7 +54,7 @@ def main(config):
                                     render.Marquee(
                                         width = 64,
                                         child = render.Text(
-                                            content = friendResponse["friendData"]["friends"][index]["user"]["name"],
+                                            content = str(user.get("name") or username)[:80],
                                             offset = 1,
                                             color = "#1DB954",
                                         ),
@@ -74,13 +74,13 @@ def main(config):
                                                     render.Marquee(
                                                         width = 38,
                                                         child = render.Text(
-                                                            content = friendResponse["friendData"]["friends"][index]["track"]["name"],
+                                                            content = str(track.get("name") or "Unknown track")[:120],
                                                         ),
                                                     ),
                                                     render.Marquee(
                                                         width = 38,
                                                         child = render.Text(
-                                                            content = friendResponse["friendData"]["friends"][index]["track"]["artist"]["name"],
+                                                            content = str(artist.get("name") or "Unknown artist")[:120],
                                                             offset = 1,
                                                         ),
                                                     ),
@@ -94,9 +94,11 @@ def main(config):
                     )
 
     else:
-        return render.Root(
-            child = render.WrappedText("missing username or sp_dc cookie"),
-        )
+        return render_error("Missing username or sp_dc cookie")
+
+def render_error(message, status = None):
+    suffix = " (" + str(status) + ")" if status != None else ""
+    return render.Root(child = render.WrappedText(content = message + suffix, width = 64, align = "center"))
 
 def get_schema():
     return schema.Schema(
@@ -119,56 +121,27 @@ def get_schema():
     )
 
 #get auth token
-def getAuthToken(spotifyTokenUrl, spDcCookie, username):
-    tokenCache = cache.get("token" + username)
-    if tokenCache != None:
-        print("using cached token")
-        tokenResponse = {
-            "token": tokenCache,
-            "status": 200,
-        }
-        return tokenResponse
-    else:
-        print("no cached token, calling spotify API")
-        res = http.get(spotifyTokenUrl, headers = {"Cookie": spDcCookie})
-        resForm = res.json()
-        accessToken = "Bearer " + resForm["accessToken"]
-        cache.set("token" + username, accessToken, ttl_seconds = 1800)
-        tokenResponse = {
-            "token": accessToken,
-            "status": res.status_code,
-        }
-        return tokenResponse
+def getAuthToken(spotifyTokenUrl, spDcCookie):
+    res = http.get(spotifyTokenUrl, headers = {"Cookie": spDcCookie})
+    if res.status_code != 200:
+        return {"token": None, "status": res.status_code}
+    data = res.json()
+    token = data.get("accessToken") if type(data) == "dict" else None
+    return {"token": "Bearer " + token if type(token) == "string" else None, "status": 200 if token else 502}
 
 #get friend data
-def getFriendData(spotifyFriendUrl, accessToken, username):
-    friendCache = cache.get("friend" + username)
-    if friendCache != None:
-        print("using cached friend data")
-        friendResponse = {
-            "friendData": json.decode(friendCache),
-            "status": 200,
-        }
-        return friendResponse
-    else:
-        print("no cached token, calling spotify API")
-        res = http.get(spotifyFriendUrl, headers = {"Authorization": accessToken})
-        friendData = res.json()
-        cache.set("friend" + username, json.encode(friendData), ttl_seconds = 120)
-        friendResponse = {
-            "friendData": friendData,
-            "status": res.status_code,
-        }
-        return friendResponse
-
-def generateIndex(friendData):
-    friendNum = len(friendData["friends"]) - 1
-    index = random.number(0, friendNum)
-    return index
+def getFriendData(spotifyFriendUrl, accessToken):
+    res = http.get(spotifyFriendUrl, headers = {"Authorization": accessToken})
+    if res.status_code != 200:
+        return {"friendData": {}, "status": res.status_code}
+    data = res.json()
+    return {"friendData": data if type(data) == "dict" else {}, "status": 200 if type(data) == "dict" else 502}
 
 #get cover art
-def getImage(friendData, index):
-    res = http.get(friendData["friends"][index]["track"]["imageUrl"])
+def getImage(image_url):
+    if type(image_url) != "string" or not image_url.startswith("https://i.scdn.co/image/"):
+        return {"image": None, "status": 502}
+    res = http.get(image_url)
     image = res.body()
     imageResponse = {
         "image": image,

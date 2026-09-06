@@ -16,22 +16,25 @@ UNSPLASH_URL = "https://api.unsplash.com"
 DEFAULT_IMAGE_URL = "https://images.unsplash.com/photo-1645069258059-6f5a71256c4a"
 
 def parse_imgix_params(raw):
-    if not raw:
+    if type(raw) != "string" or not raw or len(raw) > 512:
         return {}
 
     params = {}
-    for entry in raw.split("&"):
+    for entry in raw.split("&")[:20]:
         item = entry.strip()
         if not item or "=" not in item:
             continue
         key, value = item.split("=", 1)
         key = key.strip()
-        if key:
-            params[key] = value.strip()
+        value = value.strip()
+        if key and len(key) <= 32 and len(value) <= 128 and all([char.isalnum() or char in "_-" for char in key.elems()]):
+            params[key] = value
 
     return params
 
 def get_topic_id(slug, key):
+    if len(slug) > 64 or not all([char.isalnum() or char in "_-" for char in slug.elems()]):
+        return None
     cache_key = "topic:" + slug
     id = cache.get(cache_key)
     if id:
@@ -43,17 +46,21 @@ def get_topic_id(slug, key):
             "Accept-Version": "v1",
             "Authorization": "Client-ID %s" % key,
         },
-        ttl_seconds = 60,
     )
 
     if res.status_code != 200:
-        fail("HTTP request failed with status %d" % res.status_code)
+        return None
 
-    id = res.json()["id"]
+    data = res.json()
+    id = data.get("id") if type(data) == "dict" else None
+    if type(id) != "string" or len(id) > 128:
+        return None
     cache.set(cache_key, id, ttl_seconds = 86400)
     return id
 
 def get_image(url, params = {}, ttl_seconds = DEFAULT_CACHE_MINS * 60):
+    if type(url) != "string" or not url.startswith("https://images.unsplash.com/"):
+        return None
     if "fit" not in params:
         params["fit"] = "crop"
     if "crop" not in params:
@@ -65,33 +72,33 @@ def get_image(url, params = {}, ttl_seconds = DEFAULT_CACHE_MINS * 60):
     res = http.get(url, params = params, ttl_seconds = ttl_seconds)
 
     if res.status_code != 200:
-        fail("HTTP request failed with status %d" % res.status_code)
+        return None
 
     return res.body()
 
 def main(config):
     cache_mins_str = config.str("cache_mins", str(DEFAULT_CACHE_MINS))
     cache_mins = int(cache_mins_str) if cache_mins_str.isdigit() else DEFAULT_CACHE_MINS
+    cache_mins = max(1, min(cache_mins, 1440))
     cache_sec = cache_mins * 60
 
     image = None
     image_params = parse_imgix_params(config.get("imgix_params"))
 
-    key = config.get("unsplash_access_key")
+    key = bounded_text(config.get("unsplash_access_key"), 256)
     if key:
-        topics_raw = config.get("topics")
-        topics = [get_topic_id(v, key) for v in topics_raw.split(",") if v] if topics_raw else []
+        topics_raw = bounded_text(config.get("topics"), 512)
+        topics = [get_topic_id(v.strip(), key) for v in topics_raw.split(",")[:10] if v.strip()] if topics_raw else []
+        topics = [id for id in topics if id]
         params = {
             "orientation": "landscape",
-            "collections": config.get("collections"),
+            "collections": bounded_text(config.get("collections"), 512),
             "topics": ",".join(topics),
-            "username": config.get("username"),
-            "query": config.get("query"),
-            "content_filter": config.get("content_filter"),
+            "username": bounded_text(config.get("username"), 100),
+            "query": bounded_text(config.get("query"), 200),
+            "content_filter": config.get("content_filter") if config.get("content_filter") in ["low", "high"] else "low",
         }
         params = {k: v for k, v in params.items() if v}
-        print("Params:", params)
-
         res = http.get(
             UNSPLASH_URL + "/photos/random",
             headers = {
@@ -99,20 +106,25 @@ def main(config):
                 "Authorization": "Client-ID %s" % key,
             },
             params = params,
-            ttl_seconds = cache_sec,
         )
 
         if res.status_code == 200:
-            image_url = res.json()["urls"]["raw"]
-            print("Image URL:", image_url)
+            data = res.json()
+            urls = data.get("urls") if type(data) == "dict" else None
+            image_url = urls.get("raw") if type(urls) == "dict" else None
             image = get_image(image_url, params = image_params, ttl_seconds = cache_sec)
 
     if not image:
         image = get_image(DEFAULT_IMAGE_URL, params = image_params, ttl_seconds = cache_sec)
+    if not image:
+        return render.Root(child = render.WrappedText("Could not load Unsplash image", width = canvas.width(), align = "center"))
 
     return render.Root(
         child = render.Image(src = image),
     )
+
+def bounded_text(value, limit):
+    return value[:limit] if type(value) == "string" else ""
 
 def get_schema():
     return schema.Schema(

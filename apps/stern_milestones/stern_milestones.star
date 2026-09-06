@@ -1,10 +1,9 @@
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
-CACHE_TTL = 43200  # 12 hours
+PUBLIC_IMAGE_TTL = 43200  # 12 hours
 
 def login(username, password):
     login_url = "https://api.prd.sternpinball.io/api/v2/token/"
@@ -23,8 +22,8 @@ def login(username, password):
 
         if rep.status_code == 200:
             data = rep.json()
-            token = data.get("access") or data.get("access_token")
-            if token:
+            token = data.get("access") or data.get("access_token") if type(data) == "dict" else None
+            if type(token) == "string" and len(token) <= 4096:
                 return token
 
     return None
@@ -33,57 +32,37 @@ def main(config):
     username = config.get("username")
     password = config.get("password")
 
-    if not username or not password:
+    if type(username) != "string" or type(password) != "string" or not username or not password or len(username) > 254 or len(password) > 1024:
         return render.Root(
             child = render.WrappedText("Configure Stern username & password"),
         )
 
-    # Check cache for stats and icon URLs first
-    cache_key = "stern_milestones_data_v3_" + username
-    cached_data = cache.get(cache_key)
-    extracted_data = None
-    if cached_data:
-        extracted_data = json.decode(cached_data)
+    token = login(username, password)
+    if not token:
+        return render.Root(child = render.WrappedText("Login failed. Check credentials."))
 
-    if not extracted_data:
-        token = login(username, password)
-        if not token:
-            return render.Root(
-                child = render.WrappedText("Login failed. Check credentials."),
-            )
+    rep = http.get("https://api.prd.sternpinball.io/api/v1/portal/user_stats/", headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Authorization": "Bearer " + token,
+    })
+    if rep.status_code != 200:
+        return render.Root(child = render.WrappedText("Failed to fetch dashboard."))
 
-        url = "https://api.prd.sternpinball.io/api/v1/portal/user_stats/"
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Authorization": "Bearer " + token,
-        }
-
-        rep = http.get(url, headers = headers)
-        if rep.status_code != 200:
-            return render.Root(child = render.WrappedText("Failed to fetch dashboard."))
-
-        stats_data = rep.json().get("stats", {})
-        stats = {
-            "games": int(stats_data.get("total_plays", 0)),
-            "streak": int(stats_data.get("consecutive_days_played", 0)),
-            "max_streak": int(stats_data.get("max_consecutive_days_played", 0)),
-            "days": int(stats_data.get("days_played", 0)),
-        }
-
-        extracted_data = {
-            "stats": stats,
-            "icons": {
-                "games": "https://stern-static-prod.s3.amazonaws.com/stern-assets/badges/Games-Played-Badge-Active.png",
-                "days": "https://stern-static-prod.s3.amazonaws.com/stern-assets/badges/Days-Played-Badge.png",
-                "streak": "https://stern-static-prod.s3.amazonaws.com/stern-assets/badges/Game-Streak-Badge.png",
-            },
-        }
-
-        # Cache only the small extracted data
-        cache.set(cache_key, json.encode(extracted_data), ttl_seconds = CACHE_TTL)
-
-    stats = extracted_data["stats"]
-    icon_urls = extracted_data["icons"]
+    data = rep.json()
+    stats_data = data.get("stats") if type(data) == "dict" else None
+    if type(stats_data) != "dict":
+        return render.Root(child = render.WrappedText("Invalid Stern response."))
+    stats = {
+        "games": number(stats_data.get("total_plays")),
+        "streak": number(stats_data.get("consecutive_days_played")),
+        "max_streak": number(stats_data.get("max_consecutive_days_played")),
+        "days": number(stats_data.get("days_played")),
+    }
+    icon_urls = {
+        "games": "https://stern-static-prod.s3.amazonaws.com/stern-assets/badges/Games-Played-Badge-Active.png",
+        "days": "https://stern-static-prod.s3.amazonaws.com/stern-assets/badges/Days-Played-Badge.png",
+        "streak": "https://stern-static-prod.s3.amazonaws.com/stern-assets/badges/Game-Streak-Badge.png",
+    }
 
     SCALE = 2 if canvas.is2x() else 1
 
@@ -103,7 +82,7 @@ def main(config):
 
         icon_widget = render.Box(width = 20 * SCALE, height = 20 * SCALE, color = "#333")
         if icon_url:
-            img_rep = http.get(icon_url, ttl_seconds = CACHE_TTL)
+            img_rep = http.get(icon_url, ttl_seconds = PUBLIC_IMAGE_TTL)
             if img_rep.status_code == 200:
                 icon_widget = render.Image(src = img_rep.body(), width = 20 * SCALE, height = 20 * SCALE)
 
@@ -173,6 +152,13 @@ def main(config):
             ),
         ),
     )
+
+def number(value):
+    if type(value) in ["int", "float"] and value >= 0:
+        return int(value)
+    if type(value) == "string" and len(value) <= 20 and value.isdigit():
+        return int(value)
+    return 0
 
 def get_schema():
     return schema.Schema(
