@@ -1,5 +1,6 @@
 load("http.star", "http")
 load("images/thingspeak_icon.png", THINGSPEAK_ICON_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -38,6 +39,8 @@ def getData(config):
     # get settings from user config
     config_channel_id = config.str("channelId", None)
     field_id = config.str("fieldId", "1")
+    if not config_channel_id or not config_channel_id.isdigit() or field_id not in ["1", "2", "3", "4", "5", "6", "7", "8"]:
+        return struct(status_code = 400, data = None)
     get_last = "" if config.bool("renderPlotView") else "/last"
 
     # set up params for api call
@@ -48,13 +51,13 @@ def getData(config):
         "User-Agent": "Tidbyt App: Thingspeak channel data",
     }
 
-    params = {
-        "api_key": config.str("apiKey", ""),
-        "results": "6000",  # increases odds you will get some results if there's infrequent data in a field
-        # some fields may only get data once a day. TODO consider exposing settings for api filters?
-    }
+    params = {"results": "6000"}
+    if config.str("apiKey", ""):
+        params["api_key"] = config.str("apiKey", "")
 
-    resp = http.get(THINGSPEAK_CHANNEL_URL_ENDPOINT, params = params, headers = headers, ttl_seconds = 60)
+    resp = http.get(THINGSPEAK_CHANNEL_URL_ENDPOINT, params = params, headers = headers)
+    if resp.status_code != 200:
+        return struct(status_code = resp.status_code, data = None)
 
     return struct(status_code = resp.status_code, data = resp.json())
 
@@ -66,12 +69,16 @@ def renderBottomContent(config, resp):
         validResultValues = []
 
         # filter out null values that may exist in response
-        for result in resp.data.get("feeds"):
+        feeds = resp.data.get("feeds") or []
+        for result in feeds[:64]:
+            if type(result) != "dict":
+                continue
             resultValue = result.get(fieldKey)
-            if resultValue != None:
+            if resultValue != None and re.match("^-?\\d+(\\.\\d+)?$", str(resultValue)):
                 validResultValues.append(float(resultValue))
-                if len(validResultValues) > 64:
-                    break  # bail 64 is enough of data for 64 px
+
+        if not validResultValues:
+            return render.Text("No numeric data")
 
         return render.Plot(
             data = enumerate(validResultValues),
@@ -91,10 +98,8 @@ def renderBottomContent(config, resp):
     )
 
 def main(config):
-    print("Running Thingspeak app")
     resp = getData(config)
-    if resp.status_code != 200:
-        print("Thingspeak API request failed with status", resp.status_code)
+    if resp.status_code != 200 or type(resp.data) != "dict":
         return renderErrorHelp(config, resp)
 
     return render.Root(

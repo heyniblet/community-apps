@@ -24,6 +24,7 @@ load("images/sunny_default.png", SUNNY_DEFAULT_ASSET = "file")
 load("images/windy.png", WINDY_ASSET = "file")
 load("images/windy_variant.png", WINDY_VARIANT_ASSET = "file")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -32,6 +33,10 @@ EXPORT = EXPORT_ASSET.readall()
 IMPORT = IMPORT_ASSET.readall()
 
 CLOCK_FORMAT = "03:04 PM"
+
+def valid_entity(value):
+    parts = value.split(".")
+    return len(value) <= 128 and len(parts) == 2 and all([part and all([char.isalnum() or char in "_-" for char in part.elems()]) for part in parts])
 
 def main(config):
     now = time.now()
@@ -75,14 +80,24 @@ def main(config):
             ),
         )
 
-    headers = {
-        "Authorization": config.str("key", ""),
-    }
+    base_url = config.str("hass", "").rstrip("/")
+    if not base_url.startswith("https://"):
+        return render_error("Home Assistant must use HTTPS")
+    if not valid_entity(config.str("sol", "")) or not valid_entity(config.str("wthr", "")):
+        return render_error("Invalid Home Assistant entity")
 
-    solar = http.get(config.str("hass", "") + "/api/states/" + config.str("sol", ""), headers = headers, ttl_seconds = 60)
+    headers = {"Authorization": "Bearer " + config.str("key", "")}
+
+    solar = http.get(base_url + "/api/states/" + config.str("sol", ""), headers = headers)
+    if solar.status_code != 200:
+        return render_error("Could not load solar data")
     solar_j = solar.json()
+    if type(solar_j) != "dict" or type(solar_j.get("attributes")) != "dict":
+        return render_error("Invalid solar data")
     uom = "kW"
-    sol = solar_j["attributes"][config.str("attr", "")]
+    sol = str(solar_j["attributes"].get(config.str("attr", ""), ""))
+    if not re.match("^-?\\d+(\\.\\d+)?$", sol):
+        return render_error("Invalid solar value")
 
     sol_n = float(sol)
     sol_d = math.round(sol_n / 1000 * 10) / 10
@@ -93,9 +108,13 @@ def main(config):
     else:
         sol_i = IMPORT
 
-    weather = http.get(config.str("hass", "") + "/api/states/" + config.str("wthr", ""), headers = headers, ttl_seconds = 60)
+    weather = http.get(base_url + "/api/states/" + config.str("wthr", ""), headers = headers)
+    if weather.status_code != 200:
+        return render_error("Could not load weather data")
     weather_j = weather.json()
-    wth = weather_j["state"]
+    if type(weather_j) != "dict":
+        return render_error("Invalid weather data")
+    wth = str(weather_j.get("state", ""))
 
     return render.Root(
         child = render.Box(
@@ -132,6 +151,11 @@ def main(config):
         ),
     )
 
+def render_error(message):
+    return render.Root(
+        child = render.WrappedText(content = message, width = 64, height = 32, align = "center"),
+    )
+
 def get_schema():
     return schema.Schema(
         version = "1",
@@ -139,7 +163,7 @@ def get_schema():
             schema.Text(
                 id = "hass",
                 name = "Hass URL",
-                desc = "Where to find home assistant installation.",
+                desc = "Public HTTPS URL of the Home Assistant installation.",
                 icon = "globe",
             ),
             schema.Text(
