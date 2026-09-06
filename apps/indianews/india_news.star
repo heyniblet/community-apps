@@ -20,7 +20,7 @@ yesterday = today - time.parse_duration("86400s")
 yesterdayf = yesterday.format("2006-01-02")
 
 #this is the API service for news
-NEWS_URL = "https://newsapi.org/v2/everything?q=india&searchIn=description&sortBy=popularity&from={}&to={}&domains=indiatimes.com,livemint.com,thehindu.com,indianexpress.com&language=en&apiKey=".format(yesterdayf, todayf)
+NEWS_URL = "https://newsapi.org/v2/everything"
 
 def main(config):
     # set default api key
@@ -51,16 +51,29 @@ def main(config):
         )
     else:
         #get data
-        NEWS_API_URL = NEWS_URL + API
-        rep = http.get(url = NEWS_API_URL, ttl_seconds = 3600)  #update every 1 hour
+        rep = http.get(url = NEWS_URL, params = {
+            "q": "india",
+            "searchIn": "description",
+            "sortBy": "popularity",
+            "from": yesterdayf,
+            "to": todayf,
+            "domains": "indiatimes.com,livemint.com,thehindu.com,indianexpress.com",
+            "language": "en",
+            "apiKey": API,
+        })
         if rep.status_code != 200:
             title = ["Error getting data!!!!", "", "", ""]
         else:
-            #get top 3 newest headlines
+            articles = rep.json().get("articles", [])[:100]
             title = []
-            for i in range(4):
-                j = i + shift
-                title.append((rep.json()["articles"][j]["title"]).split(" - ")[0])
+            if articles:
+                shift = shift % len(articles)
+                for i in range(min(4, len(articles))):
+                    article_title = articles[(i + shift) % len(articles)].get("title", "")
+                    if article_title:
+                        title.append(article_title.split(" - ")[0])
+            if not title:
+                title = ["No headlines available"]
 
             #format strings so they are all the same length (leads to better scrolling)
             max_len = max([len(x) for x in title])
