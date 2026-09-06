@@ -2,17 +2,12 @@
 Icecast Now Playing - A Tidbyt app showing the currently playing song from an Icecast server
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/icecast_logo.gif", ICECAST_LOGO_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
 
 ICECAST_LOGO = ICECAST_LOGO_ASSET.readall()
-
-# Cache TTL for API responses
-CACHE_TTL_SECONDS = 30  # Cache for 30 seconds (more frequent updates for live radio)
 
 def main(config):
     """
@@ -25,7 +20,7 @@ def main(config):
     text_color = config.get("text_color", "#0ff1b2")
 
     # Validate that a URL is provided
-    if not status_url:
+    if type(status_url) != "string" or not status_url.startswith("https://") or len(status_url) > 512 or "@" in status_url or "#" in status_url:
         return render.Root(
             child = render.Box(
                 render.Column(
@@ -49,7 +44,7 @@ def main(config):
 
     if current_data == None:
         # Fallback display if API is unavailable
-        station_name = custom_name if custom_name else "Icecast Radio"
+        station_name = str(custom_name)[:100] if custom_name else "Icecast Radio"
         return render.Root(
             child = render.Box(
                 render.Column(
@@ -77,11 +72,11 @@ def main(config):
         )
 
     # Display current track info
-    server_name = current_data.get("server_name", "Icecast Radio")
-    title = current_data.get("title", "Unknown Track")
+    server_name = str(current_data.get("server_name") or "Icecast Radio")[:100]
+    title = str(current_data.get("title") or "Unknown Track")[:200]
 
     # Use custom name if provided, otherwise use server_name
-    display_name = custom_name if custom_name else server_name
+    display_name = str(custom_name)[:100] if custom_name else server_name
 
     # Parse title for artist and song
     artist = ""
@@ -90,8 +85,6 @@ def main(config):
         parts = title.split(" - ", 1)
         artist = parts[0].strip()
         song = parts[1].strip()
-        print("Parsed artist:", artist)
-        print("Parsed song:", song)
 
     # Build the display
     children = []
@@ -222,7 +215,7 @@ def get_schema():
             schema.Text(
                 id = "status_url",
                 name = "Icecast Status URL",
-                desc = "URL to your Icecast server's status-json.xsl endpoint (e.g., http://icecast.example.com:8000/status-json.xsl)",
+                desc = "Public HTTPS URL to your Icecast status-json.xsl endpoint (port 443).",
                 icon = "radio",
             ),
             schema.Text(
@@ -247,14 +240,6 @@ def fetch_current_track(url):
     Fetch current track from Icecast server status-json.xsl endpoint
     """
 
-    # Create a cache key based on the URL
-    cache_key = "icecast_track_" + url
-
-    # Cache the response for 30 seconds
-    cached = cache.get(cache_key)
-    if cached != None:
-        return json.decode(cached)
-
     resp = http.get(url)
 
     if resp.status_code == 200:
@@ -267,7 +252,7 @@ def fetch_current_track(url):
         #   }
         # }
 
-        if "icestats" in data:
+        if type(data) == "dict" and type(data.get("icestats")) == "dict":
             icestats = data["icestats"]
             source = None
 
@@ -283,7 +268,7 @@ def fetch_current_track(url):
                     # It's a single source object
                     source = source_data
 
-            if source != None:
+            if type(source) == "dict":
                 # Extract title and server_name
                 title = source.get("title", "Unknown Track")
                 server_name = source.get("server_name", "Icecast Radio")
@@ -292,11 +277,8 @@ def fetch_current_track(url):
                     "title": title,
                     "server_name": server_name,
                 }
-                cache.set(cache_key, json.encode(track_data), ttl_seconds = CACHE_TTL_SECONDS)
                 return track_data
 
-        print("Could not parse Icecast status JSON")
         return None
     else:
-        print("Failed to fetch from Icecast server:", resp.status_code)
         return None

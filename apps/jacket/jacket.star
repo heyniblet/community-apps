@@ -1,14 +1,12 @@
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
 
-REFRESH_RATE = 3600
 OPEN_WEATHER_URL = "https://api.openweathermap.org/data/3.0/onecall"
 NOAA_POINTS_URL = "https://api.weather.gov/points"
-NOAA_USER_AGENT = "JacketApp/1.0 (tidbyt; contact@example.com)"
+NOAA_USER_AGENT = "Niblet-Jacket/1.0 (https://heyniblet.com)"
 
 ADVERBS = [
     "damn cold",
@@ -106,11 +104,11 @@ def main(config):
 
     # Get weather data - returns feels_like temp in Fahrenheit
     feels_like = get_feels_like_temp(config)
+    if feels_like == None:
+        return render.Root(child = render.WrappedText("Weather is unavailable", align = "center"))
 
-    jacketLimit = config.get("jacketLimit", DEFAULT_JACKET_LIMIT)
-    coatLimit = config.get("coatLimit", DEFAULT_COAT_LIMIT)
-    jacketLimit = int(jacketLimit)
-    coatLimit = int(coatLimit)
+    jacketLimit = parse_limit(config.get("jacketLimit"), DEFAULT_JACKET_LIMIT)
+    coatLimit = parse_limit(config.get("coatLimit"), DEFAULT_COAT_LIMIT)
 
     mainString = getMainString(feels_like, jacketLimit, coatLimit)
     show_description = config.get("show_description")
@@ -225,160 +223,109 @@ def get_feels_like_temp(config):
     else:
         # Default to OpenWeather for backward compatibility
         current_data = get_openweather_data(config)
+        if current_data == None:
+            return None
         feels_like = current_data.get("feels_like")
-        if feels_like == None:
-            return SAMPLE_NOAA_TEMP
+        if type(feels_like) not in ("int", "float"):
+            return None
         return ktof(feels_like)
 
 def get_noaa_feels_like(config):
     """Get feels like temperature from NOAA API (returns Fahrenheit)"""
     location = config.get("location", None)
 
-    if location == None:
-        return SAMPLE_NOAA_TEMP
-
-    location = json.decode(location)
-    lat = location["lat"]
-    lng = location["lng"]
-
-    # Create cache key based on location
-    cache_key = "noaa_weather_%s_%s" % (lat, lng)
-    cached_data = cache.get(cache_key)
-
-    if cached_data != None:
-        return float(cached_data)
+    location = json.decode(location, None) if location else None
+    if type(location) != "dict":
+        return None
+    lat = location.get("lat")
+    lng = location.get("lng")
+    if type(lat) not in ("int", "float") or type(lng) not in ("int", "float") or lat < -90 or lat > 90 or lng < -180 or lng > 180:
+        return None
 
     # Step 1: Get the grid point info from coordinates
     points_url = "%s/%s,%s" % (NOAA_POINTS_URL, lat, lng)
     points_res = http.get(
         url = points_url,
         headers = {"User-Agent": NOAA_USER_AGENT},
-        ttl_seconds = REFRESH_RATE,
     )
 
     if points_res.status_code != 200:
         # NOAA only works for US locations
-        return SAMPLE_NOAA_TEMP
+        return None
 
     points_data = points_res.json()
 
     # Get the hourly forecast URL from the points response
-    properties = points_data.get("properties")
-    if properties == None:
-        return SAMPLE_NOAA_TEMP
+    properties = points_data.get("properties") if type(points_data) == "dict" else None
+    if type(properties) != "dict":
+        return None
 
     forecast_hourly_url = properties.get("forecastHourly")
-    if forecast_hourly_url == None:
-        return SAMPLE_NOAA_TEMP
+    if type(forecast_hourly_url) != "string" or not forecast_hourly_url.startswith("https://api.weather.gov/"):
+        return None
 
     # Step 2: Get the hourly forecast
     forecast_res = http.get(
         url = forecast_hourly_url,
         headers = {"User-Agent": NOAA_USER_AGENT},
-        ttl_seconds = REFRESH_RATE,
     )
 
     if forecast_res.status_code != 200:
-        return SAMPLE_NOAA_TEMP
+        return None
 
     forecast_data = forecast_res.json()
 
     # Get the first period (current hour) temperature
     # NOAA returns temperature in Fahrenheit by default
-    forecast_props = forecast_data.get("properties")
-    if forecast_props == None:
-        return SAMPLE_NOAA_TEMP
+    forecast_props = forecast_data.get("properties") if type(forecast_data) == "dict" else None
+    if type(forecast_props) != "dict":
+        return None
 
     periods = forecast_props.get("periods")
-    if periods == None or len(periods) == 0:
-        return SAMPLE_NOAA_TEMP
+    if type(periods) != "list" or len(periods) == 0 or type(periods[0]) != "dict":
+        return None
 
     current_period = periods[0]
     temp = current_period.get("temperature")
-    if temp == None:
-        return SAMPLE_NOAA_TEMP
+    if type(temp) not in ("int", "float"):
+        return None
 
     # NOAA doesn't provide a separate "feels like" temperature in the hourly forecast
     # The temperature returned is the actual temperature, but for simplicity we use it
     # as the effective temperature (feels like would require additional calculation
     # based on wind chill / heat index which NOAA doesn't directly provide in this endpoint)
-    feels_like = float(temp)
-
-    # Cache the result
-    cache.set(cache_key, str(feels_like), ttl_seconds = REFRESH_RATE)
-
-    return feels_like
+    return float(temp)
 
 def get_openweather_data(config):
     """Get weather data from OpenWeather API (original implementation)"""
     api_key = config.get("api_key", None)
     location = config.get("location", None)
 
-    if api_key == None:
-        return SAMPLE_STATION_RESPONSE["current"]
-    if location == None:
-        return SAMPLE_STATION_RESPONSE["current"]
-
-    location = json.decode(location)
-    lat = location["lat"]
-    lng = location["lng"]
-
-    # Cache key must include location to avoid serving wrong data for different locations
-    cache_key = "openweather_%s_%s_%s" % (api_key, lat, lng)
-    cached_data = cache.get(cache_key)
-
-    if cached_data != None:
-        cache_res = json.decode(cached_data)
-        return cache_res
-
-    query = "%s?exclude=minutely,hourly,daily,alerts&lat=%s&lon=%s&appid=%s" % (OPEN_WEATHER_URL, lat, lng, api_key)
+    if not api_key or not location or len(api_key) > 512:
+        return None
+    location = json.decode(location, None)
+    if type(location) != "dict":
+        return None
+    lat = location.get("lat")
+    lng = location.get("lng")
+    if type(lat) not in ("int", "float") or type(lng) not in ("int", "float") or lat < -90 or lat > 90 or lng < -180 or lng > 180:
+        return None
     res = http.get(
-        url = query,
-        ttl_seconds = REFRESH_RATE,
+        url = OPEN_WEATHER_URL,
+        params = {"exclude": "minutely,hourly,daily,alerts", "lat": str(lat), "lon": str(lng), "appid": api_key},
     )
     if res.status_code != 200:
-        return SAMPLE_STATION_RESPONSE["current"]
+        return None
 
     response_data = res.json()
-    current_data = response_data.get("current")
-    if current_data == None:
-        return SAMPLE_STATION_RESPONSE["current"]
+    current_data = response_data.get("current") if type(response_data) == "dict" else None
+    return current_data if type(current_data) == "dict" else None
 
-    cache.set(cache_key, json.encode(current_data), ttl_seconds = REFRESH_RATE)
-    return current_data
-
-# Sample temperature for NOAA fallback (in Fahrenheit)
-SAMPLE_NOAA_TEMP = 65.0
-
-SAMPLE_STATION_RESPONSE = {
-    "lat": 40.678,
-    "lon": -73.944,
-    "timezone": "America/New_York",
-    "timezone_offset": -14400,
-    "current": {
-        "dt": 1685459950,
-        "sunrise": 1685438891,
-        "sunset": 1685492324,
-        "temp": 291.72,
-        "feels_like": 291.02,
-        "pressure": 1024,
-        "humidity": 53,
-        "dew_point": 281.97,
-        "uvi": 6.51,
-        "clouds": 0,
-        "visibility": 10000,
-        "wind_speed": 7.2,
-        "wind_deg": 40,
-        "weather": [
-            {
-                "id": 711,
-                "main": "Smoke",
-                "description": "smoke",
-                "icon": "50d",
-            },
-        ],
-    },
-}
+def parse_limit(value, fallback):
+    value = str(value or "").strip()
+    if not value or len(value) > 4 or not value.lstrip("-").isdigit():
+        return fallback
+    return clamp(int(value), RANGE_MIN, RANGE_MAX)
 
 def add_row(title, font):
     return render.Row(
