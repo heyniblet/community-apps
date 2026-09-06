@@ -10,6 +10,7 @@ Author: Colin Weir
 """
 
 load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
 
 # Cropped from each team's official brand kit (Reverse mark, cream/white on
@@ -131,7 +132,10 @@ def fetch_games():
     resp = http.get(GAMES_URL, ttl_seconds = GAMES_TTL)
     if resp.status_code != 200:
         return []
-    return resp.json().get("games", []) or []
+    body = resp.body()
+    data = json.decode(body, {}) if body and len(body) <= 2 * 1024 * 1024 else {}
+    games = data.get("games", []) if type(data) == "dict" else []
+    return games[:1000] if type(games) == "list" else []
 
 def team_games(games, team_id):
     return [
@@ -182,7 +186,9 @@ def fetch_boxscore(game_id):
     resp = http.get(BOXSCORE_URL % game_id, ttl_seconds = LIVE_TTL)
     if resp.status_code != 200:
         return None
-    return resp.json().get("boxscore", {})
+    body = resp.body()
+    data = json.decode(body, {}) if body and len(body) <= 2 * 1024 * 1024 else {}
+    return data.get("boxscore", {}) if type(data) == "dict" else {}
 
 def find_side(teams, side):
     for t in teams:

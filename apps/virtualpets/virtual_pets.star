@@ -46,7 +46,7 @@ TTL_TIME = 86400  # 24 hours is 86400
 def main(config):
     # Run and display the app based on choices
     pet = config.str("choice_pet", DEFAULT_PET)
-    name = config.str("choice_name", DEFAULT_NAME)
+    name = config.str("choice_name", DEFAULT_NAME)[:40]
     show = config.bool("choice_show", DEFAULT_SHOW)
 
     # Determine hemisphere for correct season rendering
@@ -105,12 +105,12 @@ def get_img(pet, action):
     res = http.get(url, ttl_seconds = TTL_TIME)
 
     # An error occured
-    if res.status_code != 200:
+    data = res.body()
+    if res.status_code != 200 or not data or len(data) > 2 * 1024 * 1024 or not res.headers.get("Content-Type", "").lower().startswith("image/"):
         # In the event of a failure, return empty string
         return None
 
     # Grab and return responses body
-    data = res.body()
     return data
 
 def read_time(right_now, hemi):

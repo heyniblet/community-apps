@@ -5,6 +5,7 @@ Description: Shows the location of restored PCC trolleys running on SEPTA Route 
 Author: radiocolin
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/trolley_image.png", TROLLEY_IMAGE_ASSET = "file")
 load("images/trolley_image@2x.png", TROLLEY_IMAGE_2X_ASSET = "file")
@@ -130,11 +131,12 @@ def get_route_15(scale):
     if r == None or r.status_code != 200:
         return trolley_frames
 
-    result = r.json()
+    body = r.body()
+    result = json.decode(body, {}) if body and len(body) <= 512 * 1024 else {}
     if result == None or result.get("bus") == None:
         return trolley_frames
 
-    for i in result.get("bus"):
+    for i in result.get("bus")[:100]:
         id = i.get("VehicleID")
         if id not in trolley_ids:
             continue

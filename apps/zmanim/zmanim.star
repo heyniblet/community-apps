@@ -1,4 +1,5 @@
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -89,6 +90,8 @@ def main(config):
     title_font = "tom-thumb"
     time_font = "CG-pixel-4x5-mono"
     zip_code = config.str("zip_code", DEFAULT_ZIP)
+    if not re.match(r"^[0-9]{5}$", zip_code):
+        zip_code = DEFAULT_ZIP
     now = time.now()
     current_date = format_date(now)
 
@@ -113,7 +116,8 @@ def main(config):
             render.Box(height = 4),
         ]
 
-        items = rep.body().split("<item>")[1:]
+        body = rep.body()
+        items = body.split("<item>")[1:101] if body and len(body) <= 1024 * 1024 else []
         first = True
 
         for item in items:

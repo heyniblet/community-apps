@@ -5,6 +5,7 @@ Description: Show real time departures for desired  Public Transport stops in Vi
 Author: Lukas Peer
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/wl_icon_8_x_8.png", WL_ICON_8_X_8_ASSET = "file")
 load("render.star", "render")
@@ -20,13 +21,22 @@ DEFAULT_SWITCH_SPEED = "5000"
 
 # Execute API request for given stopps (stopIDs) and store data in lists
 def get_data(stopps):
+    stopps = [stop for stop in stopps if stop.isdigit()][:20]
+    if not stopps:
+        fail("Enter numeric Wiener Linien stop IDs")
     BASE_URL = "https://www.wienerlinien.at/ogd_realtime/monitor?stopId="
     WL_API_URL = BASE_URL + ",".join(stopps)
 
     rep = http.get(WL_API_URL, ttl_seconds = 30)
     if rep.status_code != 200:
         fail("WL request failed with status %d", rep.status_code)
-    n_monitors = len(rep.json()["data"]["monitors"])
+    body = rep.body()
+    response = json.decode(body, {}) if body and len(body) <= 1024 * 1024 else {}
+    monitors = response.get("data", {}).get("monitors", []) if type(response) == "dict" else []
+    monitors = monitors[:100] if type(monitors) == "list" else []
+    n_monitors = len(monitors)
+    if n_monitors == 0:
+        fail("No Wiener Linien departures found")
     linien = []
     haltestellen = []
     endstationen = []
@@ -34,21 +44,29 @@ def get_data(stopps):
 
     # get data for every available monitor
     for i in range(n_monitors):
-        linien.append(rep.json()["data"]["monitors"][i]["lines"][0]["name"])
-        haltestellen.append(rep.json()["data"]["monitors"][i]["locationStop"]["properties"]["title"])
-        endstationen.append(rep.json()["data"]["monitors"][i]["lines"][0]["towards"])
+        monitor = monitors[i]
+        lines = monitor.get("lines", []) if type(monitor) == "dict" else []
+        if not lines or type(lines[0]) != "dict":
+            continue
+        line = lines[0]
+        departures = line.get("departures", {}).get("departure", [])
+        if type(departures) != "list" or not departures:
+            continue
+        linien.append(str(line.get("name", "?"))[:12])
+        haltestellen.append(str(monitor.get("locationStop", {}).get("properties", {}).get("title", "Unknown"))[:80])
+        endstationen.append(str(line.get("towards", "Unknown"))[:80])
 
-        n_abfahrten_available = len(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"])
+        n_abfahrten_available = len(departures)
         n_abfahrten_shown = min(2, n_abfahrten_available)
 
         # Sometimes, if there is only one more departure for the day, only one departure time is shown
         # Hence, the necessary distinction to avoid out of bounds errors
         if n_abfahrten_shown == 2:
-            af1 = str(int(float(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"][0]["departureTime"]["countdown"])))
-            af2 = str(int(float(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"][1]["departureTime"]["countdown"])))
+            af1 = str(int(float(departures[0].get("departureTime", {}).get("countdown", 0))))
+            af2 = str(int(float(departures[1].get("departureTime", {}).get("countdown", 0))))
             out = af1 + " " + af2
         else:
-            out = str(int(float(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"][0]["departureTime"]["countdown"])))
+            out = str(int(float(departures[0].get("departureTime", {}).get("countdown", 0))))
 
         abfahrten.append(out)
 
@@ -59,7 +77,9 @@ def get_data(stopps):
     haltestellen = [s.upper() for s in haltestellen]
     endstationen = [s.strip() for s in endstationen]
     endstationen = [s.title() for s in endstationen]
-    data = [linien, haltestellen, endstationen, abfahrten, n_monitors]
+    if not linien:
+        fail("No Wiener Linien departures found")
+    data = [linien, haltestellen, endstationen, abfahrten, len(linien)]
     return data
 
 def build_rows(linien, haltestellen, endstationen, abfahrten, linien_colors):

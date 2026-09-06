@@ -6,6 +6,7 @@ Author: Synth Solar
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/baboon_icon.png", BABOON_ICON_ASSET = "file")
 load("images/bat_icon_10.png", BAT_ICON_10_ASSET = "file")
@@ -42,6 +43,7 @@ load("images/synth_icon_gif.gif", SYNTH_ICON_GIF_ASSET = "file")
 load("images/tortoise_icon.png", TORTOISE_ICON_ASSET = "file")
 load("images/treasure_chest_icon.png", TREASURE_CHEST_ICON_ASSET = "file")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -82,6 +84,12 @@ TREASURE_CHEST_ICON = TREASURE_CHEST_ICON_ASSET.readall()
 
 SYNTH_ICON = IMG_bf4e974d_ASSET.readall()
 
+def response_data(response):
+    body = response.body()
+    decoded = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 512 * 1024 else {}
+    data = decoded.get("data") if type(decoded) == "dict" else None
+    return data if type(data) == "dict" else None
+
 def get_data(url, params):
     """
     Get daily_gen_+_batt.star widget
@@ -100,7 +108,9 @@ def get_data(url, params):
     if response.status_code != 200:
         fail("Request failed with status %d", response.status_code)
 
-    data = response.json()["data"]
+    data = response_data(response)
+    if data == None:
+        fail("Synth Solar returned invalid data")
 
     return data
 
@@ -123,7 +133,9 @@ def get_overall_realtime_performance(url, timezone, mode):
     if response.status_code != 200:
         fail("Request failed with status %d", response.status_code)
 
-    data = response.json()["data"]
+    data = response_data(response)
+    if data == None:
+        fail("Synth Solar returned invalid data")
 
     rtp = data["realtime_performance"] * 100
 
@@ -218,7 +230,9 @@ def get_todays_generation(url, mode):
     if response.status_code != 200:
         fail("Request failed with status %d", response.status_code)
 
-    data = response.json()["data"]
+    data = response_data(response)
+    if data == None:
+        fail("Synth Solar returned invalid data")
 
     max_width = 64
 
@@ -282,8 +296,6 @@ def get_current_load_widget(data, mode):
         # * Convert float to int
         scale = math.ceil(scale)
 
-    print("Icon scale", scale, "Total Load", total_load, "Total load raw", data["load_kw"], round_to_one_decimal_str(data["load_kw"]) + "kW", "Inverter power", data["inverter_power_kw"])
-
     if data["inverter_power_kw"] < 0:
         data["inverter_power_kw"] = 0.0
 
@@ -332,8 +344,6 @@ def get_current_battery_charge_widget(data, mode):
     max_width = 64
     battery_power = data["battery_power"] or 0
     battery_soc = data["battery_soc"] or 0
-
-    print("Battery level ", battery_soc)
 
     if battery_soc == 100:
         battery_state = "CHARGED"
@@ -470,7 +480,9 @@ def get_savings(url, timezone, mode):
     if response.status_code != 200:
         fail("Request failed with status %d", response.status_code)
 
-    data = response.json()["data"]
+    data = response_data(response)
+    if data == None:
+        fail("Synth Solar returned invalid data")
 
     total_savings_today = data["total_savings_today"]
 
@@ -652,7 +664,6 @@ def get_widgets_and_animations(url, timezone, mode):
     load_data = get_data(url, "load")
 
     if not battery_data.get("battery_soc") and load_data.get("load_kw", 0) <= 0.001:
-        print("No battery and load data found")
         widgets = [
             get_savings(url, timezone, mode),
             get_todays_generation(url, mode),
@@ -753,8 +764,6 @@ def main(config):
 
     max_width = 64
 
-    print("selected mode ", mode)
-
     if not serial_number:
         return render.Root(
             delay = 80,
@@ -793,6 +802,9 @@ def main(config):
                 ],
             ),
         )
+
+    if len(serial_number) > 80 or not re.match(r"^[A-Za-z0-9_-]+$", serial_number):
+        return render.Root(child = render.WrappedText("Invalid serial number", font = "tb-8"))
 
     BASE_URL = "https://api.synth.solar/api/v1/devices/" + serial_number + "/data"
 

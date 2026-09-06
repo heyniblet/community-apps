@@ -9,6 +9,7 @@ Author: rs7q5
 #Created 20220525 RIS
 #Last Modified 20230516 RIS
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -174,7 +175,11 @@ def get_shows():
             "The Golden Girls",
         ]
     else:
-        shows_list = rep.json()["shows"]
+        body = rep.body()
+        data = json.decode(body, {}) if body and len(body) <= 512 * 1024 else {}
+        shows_list = data.get("shows", []) if type(data) == "dict" else []
+        if type(shows_list) != "list" or not shows_list:
+            shows_list = ["Seinfeld"]
 
     return shows_list
 
@@ -198,7 +203,10 @@ def get_quote(config):
             "text": "Could not get TV Quote!!!!",
         }
     else:
-        quote = rep.json()
+        body = rep.body()
+        quote = json.decode(body, {}) if body and len(body) <= 256 * 1024 else {}
+        if type(quote) != "dict":
+            quote = {"show": "Error", "character": "", "text": "Could not get TV Quote"}
 
     return quote
 

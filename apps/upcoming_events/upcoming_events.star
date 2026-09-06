@@ -6,6 +6,7 @@ Author: jblaker
 """
 
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -21,11 +22,16 @@ def main(config):
                 child = render.WrappedText("Enter a Google Calender iCal URL", font = "tom-thumb"),
             ),
         )
+    if len(url) > 2048 or not re.match(r"^https://[A-Za-z0-9.-]+(?::443)?(?:/|$)", url):
+        return render.Root(child = render.WrappedText("Enter a valid HTTPS calendar URL", font = "tom-thumb"))
     rep = http.get(url)
     if rep.status_code != 200:
         fail("Google Calender request failed with status %d", rep.status_code)
 
-    lines = rep.body().split("\n")
+    body = rep.body()
+    if not body or len(body) > 1024 * 1024:
+        return render.Root(child = render.WrappedText("Calendar response is invalid", font = "tom-thumb"))
+    lines = body.split("\n")[:20000]
 
     events = []
     event = {}
@@ -42,10 +48,12 @@ def main(config):
             if date != None:
                 if date >= time.now():
                     events.append(event)
+                    if len(events) >= 1000:
+                        break
 
         if creatingEvent:
             if line.startswith("SUMMARY:"):
-                event["name"] = ":".join(line.split(":")[1:])
+                event["name"] = ":".join(line.split(":")[1:])[:200]
 
             if line.startswith("DTSTART:"):
                 timestamp = line.split(":")[1].replace("\x0d", "")

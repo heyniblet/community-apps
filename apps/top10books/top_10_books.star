@@ -51,26 +51,25 @@ def main():
     cached = cache.get(rand_num_str)
 
     if cached != None:
-        print("Cache hit")
-        b = json.decode(cached)
+        b = json.decode(cached, {})
     else:
-        print("Cache miss")
-
         res = http.get(
             url = "{}?Nrpp={}&page={}".format(TOP_100, PER_PAGE, 1),
             headers = HEADERS | {"User-Agent": AGENTS[random.number(0, len(AGENTS) - 1)]},
         )
 
         if res.status_code != 200:
-            print("Got code '%s' from top 10 response" % res.status_code)
             return render.Root(
                 render.WrappedText("Something went wrong getting books!"),
             )
 
-        doc = html(res.body())
+        body = res.body()
+        if not body or len(body) > 2 * 1024 * 1024:
+            return render.Root(render.WrappedText("Book list unavailable"))
+        doc = html(body)
         books = doc.find(".pb-s")
 
-        for i in range(PER_PAGE):
+        for i in range(min(PER_PAGE, books.len())):
             book = books.eq(i)
 
             rank = book.find(".count").text()
@@ -85,7 +84,10 @@ def main():
                 CACHE_TTL,
             )
 
-        b = json.decode(cache.get(rand_num_str))
+        b = json.decode(cache.get(rand_num_str), {})
+
+    if type(b) != "dict" or not b.get("img_link") or not str(b["img_link"]).startswith("prodimage.images-bn.com/"):
+        return render.Root(render.WrappedText("Book data unavailable"))
 
     book_cover_res = http.get(
         url = "https://{}".format(b["img_link"]),
@@ -97,12 +99,13 @@ def main():
     )
 
     if book_cover_res.status_code != 200:
-        print("Got code '%s' from book cover response" % book_cover_res.status_code)
         return render.Root(
             render.WrappedText("Something went wrong getting book cover!"),
         )
 
     book_cover_bytes = book_cover_res.body()
+    if not book_cover_bytes or len(book_cover_bytes) > 2 * 1024 * 1024 or not book_cover_res.headers.get("Content-Type", "").lower().startswith("image/"):
+        return render.Root(render.WrappedText("Book cover unavailable"))
 
     return render.Root(
         child = render.Row(

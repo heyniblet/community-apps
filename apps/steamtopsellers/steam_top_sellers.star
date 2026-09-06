@@ -6,6 +6,7 @@ Author: John Kalbac (@johnkalbac)
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
 load("render.star", "render")
@@ -16,15 +17,23 @@ GLOBAL_RESULT_LIMIT = 1  # Limit results to minimize rendered file size
 FEATURED_CATEGORIES_RESOURCE = "https://store.steampowered.com/api/featuredcategories"
 DEFAULT_REGION_CODE = "us"  #ISO 3166, alpha-2
 MARQUEE_NAME_LENGTH = 60
+REGIONS = ["us", "es", "de", "fr", "nz", "au", "uk", "br"]
+IMAGE_ORIGINS = [
+    "https://shared.akamai.steamstatic.com/",
+    "https://cdn.akamai.steamstatic.com/",
+]
 
 def main(config):
     region = config.get("region", DEFAULT_REGION_CODE)
+    region = region if region in REGIONS else DEFAULT_REGION_CODE
     response = call_steam_api(region)
     if response.status_code != 200:
         return handle_failure()
 
     top_sellers = parse_top_sellers(response)
     frames = build_frames(top_sellers)
+    if not frames:
+        return handle_failure()
 
     return render.Root(
         render.Sequence(frames),
@@ -41,14 +50,11 @@ def call_steam_api(region):
     )
 
 def parse_top_sellers(response):
-    raw_data = response.json()
-
-    # TODO handle json failures and inconsistent data
-    #print("raw_data: %s" % (raw_data))
-    top_sellers = raw_data["top_sellers"]["items"]
-
-    #print("top_sellers: %s" % (top_sellers))
-    return top_sellers
+    body = response.body()
+    raw_data = json.decode(body, {}) if body and len(body) <= 2 * 1024 * 1024 else {}
+    top_sellers = raw_data.get("top_sellers", {}) if type(raw_data) == "dict" else {}
+    items = top_sellers.get("items", []) if type(top_sellers) == "dict" else []
+    return items[:100] if type(items) == "list" else []
 
 def build_frames(top_sellers):
     # Iterate top_sellers list and extract details
@@ -58,19 +64,21 @@ def build_frames(top_sellers):
     # Shuffle the results
     top_sellers_sorted = sorted(top_sellers, key = lambda x: random.number(0, 100))
     for item in top_sellers_sorted:
-        name = item["name"]
+        if type(item) != "dict" or type(item.get("name")) != "string":
+            continue
+        name = item["name"][:200]
 
         # Omit Steam Deck hardware entries
         if "Steam Deck" not in name and counter < GLOBAL_RESULT_LIMIT:
-            print("name: %s, counter: %s" % (name, str(counter)))
-            discount_percent = item["discount_percent"]
+            discount_percent = item.get("discount_percent", 0)
             final_price_formatted = format_price(
-                item["final_price"],
+                item.get("final_price", 0),
             )
-            image = fetch_image(item["small_capsule_image"])
+            image = fetch_image(item.get("small_capsule_image", ""))
 
             # Add Image Frame
-            frames.append(get_image_widget(image))
+            if image:
+                frames.append(get_image_widget(image))
 
             # Add Details Frame
             padded_name = pad_string(name, MARQUEE_NAME_LENGTH)
@@ -189,15 +197,16 @@ def get_image_widget(image):
     )
 
 def fetch_image(image_url):
-    print("    image: %s" % (image_url))
+    if type(image_url) != "string" or not any([image_url.startswith(origin) for origin in IMAGE_ORIGINS]):
+        return None
     response = http.get(
         image_url,
         ttl_seconds = GLOBAL_HTTP_TTL_SECONDS,
     )
-    if response.status_code != 200:
-        fail("GET %s failed with status %d: %s" % (image_url, response.status_code, response.body()))
-
-    return response.body()
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 2 * 1024 * 1024 or not response.headers.get("Content-Type", "").lower().startswith("image/"):
+        return None
+    return body
 
 def format_price(amount):
     amount_str = str(amount)
@@ -210,7 +219,6 @@ def format_price(amount):
     else:
         formatted_amount = ("$" + amount_str[:-4] + "." + amount_str[-4:-2])
 
-    print("    price: %s" % (formatted_amount))
     return formatted_amount
 
 def handle_failure():

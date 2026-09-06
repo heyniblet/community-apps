@@ -9,6 +9,7 @@ load("cache.star", "cache")
 load("encoding/csv.star", "csv")
 load("http.star", "http")
 load("humanize.star", "humanize")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -23,7 +24,19 @@ PUNK = "#e232d1"
 PLUM = "#8b00c1"
 
 def parse_time(time_str):
+    if re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", time_str):
+        return time.parse_time(time_str, "2006-01-02", TIMEZONE)
     return time.parse_time(time_str, "02-Jan-2006", TIMEZONE)
+
+def parse_body(body):
+    if body.startswith("<"):
+        dates = re.findall(r"<draw-date>([0-9]{4}-[0-9]{2}-[0-9]{2})</draw-date>", body)
+        balls = re.findall(r"<ball[^>]*>([0-9]+)</ball>", body)
+        bonus = re.findall(r"<bonus-ball[^>]*>([0-9]+)</bonus-ball>", body)
+        values = [match[match.find(">") + 1:match.find("</")] for match in dates[:1] + balls[:5] + bonus[:1]]
+        return values if len(values) == 7 else None
+    rows = csv.read_all(body)
+    return rows[1] if len(rows) > 1 and len(rows[1]) >= 7 else None
 
 def seconds_until_next_draw(latest_result):
     # Draws happen at 8pm on Tuesday and Friday and 8.15pm on Wednesday and Saturday so cache until then.
@@ -50,14 +63,17 @@ def seconds_until_next_draw(latest_result):
 def fetch_latest_result():
     cached = cache.get(RESULTS_URL)
     if cached:
-        return csv.read_all(cached)[1]
+        return parse_body(cached)
     resp = http.get(RESULTS_URL)
-    if resp.status_code != 200:
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > 512 * 1024:
         return None
-    results = csv.read_all(resp.body())
+    latest = parse_body(body)
+    if latest == None:
+        return None
 
-    cache.set(RESULTS_URL, resp.body(), ttl_seconds = seconds_until_next_draw(results[1]))
-    return results[1]
+    cache.set(RESULTS_URL, body, ttl_seconds = seconds_until_next_draw(latest))
+    return latest
 
 def parse_result(result):
     draw_date = parse_time(result[0])

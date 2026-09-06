@@ -59,6 +59,8 @@ DATE_REGEX = r"(?:- )?(?P<day>\d+) (?P<month>\w+) (?P<year>\d+)$"
 # Can't just parse it as is because Go doesn't recognise "Sept" as being "Sep".
 def parse_date(text):
     matched = re.match(DATE_REGEX, text)
+    if not matched:
+        return None
     day, month, year = matched[0][-3:]
     date = "{} {} 20{}".format(day, month[:3], year)
     return time.parse_time(date, "2 Jan 2006")
@@ -73,10 +75,16 @@ def parse_percentage(text):
 def parse_row(row):
     spans = row.child(TH).find_all(SPAN)
     cells = row.find_all(TD)
+    if len(spans) < 4 or len(cells) < 7:
+        return None
+    date = parse_date(spans[1].get_text())
+    sample = spans[3].get_text().replace(",", "")
+    if date == None or not sample.isdigit():
+        return None
     data = {
-        DATE: parse_date(spans[1].get_text()),
-        POLLSTER: spans[2].get_text(),
-        SAMPLE_SIZE: int(spans[3].get_text().replace(",", "")),
+        DATE: date,
+        POLLSTER: spans[2].get_text()[:80],
+        SAMPLE_SIZE: int(sample),
         CONSERVATIVE: parse_percentage(cells[0].get_text()),
         LABOUR: parse_percentage(cells[1].get_text()),
         LIBDEM: parse_percentage(cells[2].get_text()),
@@ -92,7 +100,13 @@ def parse_row(row):
 
 # Extract data from the entire table
 def parse_table(table):
-    return [parse_row(row) for row in table.find(TBODY).find_all(TR)]
+    rows = []
+    tbody = table.find(TBODY) if table != None else None
+    for row in tbody.find_all(TR)[:500] if tbody != None else []:
+        parsed = parse_row(row)
+        if parsed != None:
+            rows.append(parsed)
+    return rows
 
 # Annoying that this isn't built in or in the math module.
 def sum(list):
@@ -156,13 +170,17 @@ def draw_title(period):
 
 def main(config):
     wiki = http.get(BBC_URL, ttl_seconds = 60)
-    if wiki.status_code != 200:
+    body = wiki.body()
+    if wiki.status_code != 200 or not body or len(body) > 2 * 1024 * 1024 or TABLE_DIV_ID not in body:
         return render.Root(
             child = render.Text("Could not load polling data"),
         )
-    page = bsoup.parseHtml(wiki.body())
-    table = page.find(DIV, id = TABLE_DIV_ID).find(TABLE)
+    page = bsoup.parseHtml(body)
+    table_div = page.find(DIV, id = TABLE_DIV_ID)
+    table = table_div.find(TABLE) if table_div != None else None
     data = parse_table(table)
+    if not data:
+        return render.Root(child = render.Text("No polling data"))
 
     period = config.get(PERIOD, "30")
     return render.Root(

@@ -201,7 +201,9 @@ def fetch_hourly(lat, lng):
     )
     if resp.status_code != 200:
         return None
-    return resp.json()
+    body = resp.body()
+    data = json.decode(body, {}) if body and len(body) <= 1024 * 1024 else {}
+    return data if type(data) == "dict" else None
 
 def fetch_sun(lat, lng):
     """Sunrise/sunset per local date. Returns {} on failure and skips dates with
@@ -221,7 +223,9 @@ def fetch_sun(lat, lng):
     if resp.status_code != 200:
         return {}
 
-    daily = resp.json().get("daily", {})
+    body = resp.body()
+    data = json.decode(body, {}) if body and len(body) <= 512 * 1024 else {}
+    daily = data.get("daily", {}) if type(data) == "dict" else {}
     dates = daily.get("time", [])
     sunrises = daily.get("sunrise", [])
     sunsets = daily.get("sunset", [])

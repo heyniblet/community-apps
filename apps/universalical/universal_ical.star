@@ -2,6 +2,7 @@ load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/calendar_icon.png", CALENDAR_ICON_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -35,8 +36,8 @@ def main(config):
         include_all_day = True
         only_show_all_day = False
 
-    if (ics_url == None):
-        fail("ICS_URL not set in config")
+    if not ics_url or len(ics_url) > 2048 or not re.match(r"^https://[A-Za-z0-9.-]+(?::443)?(?:/|$)", ics_url):
+        return render.Root(child = render.WrappedText("Enter a valid HTTPS calendar URL", color = "#ff0000"))
 
     now = time.now().in_location(timezone)
     ics = http.post(
@@ -47,7 +48,9 @@ def main(config):
     if (ics.status_code != 200):
         return render.Root(child = render.WrappedText("Failed to fetch ICS file", color = "#ff0000"))
 
-    event = ics.json()["data"]
+    body = ics.body()
+    result = json.decode(body, {}) if body and len(body) <= 1024 * 1024 else {}
+    event = result.get("data") if type(result) == "dict" else None
 
     if not event:
         return build_calendar_frame(now, timezone, event, show_expanded_time_window, show_full_names)
