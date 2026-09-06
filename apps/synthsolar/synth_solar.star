@@ -599,6 +599,7 @@ def get_schema():
                 desc = "Serial number of your inverter.",
                 icon = "solarPanel",
                 default = "",
+                secret = True,
             ),
             schema.Text(
                 id = "timezone",

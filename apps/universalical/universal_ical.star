@@ -372,6 +372,7 @@ def get_schema():
                 desc = "The URL of the iCalendar file.",
                 icon = "calendar",
                 default = DEFAULT_ICS_URL,
+                secret = True,
             ),
             schema.Toggle(
                 id = P_SHOW_EXPANDED_TIME_WINDOW,
