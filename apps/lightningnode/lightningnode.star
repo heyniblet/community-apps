@@ -1,285 +1,138 @@
-"""
-Applet: LightningNode
-Summary: Shows BTC Lightning stats
-Description: Shows Bitcoin Lightning Network statistics, or statistics of your own Lightning node.
-Author: PMK (@pmk)
-"""
+"""Show public Bitcoin Lightning network or node statistics."""
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
-load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-MEMPOOL_SPACE_API_URL_PREFIX = "https://mempool.space/api/v1"
-
-DEFAULT_INTERVAL = "latest"
-DEFAULT_NETWORK_DISPLAY = "alias"
-DEFAULT_NODE_DISPLAY = "nodes"
-DEFAULT_SECONDARY_DISPLAY = "empty"
-DEFAULT_WILL_ANIMATE = True
-
+API_URL = "https://mempool.space/api/v1/lightning"
 SATS_IN_BITCOIN = 100000000
-
-ROOT_DELAY = 1200
-ROOT_MAX_AGE = 60 * 60 * 6
-
 LABEL_COLOR = "#fff9"
 LABEL_FONT = "tb-8"
 
-def get_data(url, ttl_seconds = 60 * 60 * 6):
-    response = http.get(url = url, ttl_seconds = ttl_seconds)
-    if response.status_code != 200:
-        fail("Mempool.space request failed with status %d @ %s", response.status_code, url)
-    return response
+NETWORK_OPTIONS = [
+    ("Nodes", "nodes"),
+    ("Channels", "channels"),
+    ("Capacity", "capacity"),
+    ("Average", "average"),
+    ("Median", "median"),
+    ("Avg Fee Rate", "avg_fee_rate"),
+    ("Avg Base Fee", "avg_base_fee"),
+    ("-empty-", "empty"),
+]
+NODE_OPTIONS = [
+    ("Alias", "alias"),
+    ("Capacity", "capacity"),
+    ("Channels", "channels"),
+    ("Sunrise", "sunrise"),
+    ("Updated", "updated"),
+    ("-empty-", "empty"),
+]
 
-def get_network_data(interval = "latest"):
-    url = "{}/lightning/statistics/{}".format(MEMPOOL_SPACE_API_URL_PREFIX, interval)
-    return get_data(url).json()
+def fetch_json(path):
+    response = http.get(API_URL + path, headers = {"Accept": "application/json"}, ttl_seconds = 3600)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 1048576:
+        return None
+    value = json.decode(body, None)
+    return value if type(value) == "dict" else None
 
-def get_node_data(node_pubkey):
-    if len(node_pubkey) == 66:
-        url = "{}/lightning/nodes/{}".format(MEMPOOL_SPACE_API_URL_PREFIX, node_pubkey)
-        return get_data(url).json()
-    return {}
+def number(value):
+    if type(value) in ["int", "float"] and value >= 0:
+        return int(value)
+    if type(value) == "string" and len(value) <= 24 and value.isdigit():
+        return int(value)
+    return 0
 
-def validate_pubkey(node_pubkey):
-    is_hex = len(re.findall(r"0[0-9a-fA-F]{65}", node_pubkey)) == 1
-    return is_hex
+def valid_pubkey(value):
+    if len(value) != 66 or value[:2] not in ["02", "03"]:
+        return False
+    chars = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+    return all([value[i].lower() in chars for i in range(len(value))])
 
-def render_animation(values):
-    frames = []
-    for stat in values.values():
-        frames.append(
-            render.Column(
-                children = [
-                    render.Text(
-                        content = stat[0],
-                        font = LABEL_FONT,
-                        color = LABEL_COLOR,
-                    ),
-                    render.Text(stat[1]),
-                ],
-            ),
-        )
-    return render.Column(
-        children = [render.Animation(children = frames)],
-        main_align = "space_around",
-        expanded = True,
-    )
-
-def render_row(values, key):
-    return render.Column(
-        children = [
-            render.Text(
-                content = values[key][0],
-                font = LABEL_FONT,
-                color = LABEL_COLOR,
-            ),
-            render.Text(values[key][1]),
-        ],
-    )
-
-def populate_with_network_stats(network_data_primary, network_data_secondary, interval = DEFAULT_INTERVAL, will_animate = DEFAULT_WILL_ANIMATE):
-    has_single_row = network_data_secondary == "empty"
-    data = get_network_data(interval)["latest"]
-    values = {
-        "nodes": ["nodes", humanize.comma(int(data["node_count"]))],
-        "channels": ["channels", humanize.comma(int(data["channel_count"]))],
-        "capacity": ["capacity", humanize.comma(int(int(data["total_capacity"]) / SATS_IN_BITCOIN)) + " BTC"],
-        "average": ["average", "{} sats".format(humanize.comma(int(data["avg_capacity"])))],
-        "median": ["median", "{} sats".format(humanize.comma(int(data["med_capacity"])))],
-        "avg_fee_rate": ["avg fee rate", "{} ppm".format(humanize.comma(int(data["avg_fee_rate"])))],
-        "avg_base_fee": ["avg base fee", "{} mSats".format(humanize.comma(int(data["avg_base_fee_mtokens"])))],
-        "empty": ["", ""],
+def network_values(interval):
+    payload = fetch_json("/statistics/" + interval)
+    data = payload.get("latest") if payload != None else None
+    if type(data) != "dict":
+        return None
+    return {
+        "nodes": ("nodes", humanize.comma(number(data.get("node_count")))),
+        "channels": ("channels", humanize.comma(number(data.get("channel_count")))),
+        "capacity": ("capacity", humanize.comma(int(number(data.get("total_capacity")) / SATS_IN_BITCOIN)) + " BTC"),
+        "average": ("average", humanize.comma(number(data.get("avg_capacity"))) + " sats"),
+        "median": ("median", humanize.comma(number(data.get("med_capacity"))) + " sats"),
+        "avg_fee_rate": ("avg fee rate", humanize.comma(number(data.get("avg_fee_rate"))) + " ppm"),
+        "avg_base_fee": ("avg base fee", humanize.comma(number(data.get("avg_base_fee_mtokens"))) + " mSats"),
+        "empty": ("", ""),
     }
 
-    if will_animate:
-        return render_animation(values)
-
-    children = [
-        render_row(values, network_data_primary),
-    ]
-
-    if not has_single_row:
-        children.append(
-            render_row(values, network_data_primary),
-        )
-
-    return render.Column(
-        children = children,
-        expanded = True,
-        main_align = "center",
-    )
-
-def populate_with_node_stats(node_pubkey, node_data_primary, node_data_secondary, will_animate = DEFAULT_WILL_ANIMATE):
-    has_single_row = node_data_secondary == "empty"
-    data = get_node_data(node_pubkey)
-    values = {
-        "alias": ["alias", data["alias"]],
-        "capacity": ["capacity", humanize.comma(int(int(data["capacity"]) / (SATS_IN_BITCOIN / 100)) / 100) + " BTC"],
-        "channels": ["channels", humanize.comma(int(data["active_channel_count"]))],
-        "sunrise": ["sunrise", humanize.time(time.from_timestamp(int(data["first_seen"])))],
-        "updated": ["updated", humanize.time(time.from_timestamp(int(data["updated_at"])))],
-        "empty": ["", ""],
+def node_values(pubkey):
+    data = fetch_json("/nodes/" + pubkey)
+    if data == None:
+        return None
+    return {
+        "alias": ("alias", str(data.get("alias") or "Unknown")[:80]),
+        "capacity": ("capacity", humanize.ftoa(number(data.get("capacity")) / float(SATS_IN_BITCOIN), 2) + " BTC"),
+        "channels": ("channels", humanize.comma(number(data.get("active_channel_count")))),
+        "sunrise": ("sunrise", humanize.time(time.from_timestamp(number(data.get("first_seen"))))),
+        "updated": ("updated", humanize.time(time.from_timestamp(number(data.get("updated_at"))))),
+        "empty": ("", ""),
     }
 
-    if will_animate:
-        return render_animation(values)
+def stat(value):
+    return render.Column(children = [
+        render.Text(value[0], font = LABEL_FONT, color = LABEL_COLOR),
+        render.Text(value[1]),
+    ])
 
-    children = [
-        render_row(values, node_data_primary),
-    ]
-
-    if not has_single_row:
-        children.append(
-            render_row(values, node_data_secondary),
-        )
-
-    return render.Column(
-        children = children,
-        expanded = True,
-        main_align = "center",
-    )
+def display(values, primary, secondary, animate):
+    if values == None:
+        return render.WrappedText("Lightning data unavailable", width = 64, align = "center")
+    if animate:
+        frames = [stat(value) for key, value in values.items() if key != "empty"]
+        return render.Column(children = [render.Animation(children = frames)], main_align = "space_around", expanded = True)
+    selected = [values.get(primary, values["empty"])]
+    if secondary != "empty":
+        selected.append(values.get(secondary, values["empty"]))
+    return render.Column(children = [stat(value) for value in selected], expanded = True, main_align = "center")
 
 def main(config):
-    node_pubkey = config.str("node_pubkey", "")
-    interval = config.str("interval", DEFAULT_INTERVAL)
-    network_data_primary = config.str("network_data_primary", DEFAULT_NETWORK_DISPLAY)
-    network_data_secondary = config.str("network_data_secondary", DEFAULT_SECONDARY_DISPLAY)
-    node_data_primary = config.str("node_data_primary", DEFAULT_NODE_DISPLAY)
-    node_data_secondary = config.str("node_data_secondary", DEFAULT_SECONDARY_DISPLAY)
-    will_animate = config.bool("will_animate", DEFAULT_WILL_ANIMATE)
+    pubkey = config.str("node_pubkey", "").strip()
+    animate = config.bool("will_animate", True)
+    if pubkey and not valid_pubkey(pubkey):
+        return render.Root(child = render.WrappedText("Invalid node pubkey", width = 64, align = "center"))
+    if pubkey:
+        values = node_values(pubkey)
+        child = display(values, config.str("node_data_primary", "alias"), config.str("node_data_secondary", "capacity"), animate)
+    else:
+        interval = config.str("interval", "latest")
+        interval = "24h" if interval == "1d" else interval
+        allowed = ["latest", "24h", "3d", "1w", "1m", "3m", "6m", "1y", "2y", "3y"]
+        interval = interval if interval in allowed else "latest"
+        values = network_values(interval)
+        child = display(values, config.str("network_data_primary", "nodes"), config.str("network_data_secondary", "channels"), animate)
+    return render.Root(delay = 1200, show_full_animation = True, max_age = 3600, child = child)
 
-    has_pubkey_not_configured = len(node_pubkey) == 0
-    is_valid_pubkey = validate_pubkey(node_pubkey)
-
-    # Show lightning network stats
-    if has_pubkey_not_configured:
-        return render.Root(
-            delay = ROOT_DELAY,
-            show_full_animation = True,
-            max_age = ROOT_MAX_AGE,
-            child = populate_with_network_stats(network_data_primary, network_data_secondary, interval, will_animate),
-        )
-
-    # Show node specific stats
-    if not has_pubkey_not_configured and is_valid_pubkey:
-        return render.Root(
-            delay = ROOT_DELAY,
-            show_full_animation = True,
-            max_age = ROOT_MAX_AGE,
-            child = populate_with_node_stats(node_pubkey, node_data_primary, node_data_secondary, will_animate),
-        )
-
-    # Show error message to provide a valid node pubkey (or it should be empty)
-    return render.Root(
-        child = render.WrappedText("Error: invalid node pubkey provided"),
+def dropdown(field_id, name, options, default, icon):
+    return schema.Dropdown(
+        id = field_id,
+        name = name,
+        desc = "Choose the statistic to display.",
+        default = default,
+        options = [schema.Option(display = label, value = value) for label, value in options],
+        icon = icon,
     )
-
-def schema_handler(node_pubkey):
-    interval_options = [
-        schema.Option(display = "Latest", value = "latest"),
-        schema.Option(display = "1 day", value = "1d"),
-        schema.Option(display = "3 days", value = "3d"),
-        schema.Option(display = "1 week", value = "1w"),
-        schema.Option(display = "1 month", value = "1m"),
-        schema.Option(display = "6 month", value = "6m"),
-        schema.Option(display = "1 year", value = "1y"),
-        schema.Option(display = "2 year", value = "2y"),
-        schema.Option(display = "3 year", value = "3y"),
-    ]
-
-    node_data_options = [
-        schema.Option(display = "Alias", value = "alias"),
-        schema.Option(display = "Capacity", value = "capacity"),
-        schema.Option(display = "Channels", value = "channels"),
-        schema.Option(display = "Sunrise", value = "sunrise"),
-        schema.Option(display = "Updated", value = "updated"),
-        schema.Option(display = "-empty-", value = "empty"),
-    ]
-
-    network_data_options = [
-        schema.Option(display = "Nodes", value = "nodes"),
-        schema.Option(display = "Channels", value = "channels"),
-        schema.Option(display = "Capacity", value = "capacity"),
-        schema.Option(display = "Average", value = "average"),
-        schema.Option(display = "Median", value = "median"),
-        schema.Option(display = "Avg Fee Rate", value = "avg_fee_rate"),
-        schema.Option(display = "Avg Base Fee", value = "avg_base_fee"),
-        schema.Option(display = "-empty-", value = "empty"),
-    ]
-
-    if node_pubkey:
-        return [
-            schema.Dropdown(
-                id = "node_data_primary",
-                name = "Top row",
-                desc = "Choose what to display in the top row.",
-                default = node_data_options[0].value,
-                options = node_data_options,
-                icon = "1",
-            ),
-            schema.Dropdown(
-                id = "node_data_secondary",
-                name = "Bottom row",
-                desc = "Choose what to display in the bottom row.",
-                default = node_data_options[1].value,
-                options = node_data_options,
-                icon = "2",
-            ),
-        ]
-
-    return [
-        schema.Dropdown(
-            id = "interval",
-            name = "Interval",
-            desc = "Shows network-wide stats of this interval period.",
-            default = interval_options[0].value,
-            options = interval_options,
-            icon = "clock",
-        ),
-        schema.Dropdown(
-            id = "network_data_primary",
-            name = "Top row",
-            desc = "Choose what to display in the top row.",
-            default = network_data_options[0].value,
-            options = network_data_options,
-            icon = "1",
-        ),
-        schema.Dropdown(
-            id = "network_data_secondary",
-            name = "Bottom row (optional)",
-            desc = "Choose what to display in the bottom row. Set 'empty' to show only the top row.",
-            default = network_data_options[1].value,
-            options = network_data_options,
-            icon = "2",
-        ),
-    ]
 
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Text(
-                id = "node_pubkey",
-                name = "Node pubkey (optional)",
-                desc = "Your own node's pubkey. Leave empty to get global lightning stats.",
-                icon = "key",
-                secret = True,
-            ),
-            schema.Generated(
-                id = "generated",
-                source = "node_pubkey",
-                handler = schema_handler,
-            ),
-            schema.Toggle(
-                id = "will_animate",
-                name = "Animating all stats?",
-                desc = "Should it animate the statistics (will override top- and bottom row settings).",
-                icon = "clapperboard",
-                default = True,
-            ),
-        ],
-    )
+    intervals = [("Latest", "latest"), ("1 day", "24h"), ("3 days", "3d"), ("1 week", "1w"), ("1 month", "1m"), ("3 months", "3m"), ("6 months", "6m"), ("1 year", "1y"), ("2 years", "2y"), ("3 years", "3y")]
+    return schema.Schema(version = "1", fields = [
+        schema.Text(id = "node_pubkey", name = "Node pubkey (optional)", desc = "Public 66-character node key; leave empty for network statistics.", icon = "key"),
+        dropdown("interval", "Network interval", intervals, "latest", "clock"),
+        dropdown("network_data_primary", "Network top row", NETWORK_OPTIONS, "nodes", "1"),
+        dropdown("network_data_secondary", "Network bottom row", NETWORK_OPTIONS, "channels", "2"),
+        dropdown("node_data_primary", "Node top row", NODE_OPTIONS, "alias", "1"),
+        dropdown("node_data_secondary", "Node bottom row", NODE_OPTIONS, "capacity", "2"),
+        schema.Toggle(id = "will_animate", name = "Animate all stats?", desc = "Animate every statistic instead of the selected rows.", icon = "clapperboard", default = True),
+    ])
