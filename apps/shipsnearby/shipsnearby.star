@@ -101,8 +101,11 @@ def get_schema():
 
 def fetch_vessels(bbox, api_key):
     parts = bbox.strip().split(",")
-    if len(parts) < 4:
+    if len(parts) != 4 or any([not valid_decimal(value) for value in parts]):
         return None, "Invalid bbox: need 4 values (long_min,lat_min,long_max,lat_max)"
+    values = [float(value) for value in parts]
+    if values[0] < -180 or values[0] > 180 or values[2] < -180 or values[2] > 180 or values[1] < -90 or values[1] > 90 or values[3] < -90 or values[3] > 90 or values[0] >= values[2] or values[1] >= values[3]:
+        return None, "Invalid bounding box"
     params = {
         "key": api_key,
         "long_min": parts[0],
@@ -110,32 +113,39 @@ def fetch_vessels(bbox, api_key):
         "long_max": parts[2],
         "lat_max": parts[3],
     }
-    print("params: " + str(params))
-    response = http.get(
-        API_URL,
-        params = params,
-        ttl_seconds = 30,
-    )
-    print("status: " + str(response.status_code))
+    response = http.get(API_URL, params = params, headers = {"Accept": "application/json"})
     body = response.body()
-    print("body: " + body)
     if response.status_code == 404:
         return [], None
-    if response.status_code != 200:
+    if response.status_code != 200 or not body or len(body) > 2097152:
         return None, "API error: " + str(response.status_code)
-    data = json.decode(response.body())
+    data = json.decode(body, None)
+    if type(data) != "dict":
+        return None, "Invalid API response"
     if data.get("error", True):
-        return None, data.get("message", "API error")
+        message = data.get("message")
+        return None, (message[:120] if type(message) == "string" else "API error")
     vessels = data.get("data", [])
-    print("vessels count: " + str(len(vessels)))
-    return vessels, None
+    return normalize_vessels(vessels), None
+
+def valid_decimal(value):
+    value = value.strip()
+    if not value or len(value) > 20 or value.count(".") > 1:
+        return False
+    if value[0] in ["-", "+"]:
+        value = value[1:]
+    return value and all([value[i].isdigit() or value[i] == "." for i in range(len(value))])
 
 def fetch_custom_data(url):
-    response = http.get(url, ttl_seconds = 30)
+    if type(url) != "string" or len(url) > 2048 or not url.startswith("https://"):
+        return None, "Custom URL must use HTTPS"
+    response = http.get(url, headers = {"Accept": "application/json"})
     if response.status_code != 200:
         return None, "Custom URL error: " + str(response.status_code)
 
     body = response.body()
+    if not body or len(body) > 2097152:
+        return None, "Custom response is empty or too large"
 
     # The data source appears to be a Python-style dictionary string rather than strict JSON.
     # We attempt to normalize it to valid JSON.
@@ -145,7 +155,7 @@ def fetch_custom_data(url):
         body = body.replace("False", "false")
         body = body.replace("None", "null")
 
-    data = json.decode(body)
+    data = json.decode(body, None)
 
     vessels = []
     if type(data) == "dict":
@@ -155,32 +165,66 @@ def fetch_custom_data(url):
     else:
         return None, "Invalid JSON format from custom URL"
 
-    normalized = []
-    for v in vessels:
-        normalized.append(normalize_vessel(v))
+    return normalize_vessels(vessels), None
 
-    return normalized, None
+def normalize_vessels(vessels):
+    if type(vessels) != "list":
+        return []
+    result = []
+    for vessel in vessels[:200]:
+        normalized = normalize_vessel(vessel)
+        if normalized:
+            result.append(normalized)
+    return result
+
+def number(value):
+    return value if type(value) in ["int", "float"] else 0
+
+def text(value, limit = 120):
+    return value[:limit] if type(value) == "string" else ""
 
 def normalize_vessel(v):
+    if type(v) != "dict":
+        return None
     if "MetaData" in v and "Message" in v:
         # Custom format mapping
         meta = v.get("MetaData", {})
         msg_outer = v.get("Message", {})
         msg = msg_outer.get("PositionReport") or msg_outer.get("ShipStaticData") or {}
 
-        return {
-            "name": meta.get("ShipName") or meta.get("ShipName_String") or "",
-            "mmsi": meta.get("MMSI") or meta.get("MMSI_String") or "",
-            "lat": meta.get("latitude") or msg.get("Latitude") or 0.0,
-            "lng": meta.get("longitude") or msg.get("Longitude") or 0.0,
-            "sog": msg.get("Sog") if msg.get("Sog") != None else 0.0,
-            "cog": msg.get("Cog") if msg.get("Cog") != None else 0.0,
-            "hdt": msg.get("TrueHeading") if msg.get("TrueHeading") != None else 0,
-            "status": msg.get("NavigationalStatus") if msg.get("NavigationalStatus") != None else 15,
-            "ts": meta.get("time_utc") or "",
-            "type": v.get("MessageType", ""),
+        v = {
+            "name": meta.get("ShipName") or meta.get("ShipName_String"),
+            "mmsi": meta.get("MMSI") or meta.get("MMSI_String"),
+            "lat": meta.get("latitude") or msg.get("Latitude"),
+            "lng": meta.get("longitude") or msg.get("Longitude"),
+            "sog": msg.get("Sog"),
+            "cog": msg.get("Cog"),
+            "hdt": msg.get("TrueHeading"),
+            "status": msg.get("NavigationalStatus"),
+            "ts": meta.get("time_utc"),
+            "type": v.get("MessageType"),
         }
-    return v
+    return {
+        "name": text(v.get("name")),
+        "mmsi": text(str(v.get("mmsi") or ""), 24),
+        "imo": text(str(v.get("imo") or ""), 24),
+        "lat": number(v.get("lat")),
+        "lng": number(v.get("lng")),
+        "sog": number(v.get("sog")),
+        "cog": number(v.get("cog")),
+        "hdt": number(v.get("hdt")),
+        "status": v.get("status") if type(v.get("status")) == "int" else 15,
+        "ts": text(v.get("ts"), 80),
+        "type": text(v.get("type"), 80),
+        "flag": text(v.get("flag"), 8),
+        "dest": text(v.get("dest")),
+        "eta": text(v.get("eta"), 40),
+        "draught": number(v.get("draught")),
+        "a": number(v.get("a")),
+        "b": number(v.get("b")),
+        "c": number(v.get("c")),
+        "d": number(v.get("d")),
+    }
 
 NAV_STATUS = {
     0: "Underway",
@@ -330,7 +374,7 @@ def render_view(vessels, line2_opt, line3_opt):
     name = v.get("name") or ""
     vtype = v.get("type") or ""
 
-    name_line = name + (" (" + vtype + ")" if vtype else "")
+    name_line = (name + (" (" + vtype + ")" if vtype else ""))[:160]
 
     vtype_lower = vtype.lower() if vtype else ""
     is_cg = "CGC " in name or name.startswith("CGC")
@@ -376,6 +420,7 @@ def render_view(vessels, line2_opt, line3_opt):
         )
 
     return render.Root(
+        max_age = 1800,
         child = render.Column(
             children = [
                 render.Row(
@@ -408,7 +453,10 @@ def render_error(err):
 
 def main(config):
     use_custom = config.bool("use_custom")
-    timeout_mins = int(config.get("timeout", "60"))
+    timeout = config.str("timeout", "60").strip()
+    if not timeout.isdigit() or len(timeout) > 4 or int(timeout) > 1440:
+        return render_error("Invalid timeout")
+    timeout_mins = int(timeout)
 
     if use_custom:
         data_url = config.get("data_url", "")
@@ -416,8 +464,8 @@ def main(config):
             return render_error("Data URL required")
         vessels, err = fetch_custom_data(data_url)
     else:
-        api_key = config.get("api_key", "")
-        if api_key == "":
+        api_key = config.str("api_key", "").strip()
+        if not api_key or len(api_key) > 512:
             return render_error("API key required")
         bbox = config.get("bbox", DEFAULT_BBOX)
         if bbox == "":
@@ -453,10 +501,12 @@ def main(config):
                 now = time.now()
                 diff = now - parsed_ts
                 if diff.minutes > timeout_mins:
-                    print("Ship data too old: " + str(diff.minutes) + " mins")
-                    return []
+                    return render_error("Ship data is too old")
 
     line2_opt = config.get("line2", "speed_course")
     line3_opt = config.get("line3", "nav_status")
+    allowed = [option.value for option in DISPLAY_OPTIONS]
+    if line2_opt not in allowed or line3_opt not in allowed:
+        return render_error("Invalid display option")
 
     return render_view(vessels, line2_opt, line3_opt)
