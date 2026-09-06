@@ -17,47 +17,47 @@ ARR_COLOR = "#2196F3"  # Blue for arrivals
 DEP_COLOR = "#FFC107"  # Amber for departures
 DEFAULT_FONT = "tom-thumb"
 
-ATIS_CACHE_TTL = 300  # 5 minutes
-AIRPORT_DB_CACHE_TTL = 28800  # 8 hours
-API_URL = "https://datis.clowd.io/api/"
-AIRPORT_DB_URL = "https://airportdb.io/api/v1/airport/{icao}?apiToken={token}"
+API_URL = "https://atis.info/api/"
+AIRPORT_DB_URL = "https://airportdb.io/api/v1/airport/{}"
+MAX_ATIS_BYTES = 256 * 1024
+MAX_AIRPORT_BYTES = 1024 * 1024
+MAX_RUNWAYS = 100
 
-def debug_print(label, value):
-    """Helper function to print debug info"""
-    print("%s: %s" % (label, json.encode(value)))
-
-def get_airport_runways(icao, config):
+def get_airport_runways(icao, api_token):
     """Fetch runway information from airport database."""
-
-    url = AIRPORT_DB_URL.format(icao = icao, token = config.get("airport_db_api_token"))
-    response = http.get(url, ttl_seconds = AIRPORT_DB_CACHE_TTL)
-
-    if response.status_code != 200:
-        debug_print("Error fetching airport data", response.status_code)
+    response = http.get(AIRPORT_DB_URL.format(icao), params = {"apiToken": api_token})
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_AIRPORT_BYTES:
         return []
-
-    data = response.json()
-    if not data or "runways" not in data:
-        debug_print("No runway data found", data)
+    data = json.decode(body, None)
+    runways_data = data.get("runways") if type(data) == "dict" else None
+    if type(runways_data) != "list":
         return []
 
     runways = []
-    for rwy in data["runways"]:
+    for rwy in runways_data[:MAX_RUNWAYS]:
+        if type(rwy) != "dict":
+            continue
+
         # Skip closed runways
-        if rwy.get("closed") == "1":
-            debug_print("Skipping closed runway", rwy.get("le_ident", "") + "/" + rwy.get("he_ident", ""))
+        if str(rwy.get("closed") or "") == "1":
             continue
 
         # Get both ends of the runway
-        le_ident = rwy.get("le_ident", "")
-        he_ident = rwy.get("he_ident", "")
+        le_ident = valid_runway_ident(rwy.get("le_ident"))
+        he_ident = valid_runway_ident(rwy.get("he_ident"))
 
         # Add both ends to our runway list
-        runways.append(le_ident)
-        runways.append(he_ident)
-
-    debug_print("Airport runways", runways)
+        if le_ident:
+            runways.append(le_ident)
+        if he_ident:
+            runways.append(he_ident)
     return runways
+
+def valid_runway_ident(value):
+    value = str(value or "").strip().upper()
+    numeric = value[:-1] if value and value[-1] in ["L", "R", "C"] else value
+    return value if numeric and len(numeric) <= 2 and numeric.isdigit() else None
 
 def extract_number(runway):
     """Extract the numeric part of a runway designator."""
@@ -68,16 +68,14 @@ def extract_number(runway):
     num = runway[:-1] if runway[-1] in ["L", "R", "C"] else runway
     return int(num)
 
-def extract_runways(text, icao, config):
+def extract_runways(text, icao, api_token):
     # Get valid runways for this airport
-    valid_runways = get_airport_runways(icao, config)
+    valid_runways = get_airport_runways(icao, api_token)
     if not valid_runways:
         return [], []
 
     # Split on NOTAM and take only the first part
     main_atis = text.split("NOTAM")[0].split("...ADVS")[0]
-    debug_print("Main ATIS section", main_atis)
-
     runways = {}  # Use dict to track runway usage
     state = {
         "processed_arrivals": False,
@@ -106,8 +104,6 @@ def extract_runways(text, icao, config):
         return False
 
     def process_sentence(sentence):
-        debug_print("Processing sentence", sentence)
-
         # Skip LAHSO and equipment information
         if "HOLD SHORT" in sentence or "PAPIS" in sentence or "EQUIPMENT" in sentence or "CONDITION" in sentence:
             return
@@ -164,12 +160,10 @@ def extract_runways(text, icao, config):
             )
 
             if is_arrival:
-                debug_print("Found arrival indicator", word_upper)
                 current_mode = "ARR"
                 continue
 
             if is_departure:
-                debug_print("Found departure indicator", word_upper)
                 current_mode = "DEP"
                 continue
 
@@ -177,11 +171,9 @@ def extract_runways(text, icao, config):
                 if current_mode == "ARR":
                     arrival_runways.append(word.strip(",.").replace(",", ""))
                 elif current_mode == "DEP":
-                    debug_print("Adding departure runway", word)
                     departure_runways.append(word.strip(",.").replace(",", ""))
                 else:
                     # If no previous mode, mark for both
-                    debug_print("Adding runway for both", word)
                     arrival_runways.append(word.strip(",.").replace(",", ""))
                     departure_runways.append(word.strip(",.").replace(",", ""))
 
@@ -195,7 +187,6 @@ def extract_runways(text, icao, config):
 
         if len(departure_runways) > 0:
             state["processed_departures"] = True
-            debug_print("Processing departure runways", departure_runways)
             for rwy in departure_runways:
                 if rwy not in runways:
                     runways[rwy] = {"A": False, "D": True}
@@ -214,7 +205,6 @@ def extract_runways(text, icao, config):
 
         # If we've processed both arrivals and departures, we can stop
         if state["processed_arrivals"] and state["processed_departures"]:
-            debug_print("Found both arrivals and departures, stopping processing", "")
             break
 
     # Separate arrivals and departures
@@ -230,13 +220,14 @@ def extract_runways(text, icao, config):
         if usage["D"]:
             departures.append(rwy)
 
-    debug_print("Arrivals", arrivals)
-    debug_print("Departures", departures)
     return arrivals, departures
 
 def main(config):
     # Load config settings from mobile app, or set default
-    config_airport = config.str("airport", "KDCA")
+    config_airport = safe_icao(config.str("airport", "KDCA"))
+    api_token = safe_token(config.str("airport_db_api_token", ""))
+    if not api_token:
+        return api_error()
 
     api_url = "{api}{airport}".format(
         api = API_URL,
@@ -244,21 +235,22 @@ def main(config):
     )
 
     # Get data from API
-    response = http.get(api_url, ttl_seconds = ATIS_CACHE_TTL)
-    if response.status_code != 200:
-        return render.Root(
-            child = render.Text("API Error", font = DEFAULT_FONT),
-        )
-
-    atis_data = response.json()[0]  # Get first ATIS entry
+    response = http.get(api_url)
+    body = response.body()
+    payload = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_ATIS_BYTES else None
+    if type(payload) != "list" or not payload or type(payload[0]) != "dict":
+        return api_error()
+    atis_data = payload[0]
 
     # Extract key information
-    airport = atis_data.get("airport", "")
-    atis_code = atis_data.get("code", "")
-    datis = atis_data.get("datis", "")
+    airport = safe_icao(atis_data.get("airport"))
+    atis_code = safe_text(atis_data.get("code"), 8)
+    datis = safe_text(atis_data.get("datis"), 8192)
+    if not airport or not datis:
+        return api_error()
 
     # Extract active runways
-    arrivals, departures = extract_runways(datis, airport, config)
+    arrivals, departures = extract_runways(datis, airport, api_token)
     if len(departures) == 0:
         departures = arrivals
 
@@ -306,6 +298,20 @@ def main(config):
             ),
         ),
     )
+
+def safe_icao(value):
+    value = str(value or "").strip().upper()
+    return value if len(value) == 4 and value.isalnum() else "KDCA"
+
+def safe_token(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 4096 and "\r" not in value and "\n" not in value else ""
+
+def safe_text(value, max_length):
+    return value[:max_length] if type(value) == "string" else ""
+
+def api_error():
+    return render.Root(child = render.Text("API Error", font = DEFAULT_FONT))
 
 def get_schema():
     return schema.Schema(

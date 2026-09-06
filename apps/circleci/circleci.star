@@ -5,15 +5,14 @@ Description: Status of latest execution of pipeline in CircleCI.
 Author: barbosa
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
-load("humanize.star", "humanize")
 load("images/circleci_logo_green.png", CIRCLECI_LOGO_GREEN_ASSET = "file")
 load("images/circleci_logo_red.png", CIRCLECI_LOGO_RED_ASSET = "file")
 load("images/circleci_logo_white.png", CIRCLECI_LOGO_WHITE_ASSET = "file")
 load("images/circleci_logo_yellow.png", CIRCLECI_LOGO_YELLOW_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 CIRCLECI_LOGO_GREEN = CIRCLECI_LOGO_GREEN_ASSET.readall()
 CIRCLECI_LOGO_RED = CIRCLECI_LOGO_RED_ASSET.readall()
@@ -22,72 +21,74 @@ CIRCLECI_LOGO_YELLOW = CIRCLECI_LOGO_YELLOW_ASSET.readall()
 
 CIRCLECI_PIPELINES_API_URL = "https://circleci.com/api/v2/project/{}/pipeline"
 CIRCLECI_WORKFLOWS_API_URL = "https://circleci.com/api/v2/pipeline/{}/workflow"
+MAX_RESPONSE_BYTES = 1024 * 1024
+
+def safe_segment(value):
+    value = str(value or "")
+    if not value or len(value) > 120:
+        return ""
+    for char in value.elems():
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.":
+            return ""
+    return value
+
+def request_json(url, token, params = {}):
+    response = http.get(url, params = params, headers = {
+        "Accept": "application/json",
+        "Circle-Token": token,
+    })
+    body = response.body()
+    data = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    return data if type(data) == "dict" else None
 
 def main(config):
-    if config.get("api_token") == None:
+    api_token = str(config.get("api_token") or "")[:512]
+    if not api_token:
         return render_fail("Please inform API token")
 
-    if config.get("vcs") == None:
+    vcs = config.str("vcs", "gh")
+    if vcs not in ["gh", "bb"]:
         return render_fail("Please inform vcs type")
 
-    if config.get("org") == None:
+    org = safe_segment(config.get("org"))
+    if not org:
         return render_fail("Please inform org name")
 
-    if config.get("repo") == None:
+    repo = safe_segment(config.get("repo"))
+    if not repo:
         return render_fail("Please inform repo name")
 
-    latest_pipeline = fetch_latest_pipeline(config)
+    latest_pipeline = fetch_latest_pipeline(api_token, vcs, org, repo, str(config.get("branch") or "")[:256])
     if latest_pipeline == None:
         return render_fail("Can't fetch pipeline")
 
-    latest_workflow = fetch_latest_workflow(config, pipeline_id = latest_pipeline.get("id"))
+    latest_workflow = fetch_latest_workflow(api_token, pipeline_id = safe_segment(latest_pipeline.get("id")))
     if latest_workflow == None:
         return render_fail("Can't fetch workflow")
 
-    return render_widget(config, latest_pipeline, latest_workflow)
+    return render_widget(repo, latest_pipeline, latest_workflow)
 
-def fetch_latest_pipeline(config):
-    api_token = config.str("api_token")
-    project_slug = "{}/{}/{}".format(config.str("vcs"), config.str("org"), config.str("repo"))
-
-    params = {
-        "circle-token": api_token,
-    }
-
-    branch = config.str("branch")
+def fetch_latest_pipeline(api_token, vcs, org, repo, branch):
+    project_slug = "{}/{}/{}".format(vcs, org, repo)
+    params = {}
     if branch:
         params["branch"] = branch
 
-    response = http.get(CIRCLECI_PIPELINES_API_URL.format(project_slug), params = params)
-
-    print("{} ({})".format(project_slug, branch or "all branches"))
-
-    if response.status_code != 200:
+    pipelines = request_json(CIRCLECI_PIPELINES_API_URL.format(project_slug), api_token, params)
+    if pipelines == None:
         return None
-
-    pipelines = response.json()
     items = pipelines.get("items")
-
-    if len(items) == 0:
+    if type(items) != "list" or not items or type(items[0]) != "dict":
         return None
 
     return items[0]
 
-def fetch_latest_workflow(config, pipeline_id):
-    api_token = config.get("api_token")
-
-    response = http.get(CIRCLECI_WORKFLOWS_API_URL.format(pipeline_id), params = {
-        "circle-token": api_token,
-    })
-
-    if response.status_code != 200:
+def fetch_latest_workflow(api_token, pipeline_id):
+    if not pipeline_id:
         return None
-
-    workflows = response.json()
-    latest_workflow = workflows.get("items")[0]
-    print("Workflow Status:", latest_workflow.get("status"))
-
-    return latest_workflow
+    workflows = request_json(CIRCLECI_WORKFLOWS_API_URL.format(pipeline_id), api_token)
+    items = workflows.get("items") if workflows else None
+    return items[0] if type(items) == "list" and items and type(items[0]) == "dict" else None
 
 def logo_for_status(status):
     mapping = {
@@ -98,23 +99,15 @@ def logo_for_status(status):
         "failing": CIRCLECI_LOGO_RED,
     }
 
-    print("Pipeline Status:", status)
-
     return mapping.get(status, CIRCLECI_LOGO_WHITE)
 
-def render_widget(config, latest_pipeline, latest_workflow):
-    repo_name = config.str("repo")
-    status = latest_workflow.get("status")
-
-    author = latest_pipeline["trigger"]["actor"]["login"]
-    avatar_url = latest_pipeline["trigger"]["actor"]["avatar_url"]
-
-    avatar = None
-    if avatar_url != None:
-        avatar = http.get(avatar_url).body()
-
-    stopped_at = time.parse_time(latest_workflow["stopped_at"])
-    when = humanize.time(stopped_at)
+def render_widget(repo_name, latest_pipeline, latest_workflow):
+    status = str(latest_workflow.get("status") or "unknown")[:40]
+    trigger = latest_pipeline.get("trigger")
+    actor = trigger.get("actor") if type(trigger) == "dict" else None
+    author = str(actor.get("login") or "Unknown")[:120] if type(actor) == "dict" else "Unknown"
+    timestamp = latest_workflow.get("stopped_at") or latest_workflow.get("created_at")
+    when = str(timestamp)[:10] if type(timestamp) == "string" else "in progress"
 
     return render.Root(
         child = render.Padding(
@@ -132,7 +125,7 @@ def render_widget(config, latest_pipeline, latest_workflow):
                     ),
                     render.Row(
                         children = [
-                            render.Image(src = avatar, width = 16, height = 16) if avatar_url else render.Box(width = 16, height = 16, color = "666"),
+                            render.Box(width = 16, height = 16, color = "#666"),
                             render.Box(width = 2, height = 16),
                             render.Marquee(
                                 width = 48,

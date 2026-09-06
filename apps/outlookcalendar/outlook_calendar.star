@@ -7,6 +7,7 @@ Description: Shows the date, next meeting and time from your Outlook Calendar.
 
 load("cache.star", "cache")
 load("encoding/json.star", "json")
+load("hash.star", "hash")
 load("http.star", "http")
 load("images/cal_icon.png", CAL_ICON_ASSET = "file")
 load("render.star", "render")
@@ -17,7 +18,7 @@ load("time.star", "time")
 CAL_ICON = CAL_ICON_ASSET.readall()
 
 # Enable Print statements for key data
-DEBUG_ON = 1
+DEBUG_ON = 0
 
 # Conversion from Day of the Week (string) to a Number (relative to Sunday)
 # Used to Calculate backward in time to get total steps from the beginning of the week.
@@ -52,6 +53,7 @@ TENANT_ID_DEFAULT = "common"
 MAX_EVENT_FETCH_WEEK = 100
 MSFT_GRAPH_BUCKET_SIZE = 10
 NUMBER_OF_FETCH_ITERATIONS = int(MAX_EVENT_FETCH_WEEK / MSFT_GRAPH_BUCKET_SIZE)
+MAX_RESPONSE_BYTES = 512 * 1024
 
 # Other Conversions for obtaining Historical Day
 SECONDS_IN_A_DAY = 3600 * 24
@@ -143,47 +145,49 @@ def main(config):
     if not outlook_refresh_token:
         print("Not Auth")
         return render_calendar(today_display_date, "Please Authorize Your Outlook Account", "")
-    else:
-        OUTLOOK_ACCESS_TOKEN = cache.get(outlook_refresh_token)
+    if not client_id or not client_secret:
+        return render_calendar(today_display_date, "Outlook OAuth setup unavailable", "")
+
+    access_token_cache_key = "outlookcalendar:" + hash.sha1(outlook_refresh_token)
+    OUTLOOK_ACCESS_TOKEN = cache.get(access_token_cache_key)
 
     if not OUTLOOK_ACCESS_TOKEN:
-        refresh_body = "refresh_token=" + outlook_refresh_token + "&client_id=" + client_id + "&client_secret=" + client_secret + "&grant_type=refresh_token" + "&scope=Calendars.read"
-
-        # CURL can be handy for debug ops from the Linux command line
-
         if DEBUG_ON:
             print("Refreshing Outlook Access Token")
-            curl_cmd = "curl -s --request POST --data \"" + refresh_body + "\" " + msft_token_endpoint
-            print(curl_cmd)
 
-        # MSFT_GRAPH_POST_HEADERS = {
-        #     "Content-Type": "application/x-www-form-urlencoded",
-        # }
+        refresh = http.post(
+            msft_token_endpoint,
+            form_body = {
+                "refresh_token": outlook_refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "refresh_token",
+                "scope": "Calendars.read",
+            },
+            form_encoding = "application/x-www-form-urlencoded",
+        )
+        refresh_body = refresh.body()
 
-        refresh = http.post(msft_token_endpoint, body = refresh_body)
-
-        if refresh.status_code != 200:
+        if refresh.status_code != 200 or not refresh_body or len(refresh_body) > MAX_RESPONSE_BYTES:
             auth_failure_code = str(refresh.status_code)
-            auth_failure_error_description = refresh.json()["error_description"]
             if DEBUG_ON:
-                print("Refresh of Access Token Failed with Code %s - %s" % (auth_failure_code, auth_failure_error_description))
-            return render_calendar(today_display_date, "Auth Failure: " + auth_failure_code + "  **** " + auth_failure_error_description, "")
-            #fail("Refresh of Access Token failed with Status Code: %d - %s" % (refresh.status_code, refresh.body()))
+                print("Refresh of Access Token Failed with Code %s" % auth_failure_code)
+            return render_calendar(today_display_date, "Outlook authorization failed: " + auth_failure_code, "")
 
-        # Grab new Oauthtoken from the Google Token service, format for Data Aggregation API call.
-        OUTLOOK_ACCESS_TOKEN = "Bearer {}".format(refresh.json()["access_token"])
+        token_params = refresh.json()
+        if type(token_params) != "dict" or not token_params.get("access_token") or type(token_params.get("expires_in")) != "int":
+            return render_calendar(today_display_date, "Outlook returned invalid authorization data", "")
+        OUTLOOK_ACCESS_TOKEN = "Bearer {}".format(token_params["access_token"])
 
-        cache.set(outlook_refresh_token, OUTLOOK_ACCESS_TOKEN, ttl_seconds = int(refresh.json()["expires_in"] - 30))
-
-        # HM, is this ELSE path ever taken or leftover prior to inserting the else condition of the refresh token check?
-    else:
-        OUTLOOK_ACCESS_TOKEN = cache.get(outlook_refresh_token)
+        cache.set(access_token_cache_key, OUTLOOK_ACCESS_TOKEN, ttl_seconds = max(30, int(token_params["expires_in"] - 30)))
 
     # Build the meeting list - the function returns the earliest meeting time based on the time ranges given.
     # Not that specifying a time in the past will likely return a meeting time in the past so for this app it's important to
     # call function get_outlook_event_list using the current or future time.
 
-    meeting_list, next_meeting_time, time_index_list = get_outlook_event_list(calendar_start_time, calendar_end_time, OUTLOOK_ACCESS_TOKEN, today_display_date)
+    meeting_list, next_meeting_time, time_index_list, fetch_error = get_outlook_event_list(calendar_start_time, calendar_end_time, OUTLOOK_ACCESS_TOKEN)
+    if fetch_error:
+        return render_calendar(today_display_date, fetch_error, "")
 
     # This is a new feature added in March 2024 - User requested to scroll through the day's meetings (not just next meeting)
     # For this mode (full_day_mode) build a list of human readible (time) meeting events.
@@ -292,7 +296,7 @@ def main(config):
             conflict_meeting_banner = "No Meetings Scheduled for Today!"
         else:
             conflict_meeting_banner = "No More Meetings for Today!"
-        display_calendar_date = time.parse_time(calendar_start_time).in_location("America/Detroit").format("Jan 2")  # BUG HERE: Fix the Timezone (it's hardcoded)
+        display_calendar_date = time.parse_time(calendar_start_time).in_location(timezone).format("Jan 2")
         display_next_meeting_time = ""
 
         if DEBUG_ON:
@@ -318,34 +322,38 @@ def oauth_handler(params):
     auth_client_id = params["client_id"]
     auth_grant_type = params["grant_type"]
     auth_redirect_uri = params["redirect_uri"]
-    auth_scope = "offline_access%20Calendars.read"
     auth_client_secret = MSFT_CLIENT_SECRET or CLIENT_SECRET_DEFAULT  # Keep run time env happy, it barfs on NULL values in Render Mode
-
-    # Re-assemble the Auth Body with a series of parameters that I know work for Google Oauth
-    auth_body = "&code=" + auth_code + "&redirect_uri=" + auth_redirect_uri + "&client_id=" + auth_client_id + "&client_secret=" + auth_client_secret + "&grant_type=" + auth_grant_type + "&scope=" + auth_scope
 
     #This is a handy debug tool.   Prints out a 1-liner curl command that can be cut and pasted into the terminal
     if DEBUG_ON:
-        curl_cmd = "curl -s --request POST --data \"" + auth_body + "\" " + MSFT_EVENTFETCH_TOKEN_ENDPOINT
-        print(curl_cmd)
+        print("Exchanging Outlook authorization code")
 
-    # Exchange parameters and client secret for an access token
-    # MSFTAUTH_POST_HEADERS = {
-    #     "Content-type": "application/x-www-form-urlencoded",
-    # }
-    res = http.post(url = MSFT_EVENTFETCH_TOKEN_ENDPOINT, body = auth_body)
+    res = http.post(
+        url = MSFT_EVENTFETCH_TOKEN_ENDPOINT,
+        form_body = {
+            "code": auth_code,
+            "redirect_uri": auth_redirect_uri,
+            "client_id": auth_client_id,
+            "client_secret": auth_client_secret,
+            "grant_type": auth_grant_type,
+            "scope": "offline_access Calendars.read",
+        },
+        form_encoding = "application/x-www-form-urlencoded",
+    )
+    body = res.body()
 
-    if res.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (res.status_code, res.body()))
+    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        fail("token request failed with status code: %d" % res.status_code)
 
     # Grab the refresh token from the Oauth response - Cache the Access token (at present they are good for 1 hour)
     # Set cache to expire 30 seconds early to prvide a small time buffer.
 
     token_params = res.json()
+    if type(token_params) != "dict" or not token_params.get("refresh_token") or not token_params.get("access_token") or type(token_params.get("expires_in")) != "int":
+        fail("token request returned invalid data")
     refresh_token = token_params["refresh_token"]
 
-    cache.set(refresh_token, "Bearer " + token_params["access_token"], ttl_seconds = int(token_params["expires_in"] - 30))
+    cache.set("outlookcalendar:" + hash.sha1(refresh_token), "Bearer " + token_params["access_token"], ttl_seconds = max(30, int(token_params["expires_in"] - 30)))
 
     return refresh_token
 
@@ -379,7 +387,7 @@ def get_schema():
         ],
     )
 
-def get_outlook_event_list(start_window, end_window, auth_token, todays_date):
+def get_outlook_event_list(start_window, end_window, auth_token):
     # This function takes a start and end window and builds a Dict of meetings indexed on the meeting start time.
     # Each dict Has the meeting subject
     # Future enhancement is to add the meeting Organizer
@@ -389,7 +397,7 @@ def get_outlook_event_list(start_window, end_window, auth_token, todays_date):
     # And those are provided with each successive call.  NOTE: MSFT Graph doesn't always return the event list in Order,
     # this appears to happen when there are more than 10 events in the specified time period.
 
-    outlook_event_url = OUTLOOK_CALENDAR_VIEW_URL + "&startdatetime=" + start_window + "&enddatetime=" + end_window
+    outlook_event_url = OUTLOOK_CALENDAR_VIEW_URL + "&startDateTime=" + start_window + "&endDateTime=" + end_window
     next_graph_event_link = outlook_event_url
     earliest_meeting_time = time.parse_time(end_window).unix
     start_window_timestamp = time.parse_time(start_window).unix
@@ -420,21 +428,24 @@ def get_outlook_event_list(start_window, end_window, auth_token, todays_date):
         # Same for "meetings" with Zero attendees.
 
         CalendarQuery = http.get(next_graph_event_link, headers = OUTLOOK_EVENT_HEADERS, ttl_seconds = 60)
-        if CalendarQuery.status_code != 200:
+        response_body = CalendarQuery.body()
+        if CalendarQuery.status_code != 200 or not response_body or len(response_body) > MAX_RESPONSE_BYTES:
             cal_failure_code = str(CalendarQuery.status_code)
-            cal_failure_error_description = CalendarQuery.json()["error_description"]
             if DEBUG_ON:
-                print("Calendar Data Fetch Failed %s - %s" % (cal_failure_code, cal_failure_error_description))
-            return render_calendar(todays_date, "Calendar Fetch Failure:" + cal_failure_code + "  **** " + cal_failure_error_description, "")
-            #fail("Outlook Calendar View Request failed with status:", CalendarQuery.json())
+                print("Calendar Data Fetch Failed %s" % cal_failure_code)
+            return {}, "", [], "Outlook calendar error: " + cal_failure_code
+
+        calendar_payload = CalendarQuery.json()
+        if type(calendar_payload) != "dict" or type(calendar_payload.get("value")) != "list":
+            return {}, "", [], "Outlook returned invalid calendar data"
 
         meeting_num = 0
 
-        for _ in CalendarQuery.json()["value"]:
-            meeting = CalendarQuery.json()["value"][meeting_num]["subject"]
-            is_cancelled = CalendarQuery.json()["value"][meeting_num]["isCancelled"]
-            start_time = CalendarQuery.json()["value"][meeting_num]["start"]["dateTime"] + "Z"
-            end_time = CalendarQuery.json()["value"][meeting_num]["end"]["dateTime"] + "Z"
+        for _ in calendar_payload["value"]:
+            meeting = calendar_payload["value"][meeting_num]["subject"]
+            is_cancelled = calendar_payload["value"][meeting_num]["isCancelled"]
+            start_time = calendar_payload["value"][meeting_num]["start"]["dateTime"] + "Z"
+            end_time = calendar_payload["value"][meeting_num]["end"]["dateTime"] + "Z"
 
             # This expression returns a time.duration result e.g, 1h30m, etc...  Handy for displaying human readable meeting times on Tidbyt (for example display "Next Meeting")
             #meeting_duration = time.parse_time(end_time) - time.parse_time(start_time)
@@ -476,7 +487,7 @@ def get_outlook_event_list(start_window, end_window, auth_token, todays_date):
         # The next link must be fed into a GET command, just like the initial GET (requires the header with access token)
         # Note the .json().get method which protects against the null Index condition (no more links), else get a run time error with no .get when there is no next link.
 
-        next_graph_event_link = CalendarQuery.json().get("@odata.nextLink")
+        next_graph_event_link = calendar_payload.get("@odata.nextLink")
 
         if DEBUG_ON:
             print("Next Link %s" % next_graph_event_link)
@@ -488,7 +499,7 @@ def get_outlook_event_list(start_window, end_window, auth_token, todays_date):
 
     # Note - the index only makes sense when there are meetings in the list.
 
-    return meeting_list_bytime, earliest_meeting_time_index, meeting_time_index
+    return meeting_list_bytime, earliest_meeting_time_index, meeting_time_index, None
 
 def render_calendar(cal_date, cal_meeting_txt, cal_meeting_time):
     return render.Root(

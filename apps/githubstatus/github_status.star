@@ -17,36 +17,41 @@ GITHUB_ICON = GITHUB_ICON_ASSET.readall()
 GITHUB_ICON_RED = GITHUB_ICON_RED_ASSET.readall()
 GITHUB_ICON_YELLOW = GITHUB_ICON_YELLOW_ASSET.readall()
 
-# statuspage.io GitHub status page ID component file
-GITHUB_INCIDENTS_JSON = "https://kctbh9vrtdwd.statuspage.io/api/v2/components.json"
+GITHUB_INCIDENTS_JSON = "https://www.githubstatus.com/api/v2/components.json"
+MAX_RESPONSE_BYTES = 256 * 1024
+SEVERITY = {"operational": 0, "under_maintenance": 1, "degraded_performance": 2, "partial_outage": 3, "major_outage": 4}
 
 def main():
-    # make an API request if cache is empty
     rep = http.get(GITHUB_INCIDENTS_JSON, ttl_seconds = 240)
-    if rep.status_code != 200:
-        fail("GitHub Status failed with status %d", rep.status_code)
-
     body = rep.body()
-
-    statusJson = json.decode(body)
+    statusJson = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    components = statusJson.get("components") if type(statusJson) == "dict" else None
+    if type(components) != "list":
+        components = []
 
     op_state = "good"
+    highest_severity = 0
     failing_components = []
 
-    for component in statusJson["components"]:
-        if component["status"] != "operational":
-            if op_state == "good":
-                op_state = component["status"]
-            elif component["status"] != "partial_outage":
-                op_state = component["status"]  # lowest status
+    for component in components[:100]:
+        status = component.get("status") if type(component) == "dict" else None
+        name = component.get("name") if type(component) == "dict" else None
+        severity = SEVERITY.get(status, 0)
+        if severity > 0:
+            if severity > highest_severity:
+                highest_severity = severity
+                op_state = status
 
             # add marquee text to outage info
-            if (component["name"] and not "githubstatus.com" in component["name"]):
+            if type(name) == "string" and name and not "githubstatus.com" in name.lower():
                 failing_components.append(
-                    render.Marquee(width = 48, child = render.Text(" " + component["name"], color = "#a00" if op_state != "partial_outage" else "#FFFF00")),
+                    render.Marquee(width = 48, child = render.Text(" " + " ".join(name.split())[:80], color = "#a00" if severity >= 3 else "#FFFF00")),
                 )
 
-    if (op_state == "good"):
+    if not components:
+        op_state = "unavailable"
+        failing_components = [render.Marquee(width = 48, child = render.Text(" Status unavailable", color = "#a00"))]
+    elif (op_state == "good"):
         failing_components = [render.Marquee(width = 48, child = render.Text(" No Issues", color = "#0a0"))]
 
     # a lot of failures

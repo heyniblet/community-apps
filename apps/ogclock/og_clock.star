@@ -9,6 +9,7 @@ Version: 1.1
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("images/cloudy.png", CLOUDY_ASSET = "file")
 load("images/foggy.png", FOGGY_ASSET = "file")
 load("images/haily.png", HAILY_ASSET = "file")
@@ -25,6 +26,7 @@ load("images/sunnyish.png", SUNNYISH_ASSET = "file")
 load("images/thundery.png", THUNDERY_ASSET = "file")
 load("images/tornady.png", TORNADY_ASSET = "file")
 load("images/windy.png", WINDY_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -45,9 +47,10 @@ NWS_POINTS_URL = "https://api.weather.gov/points/{latitude},{longitude}"
 NWS_STATIONS_URL = "https://api.weather.gov/gridpoints/{grid_id}/{grid_x},{grid_y}/stations"
 NWS_LATEST_OBSERVATION_URL = "{station_url}/observations/latest"
 OPENWEATHER_CURRWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather?lat={latitude}&lon={longitude}&appid={api_key}&units={units}&lang=en"
-OPENWEATHER_AIR_POLLUTION_URL = "http://api.openweathermap.org/data/2.5/air_pollution?lat={latitude}&lon={longitude}&appid={api_key}"
 OPENWEATHER_ONECALL_URL = "https://api.openweathermap.org/data/3.0/onecall?lat={latitude}&lon={longitude}&exclude=minutely,hourly,daily,alerts&appid={api_key}&units={units}&lang=en"
 AMBIENT_WEATHER_DEVICES_URL = "https://rt.ambientweather.net/v1/devices"
+MAX_RESPONSE_BYTES = 512 * 1024
+NWS_HEADERS = {"User-Agent": "Niblet/1.0 (heyniblet.com)"}
 
 TEMP_COLOR_DEFAULT = "#FFFFFF"
 TIME_NIGHT_COLOR = "#333333"
@@ -77,13 +80,21 @@ RAINDROP_ICON = RAINDROP_ICON_ASSET.readall()
 def get_nws_observation_station(lat, lon, ttl = 3600):
     # Get the grid point data
     res = http.get(NWS_POINTS_URL.format(
-        latitude = lat,
-        longitude = lon,
-    ), ttl_seconds = ttl)
+        latitude = humanize.ftoa(lat, 4),
+        longitude = humanize.ftoa(lon, 4),
+    ), headers = NWS_HEADERS, ttl_seconds = ttl)
     if res.status_code != 200:
         fail("Could not obtain the grid point data.", res.status_code)
 
-    properties = res.json()["properties"]
+    data = response_json(res)
+    properties = data.get("properties", {}) if type(data) == "dict" else {}
+    if (
+        type(properties) != "dict" or
+        type(properties.get("gridId")) != "string" or
+        type(properties.get("gridX")) not in ["int", "float"] or
+        type(properties.get("gridY")) not in ["int", "float"]
+    ):
+        fail("Invalid NWS grid point response.")
     grid_id = properties["gridId"]
     grid_x = properties["gridX"]
     grid_y = properties["gridY"]
@@ -94,31 +105,34 @@ def get_nws_observation_station(lat, lon, ttl = 3600):
         grid_x = grid_x,
         grid_y = grid_y,
     )
-    stations_res = http.get(stations_url, ttl_seconds = ttl)
+    stations_res = http.get(stations_url, headers = NWS_HEADERS, ttl_seconds = ttl)
     if stations_res.status_code != 200:
         fail("Could not obtain stations list.", stations_res.status_code)
 
     # Get the first station from the observationStations list
-    observation_stations = stations_res.json()["observationStations"]
-    if len(observation_stations) == 0:
+    stations_data = response_json(stations_res)
+    observation_stations = stations_data.get("observationStations", []) if type(stations_data) == "dict" else []
+    if type(observation_stations) != "list" or len(observation_stations) == 0:
         fail("No observation stations found for this location.")
 
     first_station = observation_stations[0]
+    if type(first_station) != "string" or not first_station.startswith("https://api.weather.gov/stations/"):
+        fail("Invalid NWS observation station.")
     return first_station
 
 def get_nws_latest_observation(station_url, ttl = 300):
     # Call the station's latest observation endpoint
     latest_url = NWS_LATEST_OBSERVATION_URL.format(station_url = station_url)
-    res = http.get(latest_url, ttl_seconds = ttl)
+    res = http.get(latest_url, headers = NWS_HEADERS, ttl_seconds = ttl)
     if res.status_code != 200:
         fail("Could not obtain latest observation.", res.status_code)
-    return res.json()
+    return response_json(res)
 
 def get_current_weather_conditions(url, ttl):
     res = http.get(url, ttl_seconds = ttl)
     if res.status_code != 200:
         fail("Current conditions request failed with status", res.status_code)
-    return res.json()
+    return response_json(res)
 
 def get_ambient_weather_conditions(application_key, api_key, station_id, display_metric, now):
     # The devices endpoint returns every station available to the supplied API key,
@@ -134,8 +148,8 @@ def get_ambient_weather_conditions(application_key, api_key, station_id, display
     if res.status_code != 200:
         fail("Ambient Weather device request failed with status", res.status_code)
 
-    stations = res.json()
-    if len(stations) == 0:
+    stations = response_json(res)
+    if type(stations) != "list" or len(stations) == 0:
         fail("No Ambient Weather devices are available for this API key.")
 
     station = stations[0]
@@ -147,6 +161,9 @@ def get_ambient_weather_conditions(application_key, api_key, station_id, display
                 break
         if station == None:
             fail("Ambient Weather device was not found. Check the station MAC address.")
+
+    if type(station) != "dict":
+        fail("Ambient Weather returned an invalid device.")
 
     conditions = station.get("lastData", {})
     temp_f = conditions.get("tempf")
@@ -181,19 +198,56 @@ def get_ambient_weather_conditions(application_key, api_key, station_id, display
         "icon_ref": icon_ref,
     }
 
-def get_openweather_air_pollution(api_key, latitude, longitude):
-    res = http.get(
-        url = OPENWEATHER_AIR_POLLUTION_URL,
-        params = {
-            "lat": str(latitude),
-            "lon": str(longitude),
-            "appid": api_key,
-        },
-    )
+def response_json(response):
+    body = response.body()
+    if not body or len(body) > MAX_RESPONSE_BYTES:
+        fail("Weather service returned an invalid response.")
+    return response.json()
 
-    air_quality = {}
-    air_quality["index"] = int(res.json()["list"][0]["main"]["aqi"])
-    return air_quality
+def openweather_conditions(data, one_call):
+    if type(data) != "dict":
+        fail("Weather service returned invalid conditions.")
+    values = data.get("current", {}) if one_call else data.get("main", {})
+    weather = values.get("weather", []) if one_call and type(values) == "dict" else data.get("weather", [])
+    if type(values) != "dict" or type(weather) != "list" or not weather or type(weather[0]) != "dict":
+        fail("Weather service returned incomplete conditions.")
+    temp = values.get("temp")
+    humidity = values.get("humidity")
+    icon_num = weather[0].get("id")
+    icon_code = weather[0].get("icon")
+    if type(temp) not in ["int", "float"] or type(humidity) not in ["int", "float"]:
+        fail("Weather service returned invalid measurements.")
+    if type(icon_num) != "int" or type(icon_code) != "string":
+        fail("Weather service returned an invalid condition.")
+    return {
+        "temp": int(temp),
+        "humidity": int(humidity),
+        "icon_ref": openweather_icon(icon_num, icon_code),
+    }
+
+def openweather_icon(icon_num, icon_code):
+    is_day = "d" in icon_code
+    if icon_num == 800:
+        return "sunny.png" if is_day else "moony.png"
+    if icon_num >= 801 and icon_num <= 804:
+        return "sunnyish.png" if is_day and icon_num <= 802 else ("moonyish.png" if not is_day else "cloudy.png")
+    if (icon_num >= 300 and icon_num < 400) or (icon_num >= 500 and icon_num < 600) or icon_num == 701:
+        return "rainy.png"
+    if icon_num >= 200 and icon_num < 300:
+        return "thundery.png"
+    if icon_num >= 600 and icon_num < 700:
+        return "snowy2.png"
+    if icon_num == 731:
+        return "windy.png"
+    if icon_num >= 701 and icon_num < 800:
+        return "foggy.png"
+    return "cloudy.png"
+
+def clock_minutes(value, default):
+    if type(value) != "string" or not re.match(r"^[0-2][0-9][0-5][0-9]$", value):
+        return default
+    hour = int(value[:2])
+    return default if hour > 23 else hour * 60 + int(value[2:])
 
 def nightScreen(now, config):
     # Use OG Clock’s settings
@@ -254,27 +308,8 @@ def main(config):
     now = time.now().in_location(timezone)
 
     # Night mode check
-    nightModeStr = config.get("nightModeStart")
-    if nightModeStr == None:
-        nightModeStartHr = 23
-        nightModeStartMin = 0
-    else:
-        nightModeStartHr = int(nightModeStr[0:2])
-        if nightModeStartHr >= 24:
-            nightModeStartHr = 0
-        nightModeStartMin = int(nightModeStr[2:4])
-
-    dayModeStr = config.get("nightModeEnd")
-    if dayModeStr == None:
-        dayModeEndHr = 7
-        dayModeEndMin = 0
-    else:
-        dayModeEndHr = int(dayModeStr[0:2])
-        dayModeEndMin = int(dayModeStr[2:4])
-
-    # Update variable names to match:
-    start_total = nightModeStartHr * 60 + nightModeStartMin
-    end_total = dayModeEndHr * 60 + dayModeEndMin
+    start_total = clock_minutes(config.get("nightModeStart"), 23 * 60)
+    end_total = clock_minutes(config.get("nightModeEnd"), 7 * 60)
 
     night_mode_enabled = config.bool("night_mode", False)
     if night_mode_enabled:
@@ -307,6 +342,8 @@ def main(config):
 
     # Weather settings
     api_service = config.get("weatherApiService") or "OpenWeather"
+    if api_service not in ["National Weather Service (NWS)", "OpenWeather", "OpenWeatherOneCall", "Ambient Weather"]:
+        api_service = "OpenWeather"
     api_key = config.get("apiKey", "")
     ambient_application_key = config.get("ambientApplicationKey", "")
     ambient_api_key = config.get("ambientApiKey", "")
@@ -410,32 +447,8 @@ def main(config):
             units = system_of_measurement,
         )
         raw_current_conditions = get_current_weather_conditions(request_url, 300)
-
-        result_current_conditions["temp"] = int(raw_current_conditions["main"]["temp"])
-        result_current_conditions["humidity"] = int(raw_current_conditions["main"]["humidity"])
-
-        icon_num = int(raw_current_conditions["weather"][0]["id"])
-        icon_code = str(raw_current_conditions["weather"][0]["icon"])
-        if icon_num == 800 and "d" in icon_code:
-            icon_ref = "sunny.png"
-        elif icon_num >= 801 and icon_num <= 802 and "d" in icon_code:
-            icon_ref = "sunnyish.png"
-        elif icon_num >= 803 and icon_num <= 804 and "d" in icon_code:
-            icon_ref = "cloudy.png"
-        elif (icon_num >= 300 and icon_num < 400) or (icon_num >= 500 and icon_num < 600) or icon_num == 701:
-            icon_ref = "rainy.png"
-        elif icon_num >= 200 and icon_num < 300:
-            icon_ref = "thundery.png"
-        elif icon_num >= 600 and icon_num < 700:
-            icon_ref = "snowy2.png"
-        elif icon_num == 731:
-            icon_ref = "windy.png"
-        elif icon_num >= 701 and icon_num < 800:
-            icon_ref = "foggy.png"
-        elif icon_num == 800 and "n" in icon_code:
-            icon_ref = "moony.png"
-        elif icon_num >= 801 and icon_num <= 804 and "n" in icon_code:
-            icon_ref = "moonyish.png"
+        result_current_conditions = openweather_conditions(raw_current_conditions, False)
+        icon_ref = result_current_conditions["icon_ref"]
 
     elif api_service == "OpenWeatherOneCall":
         request_url = OPENWEATHER_ONECALL_URL.format(
@@ -445,32 +458,8 @@ def main(config):
             units = system_of_measurement,
         )
         raw_current_conditions = get_current_weather_conditions(request_url, 300)
-
-        result_current_conditions["temp"] = int(raw_current_conditions["current"]["temp"])
-        result_current_conditions["humidity"] = int(raw_current_conditions["current"]["humidity"])
-
-        icon_num = int(raw_current_conditions["current"]["weather"][0]["id"])
-        icon_code = str(raw_current_conditions["current"]["weather"][0]["icon"])
-        if icon_num == 800 and "d" in icon_code:
-            icon_ref = "sunny.png"
-        elif icon_num >= 801 and icon_num <= 802 and "d" in icon_code:
-            icon_ref = "sunnyish.png"
-        elif icon_num >= 803 and icon_num <= 804 and "d" in icon_code:
-            icon_ref = "cloudy.png"
-        elif (icon_num >= 300 and icon_num < 400) or (icon_num >= 500 and icon_num < 600) or icon_num == 701:
-            icon_ref = "rainy.png"
-        elif icon_num >= 200 and icon_num < 300:
-            icon_ref = "thundery.png"
-        elif icon_num >= 600 and icon_num < 700:
-            icon_ref = "snowy2.png"
-        elif icon_num == 731:
-            icon_ref = "windy.png"
-        elif icon_num >= 701 and icon_num < 800:
-            icon_ref = "foggy.png"
-        elif icon_num == 800 and "n" in icon_code:
-            icon_ref = "moony.png"
-        elif icon_num >= 801 and icon_num <= 804 and "n" in icon_code:
-            icon_ref = "moonyish.png"
+        result_current_conditions = openweather_conditions(raw_current_conditions, True)
+        icon_ref = result_current_conditions["icon_ref"]
 
     elif api_service == "Ambient Weather":
         ambient_conditions = get_ambient_weather_conditions(

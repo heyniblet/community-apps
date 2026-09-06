@@ -5,6 +5,7 @@ Description: Display the total number of users on the Bluesky social network. Da
 Author: Daniel Sitnik
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/bsky_logo.png", BSKY_LOGO_ASSET = "file")
@@ -17,6 +18,7 @@ BSKY_LOGO = BSKY_LOGO_ASSET.readall()
 DEFAULT_STAT_COLOR = "#3a83f7"
 DEFAULT_DOT_SEPARATOR = False
 CACHE_TTL = 120
+MAX_RESPONSE_BYTES = 16 * 1024
 
 def main(config):
     """Main app method.
@@ -37,15 +39,20 @@ def main(config):
 
     # handle errors
     if res.status_code != 200:
-        print("API error %d: %s" % (res.status_code, res.body()))
-        return render_api_error(str(int(res.status_code)))
+        return render_api_error(str(res.status_code))
 
     # transform to json
-    data = res.json()
+    body = res.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return render_api_error("response")
+    data = json.decode(body)
 
     # read data properties
-    user_count = data["last_user_count"]
-    growth_per_second = math.ceil(data["growth_per_second"])
+    user_count = data.get("last_user_count") if type(data) == "dict" else None
+    growth = data.get("growth_per_second") if type(data) == "dict" else None
+    if type(user_count) not in ["int", "float"] or type(growth) not in ["int", "float"] or user_count < 0:
+        return render_api_error("data")
+    growth_per_second = max(0, min(math.ceil(growth), 100))
 
     # render frames to represent user count increase
     frames = render_frames(user_count, growth_per_second, number_color, dot_separator)
@@ -101,6 +108,12 @@ def render_frames(user_count, growth_per_second, number_color, dot_separator):
 
     # diff between final and current count
     count_diff = int(last_user_count - user_count)
+
+    if count_diff <= 0:
+        frame_text = humanize.comma(int(user_count))
+        if dot_separator:
+            frame_text = frame_text.replace(",", ".")
+        return [render.Text(frame_text, color = number_color)]
 
     # create frames
     for _ in range(count_diff):
@@ -205,7 +218,7 @@ def render_api_error(status_code):
                         ],
                     ),
                     render.Text("API ERROR", color = "#ff0000"),
-                    render.Text("CODE %d" % status_code, color = "#ffff00"),
+                    render.Text("CODE %s" % status_code, color = "#ffff00"),
                 ],
             ),
         ),

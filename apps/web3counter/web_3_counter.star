@@ -5,6 +5,7 @@ Descrtion: Displays the total dollar value of lost assets due to crypto scams an
 Author: Nick Kuzmik (github.com/kuzmik)
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
@@ -51,9 +52,11 @@ def main():
 
 def get_total():
     resp = http.get(W3IGG_API, ttl_seconds = 900)
-    if resp.status_code != 200:
-        fail("API request failed with status %d", resp.status_code)
-    total_lost = resp.json()["total"]
+    body = resp.body()
+    data = json.decode(body, {}) if resp.status_code == 200 and body and len(body) <= 4096 else {}
+    total_lost = data.get("total") if type(data) == "dict" else None
+    if type(total_lost) not in ["int", "float"] or total_lost < 0:
+        return "unavailable"
 
     return humanize.comma(float(total_lost))
 

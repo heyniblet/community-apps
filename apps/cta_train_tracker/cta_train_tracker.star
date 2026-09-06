@@ -61,15 +61,21 @@ def sort_train_arrivals(arrival_estimate):
     else:
         return (1, int(arrival_estimate["minutes_away"]))
 
-def map_to_train_estimates(response, train_dir):
-    next_train_estimates = [{
-        "color": item["rt"],
-        "minutes_away": calculate_minutes_away(item),
-        "arrival_time": item["arrT"],
-        "destination": item["destNm"],
-        "is_due": int(item["isApp"]),
-        "direction": int(item["trDr"]),
-    } for item in response.json()["ctatt"]["eta"]]
+def map_to_train_estimates(data, train_dir):
+    next_train_estimates = []
+    for item in data.get("eta", [])[:20]:
+        if type(item) != "dict" or "rt" not in item or "arrT" not in item or "prdt" not in item or "destNm" not in item or "isApp" not in item or "trDr" not in item:
+            continue
+        if str(item["isApp"]) not in ["0", "1"] or str(item["trDr"]) not in ["1", "5"]:
+            continue
+        next_train_estimates.append({
+            "color": item["rt"],
+            "minutes_away": calculate_minutes_away(item),
+            "arrival_time": item["arrT"],
+            "destination": str(item["destNm"])[:100],
+            "is_due": int(str(item["isApp"])),
+            "direction": int(str(item["trDr"])),
+        })
 
     if (train_dir == "inbound"):
         next_train_estimates = [obj for obj in next_train_estimates if obj["direction"] == 5]
@@ -111,29 +117,39 @@ def render_error_message():
 
 def main(config):
     train_dir = config.str("directions", DEFAULT_DIRECTION)
-    map_id = int(config.get("mapId", DEFAULT_MAPID))
+    map_id = config.get("mapId", DEFAULT_MAPID)
     api_key = config.get("api_key")
 
-    if api_key == None:
+    if not api_key or len(api_key) > 256:
         return render_error_message()
+    if len(map_id) != 5:
+        return render_error_message()
+    for c in map_id.elems():
+        if c not in "0123456789":
+            return render_error_message()
 
-    arrival_estimate_url = "http://api.transitchicago.com/api/1.0/ttarrivals.aspx"
+    arrival_estimate_url = "https://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
 
     estimates_response = http.get(
         arrival_estimate_url,
         params = {
             "key": api_key,
-            "mapid": str(map_id),
+            "mapid": map_id,
             "outputType": "JSON",
         },
-        ttl_seconds = 30,
     )
 
-    if (estimates_response.status_code != 200):
-        fail("request failed with code %d", estimates_response.status_code)
+    if estimates_response.status_code != 200 or len(estimates_response.body()) > 512 * 1024:
+        return render_error_message()
 
-    next_arrivals = map_to_train_estimates(estimates_response, train_dir)
+    data = estimates_response.json().get("ctatt", {})
+    if type(data) != "dict" or data.get("errCd") not in [None, "0"] or type(data.get("eta")) != "list":
+        return render_error_message()
+    next_arrivals = map_to_train_estimates(data, train_dir)
     children_to_render = map_to_render(next_arrivals)
+
+    if not children_to_render:
+        return render.Root(child = render.Text("No trains found"))
 
     return render.Root(
         child = render.Column(

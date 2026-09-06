@@ -1,12 +1,14 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
+load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
 BORDER_SIZE = 2 if canvas.is2x() else 1
 
 def main(config):
-    URL = config.get("immich_url", "https://example.com")
+    URL = config.get("immich_url", "").strip().rstrip("/")
     API_KEY = config.get("immich_api_key", "")
 
     # SHOW_FAVORITES = config.bool("show_favorites", False)
@@ -16,43 +18,45 @@ def main(config):
     SHOW_DATE = config.bool("show_date", True)
     SHOW_LOCATION = config.bool("show_location", False)
 
+    if not valid_base_url(URL) or type(API_KEY) != "string" or not API_KEY or len(API_KEY) > 2048 or not valid_id(ALBUM):
+        return message("Configure public HTTPS Immich")
+
     res = http.get(STATUS_URL)
 
     if res.status_code != 200:
-        return render.Root(
-            child = render.WrappedText("Server not accessible"),
-        )
+        return message("Server not accessible")
     else:
         headers = {
             "x-api-key": API_KEY,
         }
         res = http.get(ALBUM_URL, headers = headers)
-        status = res.json().get("statusCode")
-        if status != None:
-            return render.Root(
-                child = render.WrappedText("Album not accessible"),
-            )
-        assets = res.json()["assets"]
-        assetCount = int(res.json()["assetCount"]) - 1
+        body = res.body()
+        album = json.decode(body, {}) if res.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
+        assets = album.get("assets", []) if type(album) == "dict" else []
+        if type(assets) != "list":
+            return message("Album not accessible")
+        assets = [asset for asset in assets[:1000] if type(asset) == "dict" and valid_id(asset.get("id"))]
+        assetCount = len(assets) - 1
         if assetCount < 0:
-            return render.Root(
-                child = render.WrappedText("Album is Empty"),
-            )
+            return message("Album is Empty")
         randomCount = random.number(0, assetCount)
         assetID = assets[randomCount]["id"]
         IMG_URL = "%s/api/assets/%s" % (URL, assetID)
-        print(IMG_URL)
         res_img = http.get("%s/thumbnail" % IMG_URL, headers = headers)
         res_req_metadata = http.get(IMG_URL, headers = headers)
-        if (res_req_metadata.status_code != 200):
-            return render.Root(
-                child = render.WrappedText("Unable to retrieve image. Check API Perms"),
-            )
-        res_metadata = res_req_metadata.json()
-        country = res_metadata["exifInfo"].get("country")
-        state = res_metadata["exifInfo"].get("state")
-        city = res_metadata["exifInfo"].get("city")
-        photo_date = res_metadata["exifInfo"].get("dateTimeOriginal")
+        image = res_img.body()
+        metadata_body = res_req_metadata.body()
+        content_type = res_img.headers.get("Content-Type", "").lower()
+        if res_img.status_code != 200 or not image or len(image) > 8 * 1024 * 1024 or not content_type.startswith("image/") or res_req_metadata.status_code != 200 or len(metadata_body) > 256 * 1024:
+            return message("Unable to retrieve image")
+        res_metadata = json.decode(metadata_body, {})
+        exif = res_metadata.get("exifInfo") or {} if type(res_metadata) == "dict" else {}
+        if type(exif) != "dict":
+            exif = {}
+        country = bounded_text(exif.get("country"), 80)
+        state = bounded_text(exif.get("state"), 80)
+        city = bounded_text(exif.get("city"), 80)
+        photo_date = bounded_text(exif.get("dateTimeOriginal"), 40)
         return render.Root(
             child = render.Stack(
                 children = [
@@ -60,7 +64,7 @@ def main(config):
                         padding = BORDER_SIZE,
                         color = "#fff",
                         child = render.Image(
-                            src = res_img.body(),
+                            src = image,
                             width = canvas.width() - BORDER_SIZE,
                             height = canvas.height() - BORDER_SIZE,
                         ),
@@ -111,12 +115,29 @@ def get_text(date, country, state, city, toggle_date, toggle_location):
         ]
 
 def parse_date(date):
+    if type(date) != "string" or not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}", date):
+        return ""
     splitDate = date.split("-")
     year = splitDate[0]
     month = splitDate[1]
     day = splitDate[2].split("T")[0]
 
     return "%s/%s/%s" % (month, day, year)
+
+def valid_base_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://"):
+        return False
+    parts = value.split("/")
+    return len(parts) >= 3 and parts[2] and ":" not in parts[2] and not any([c in value for c in ["@", "\\", " ", "\t", "\r", "\n", "?", "#"]])
+
+def valid_id(value):
+    return type(value) == "string" and re.match(r"^[0-9A-Za-z_-]{1,100}$", value)
+
+def bounded_text(value, limit):
+    return value[:limit] if type(value) == "string" else None
+
+def message(text):
+    return render.Root(child = render.WrappedText(text, width = canvas.width(), align = "center"))
 
 def get_schema():
     return schema.Schema(
@@ -133,6 +154,7 @@ def get_schema():
                 name = "Immich API Key",
                 desc = "Your Immich API key. See Immich documentation on how you can retrieve this.",
                 icon = "key",
+                secret = True,
             ),
             schema.Toggle(
                 id = "show_favorites",

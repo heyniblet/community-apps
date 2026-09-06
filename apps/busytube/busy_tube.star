@@ -8,7 +8,6 @@ Author: dinosaursrarr
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
-load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -22,10 +21,11 @@ WHITE = "#fff"
 DEFAULT_STATION_NAME = "Russell Square"
 DEFAULT_NAPTAN_ID = "940GZZLURSQ"
 
-STATION_URL = "https://api.tfl.gov.uk/StopPoint"
 CROWDING_LIVE_URL = "https://api.tfl.gov.uk/Crowding/%s/Live"
 CROWDING_TYPICAL_URL = "https://api.tfl.gov.uk/Crowding/%s/%s"
 USER_AGENT = "Tidbyt busy_tube"
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_TIME_BANDS = 96
 
 CONTAINER_WIDTH = 62
 CONTAINER_HEIGHT = 30
@@ -40,98 +40,46 @@ BUSY_MAX = 0.7
 def app_key(config):
     return config.get("tfl_app_key") or ""
 
-# Get list of stations near a given location, or look up from cache if available.
-def fetch_stations(loc, config):
-    rounded_lat = math.round(1000.0 * float(loc["lat"])) / 1000.0  # truncate to 3dp, which means
-    rounded_lng = math.round(1000.0 * float(loc["lng"])) / 1000.0  # to the nearest ~110 metres.
-    resp = http.get(
-        STATION_URL,
-        params = {
-            "app_key": app_key(config),
-            "lat": str(rounded_lat),
-            "lon": str(rounded_lng),
-            "radius": "500",
-            "stopTypes": "NaptanMetroStation",
-            "returnLines": "false",
-            "modes": "tube",
-            "categories": "none",
-        },
-        headers = {
-            "User-Agent": USER_AGENT,
-        },
-        ttl_seconds = 86400,  # Tube stations don't move often
-    )
-    if resp.status_code != 200:
-        print("TFL station search failed with status ", resp.status_code)
+def request_params(config):
+    key = app_key(config)
+    return {"app_key": key} if key else {}
+
+def fetch_json(url, config):
+    resp = http.get(url, params = request_params(config), headers = {"User-Agent": USER_AGENT})
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        print("TfL crowding request failed with status %d" % resp.status_code)
         return None
-    if not resp.json().get("stopPoints"):
-        print("TFL station search does not contain stops")
-        return None
-    return resp.json()
+    data = json.decode(body, None)
+    return data if type(data) == "dict" else None
 
-# API gives errors when searching for locations outside the United Kingdom.
-def outside_uk_bounds(loc):
-    lat = float(loc["lat"])
-    lng = float(loc["lng"])
-    if lat <= 49.9 or lat >= 58.7 or lng <= -11.05 or lng >= 1.78:
-        return True
-    return False
-
-# Find and extract details of all stations near a given location.
-def list_stations(location, config):
-    loc = json.decode(location)
-    if outside_uk_bounds(loc):
-        return [schema.Option(
-            display = "Default option - location is outside the UK",
-            value = json.encode({
-                "naptanId": DEFAULT_NAPTAN_ID,
-                "name": DEFAULT_STATION_NAME,
-            }),
-        )]
-
-    data = fetch_stations(loc, config)
-    if not data:
-        return []
-    options = []
-    for station in data["stopPoints"]:
-        if not station.get("naptanId"):
-            print("TFL station result does not include naptanId")
-            continue
-        if not station.get("commonName"):
-            print("TFL station result does not include name")
-            continue
-
-        station_name = station["commonName"].removesuffix(" Underground Station")
-        option = schema.Option(
-            display = station_name,
-            value = json.encode({
-                "naptanId": station["naptanId"],
-                "name": station_name,
-            }),
-        )
-        options.append(option)
-    return options
+def station_config(value):
+    if not value:
+        return DEFAULT_STATION_NAME, DEFAULT_NAPTAN_ID
+    raw = str(value).strip()
+    data = json.decode(raw, None)
+    if type(data) == "dict" and data.get("value"):
+        raw = str(data["value"])
+        data = json.decode(raw, None)
+    if type(data) == "dict":
+        station_name = str(data.get("name") or data.get("commonName") or "Tube station").strip()
+        naptan_id = str(data.get("naptanId") or data.get("id") or "").strip()
+    else:
+        station_name = "Tube station"
+        naptan_id = raw
+    for char in naptan_id.elems():
+        if char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789":
+            return DEFAULT_STATION_NAME, DEFAULT_NAPTAN_ID
+    return (station_name[:80] or "Tube station", naptan_id if naptan_id and len(naptan_id) <= 32 else DEFAULT_NAPTAN_ID)
 
 # Fetch data about how crowded the station currently is
 def fetch_live_crowdedness(naptan_id, config):
     live_url = CROWDING_LIVE_URL % naptan_id
-    resp = http.get(
-        live_url,
-        params = {
-            "app_key": app_key(config),
-        },
-        headers = {
-            "User-Agent": USER_AGENT,
-        },
-        ttl_seconds = 300,  # Data is updated every 5 mins
-    )
-    if resp.status_code != 200:
-        print("TFL live crowding query failed with status ", resp.status_code)
-        return None
-    if not resp.json().get("dataAvailable"):
+    data = fetch_json(live_url, config)
+    if not data or not data.get("dataAvailable"):
         print("TFL live crowdedness data not available")
         return None
-    return resp.json()
+    return data
 
 # Extract data about currrent crowdedness from API response
 def get_live_crowdedness(naptan_id, config):
@@ -162,23 +110,11 @@ def weekday_name(date):
 # Fetch data about how crowded the station typically is on a given day
 def fetch_typical_crowdedness(naptan_id, now, config):
     typical_url = CROWDING_TYPICAL_URL % (naptan_id, weekday_name(now))
-    resp = http.get(
-        typical_url,
-        params = {
-            "app_key": app_key(config),
-        },
-        headers = {
-            "User-Agent": USER_AGENT,
-        },
-        ttl_seconds = 604800,  # Data only needed once a week
-    )
-    if resp.status_code != 200:
-        print("TFL live crowding query failed with status ", resp.status_code)
+    data = fetch_json(typical_url, config)
+    if not data or not data.get("isFound"):
+        print("TFL typical crowdedness data not available")
         return None
-    if not resp.json().get("isFound"):
-        print("TFL live crowdedness data not available")
-        return None
-    return resp.json()
+    return data
 
 # Convert a time period from the API into a float we can use to plot.
 # "13:45-14:00" -> 13.75
@@ -193,14 +129,16 @@ def get_typical_crowdedness(naptan_id, now, config):
     if not resp:
         return []
     data = []
-    for band in resp["timeBands"]:
+    for band in resp.get("timeBands", [])[:MAX_TIME_BANDS]:
+        if type(band) != "dict" or not band.get("timeBand") or type(band.get("percentageOfBaseLine")) not in ["int", "float"]:
+            continue
         data.append((extract_time(band["timeBand"]), band["percentageOfBaseLine"]))
     return data
 
 # Using labels suggested by TfL themselves
 # https://techforum.tfl.gov.uk/t/data-drop-near-real-time-crowding-data-api/1916
 def format(crowdedness):
-    if not crowdedness:
+    if crowdedness == None:
         return "Unknown", GREY, "?%"
     number = "{}%".format(int(100 * crowdedness))
     if crowdedness < QUIET_MAX:
@@ -210,14 +148,7 @@ def format(crowdedness):
     return "Very busy", RED, number
 
 def main(config):
-    station = config.get("station")
-    if not station:
-        station_name = DEFAULT_STATION_NAME
-        naptan_id = DEFAULT_NAPTAN_ID
-    else:
-        data = json.decode(json.decode(station)["value"])
-        station_name = data["name"]
-        naptan_id = data["naptanId"]
+    station_name, naptan_id = station_config(config.get("station"))
 
     # Find out how busy things currently are.
     pct_peak_crowdedness = get_live_crowdedness(naptan_id, config)
@@ -298,12 +229,12 @@ def get_schema():
                 icon = "key",
                 secret = True,
             ),
-            schema.LocationBased(
+            schema.Text(
                 id = "station",
-                name = "Station",
-                desc = "The tube station to check capacity for",
+                name = "TfL station ID",
+                desc = "NaPTAN station ID; existing saved station selections still work.",
                 icon = "trainSubway",
-                handler = list_stations,
+                default = DEFAULT_NAPTAN_ID,
             ),
         ],
     )

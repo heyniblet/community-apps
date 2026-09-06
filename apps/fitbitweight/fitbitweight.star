@@ -187,13 +187,9 @@ def main(config):
 
 def exchange_code_for_tokens(auth_code, client_id, client_secret):
     # Build Basic auth header
-    print("CLIENT_ID:", client_id)
-    print("CLIENT_SECRET length:", len(client_secret or ""))
     auth_raw = client_id + ":" + client_secret
-    print("AUTH_RAW:", auth_raw)
 
     auth_b64 = base64.encode(auth_raw)
-    print("AUTH_HEADER:", "Basic " + auth_b64)
 
     headers = {
         "Authorization": "Basic " + auth_b64,
@@ -225,8 +221,6 @@ def exchange_code_for_tokens(auth_code, client_id, client_secret):
     return token_params["access_token"], token_params["refresh_token"]
 
 def get_access_token(refresh_token, client_id, client_secret):
-    print("get_access_token using refresh_token:", refresh_token)
-
     auth_raw = client_id + ":" + client_secret
     auth_b64 = base64.encode(auth_raw)
 

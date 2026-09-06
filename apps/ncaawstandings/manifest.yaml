@@ -6,7 +6,7 @@ desc: View NCAAW standings by conference.
 author: LunchBox8484
 fileName: ncaaw_standings.star
 packageName: ncaawstandings
-recommendedInterval: 5
+recommendedInterval: 60
 category: sports
 tags:
   - news

@@ -33,10 +33,10 @@ def get_current_unix_time():
 
 def get_current_show_name(url):
     response = fetch_data(url)
-    schedule_data = response["schedule"]
+    schedule_data = response.get("schedule", []) if type(response) == "dict" else []
     current_time = get_current_unix_time()
 
-    for episode in schedule_data:
+    for episode in schedule_data[:100] if type(schedule_data) == "list" else []:
         start_time = int(episode["starttimeutc"].replace("/Date(", "").replace(")/", ""))
         end_time = int(episode["endtimeutc"].replace("/Date(", "").replace(")/", ""))
         if start_time <= current_time and current_time <= end_time:
@@ -57,21 +57,22 @@ def get_station_icon(station):
 def fetch_data(url):
     cached_data = cache.get("sr-url=%s" % url)
     if cached_data != None:
-        print("Hit! Using cached 'Sveriges Radio' data for", url)
-        data = json.decode(cached_data)
+        data = json.decode(cached_data, {})
     else:
-        print("Miss! Fetching 'Sveriges Radio' data for", url)
         assets_resp = http.get(url)
         if (assets_resp.status_code != 200):
-            fail("'Sveriges Radio' request failed with status", assets_resp.status_code)
+            return {}
 
-        data = assets_resp.json()
+        body = assets_resp.body()
+        data = json.decode(body, {}) if body and len(body) <= 512 * 1024 else {}
+        if type(data) != "dict":
+            return {}
         cache.set("sr-url=%s" % url, json.encode(data), ttl_seconds = 10)
 
     return data
 
 def get_currently_playing(now_playing_data, station_selection):
-    currently_playing = now_playing_data["playlist"]
+    currently_playing = now_playing_data.get("playlist", {}) if type(now_playing_data) == "dict" else {}
     current_song = currently_playing.get("song")
     song_is_playing = current_song != None
 
@@ -85,8 +86,9 @@ def get_currently_playing(now_playing_data, station_selection):
         if current_episode == None:
             title = "Could not find"
             subtitle = "show information"
-        title = current_episode.get("title") or "Now playing"
-        subtitle = current_episode.get("subtitle") or current_episode.get("description")
+        else:
+            title = current_episode.get("title") or "Now playing"
+            subtitle = current_episode.get("subtitle") or current_episode.get("description") or ""
 
     return title, subtitle
 
@@ -96,6 +98,8 @@ def main(config):
     station_image = get_station_icon(station_selection)
 
     response = fetch_data(station_now_playing)
+    if not response:
+        return render.Root(child = render.WrappedText("Sveriges Radio unavailable", align = "center"))
     title, subtitle = get_currently_playing(response, station_selection)
 
     return render.Root(

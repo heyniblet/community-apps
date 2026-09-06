@@ -6,7 +6,7 @@ desc: Displays the predicted arrival times for next buses at specified DC bus st
 author: JetgirlDC
 fileName: dc_bus_times.star
 packageName: dcbustimes
-recommendedInterval: 5
+recommendedInterval: 1
 category: transit
 tags:
   - real-time

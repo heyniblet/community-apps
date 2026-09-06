@@ -5,12 +5,14 @@ Description: This app tells you the next buses to arrive at 1-2 bus stops in in 
 Author: abrahamrowe
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
 def main(config):
-    api_key = "42585dc3f14741fa999f64f6458727fa"
+    api_key = (config.str("api_key") or "").strip()
     defaultN = 1002491
     defaultS = 1002493
     oneStop = False
@@ -18,11 +20,16 @@ def main(config):
     northbound = config.str("busStopN", defaultN)
     southbound = config.str("busStopS", defaultS)
 
+    if not api_key:
+        return render.Root(child = render.WrappedText("Add a WMATA API key", align = "center"))
+
     # Trim whitespace to avoid 400 Bad Request
     if type(northbound) == "string":
         northbound = northbound.strip()
     if type(southbound) == "string":
         southbound = southbound.strip()
+    if not re.match("^[0-9]{1,12}$", str(northbound)) or not re.match("^[0-9]{1,12}$", str(southbound)):
+        return render.Root(child = render.WrappedText("Invalid bus stop", align = "center"))
 
     if northbound == southbound:
         oneStop = True
@@ -43,19 +50,15 @@ def main(config):
             child = render.WrappedText("Error S: {}".format(WMATA_data2.status_code)),
         )
 
-    predictions1 = WMATA_data1.json()["Predictions"]
-    predictions2 = WMATA_data2.json()["Predictions"]
+    body1 = WMATA_data1.body()
+    body2 = WMATA_data2.body()
+    data1 = json.decode(body1, {}) if body1 and len(body1) <= 256 * 1024 else {}
+    data2 = json.decode(body2, {}) if body2 and len(body2) <= 256 * 1024 else {}
+    predictions1 = data1.get("Predictions", []) if type(data1) == "dict" else []
+    predictions2 = data2.get("Predictions", []) if type(data2) == "dict" else []
+    if type(predictions1) != "list" or type(predictions2) != "list" or not predictions1 or (not oneStop and not predictions2) or (oneStop and len(predictions1) < 2):
+        return render.Root(child = render.WrappedText("No upcoming buses", align = "center"))
 
-    # Check if result was served from cache or not
-    if WMATA_data1.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling WMATA API.")
-
-    if WMATA_data2.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling WMATA API.")
     if oneStop == False:
         return render.Root(
             child = render.Column(
@@ -251,6 +254,13 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
+            schema.Text(
+                id = "api_key",
+                name = "WMATA API key",
+                desc = "Your key from developer.wmata.com.",
+                icon = "key",
+                secret = True,
+            ),
             schema.Text(
                 id = "busStopN",
                 name = "Northbound Bus Stop ID",

@@ -5,6 +5,7 @@ Description: Displays Splatoon 3 schedule info, data courtesy of Splatoon3.ink.
 Author: Denton-L
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -156,10 +157,13 @@ def find_setting(data, mode):
     return None
 
 def fetch_image(url):
-    res = http.get(url, ttl_seconds = TTL_SECONDS)
-    if res.status_code != 200:
+    if type(url) != "string" or len(url) > 2048 or not url.startswith("https://splatoon3.ink/"):
         return None
-    return res.body()
+    res = http.get(url, ttl_seconds = TTL_SECONDS)
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > 2 * 1024 * 1024 or not res.headers.get("Content-Type", "").lower().startswith("image/"):
+        return None
+    return body
 
 def render_splatfest(current_fest, mode_name):
     def color_to_rgb(color):
@@ -178,12 +182,18 @@ def render_splatfest(current_fest, mode_name):
 
 def main(config):
     mode_name = config.get("mode", MODES.keys()[0])
+    if mode_name not in MODES:
+        mode_name = MODES.keys()[0]
     mode = MODES[mode_name]
 
     res = http.get(API_URL, ttl_seconds = TTL_SECONDS)
-    if res.status_code != 200:
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > 512 * 1024:
         return []
-    data = res.json()["data"]
+    payload = json.decode(body, {})
+    if type(payload) != "dict" or type(payload.get("data")) != "dict":
+        return []
+    data = payload["data"]
 
     setting = find_setting(data, mode)
     if not setting:

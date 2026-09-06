@@ -1,5 +1,4 @@
 load("encoding/json.star", "json")
-load("http.star", "http")
 load("math.star", "math")
 load("moon_assets.star", "get_moon_image")
 load("render.star", "render")
@@ -49,14 +48,6 @@ def main(config):
         lat = float(loc_data.get("lat", lat))
         lng = float(loc_data.get("lng", lng))
         timezone = loc_data.get("timezone", timezone)
-    else:
-        res = http.get("http://ip-api.com/json/", ttl_seconds = 86400)
-        if res.status_code == 200:
-            ip_data = res.json()
-            if ip_data.get("status") == "success":
-                lat = ip_data.get("lat", lat)
-                lng = ip_data.get("lon", lng)
-                timezone = ip_data.get("timezone", timezone)
 
     # 2. Preferences & Checks
     is_military = config.bool("military_time", False)
@@ -149,7 +140,7 @@ def get_schema():
             schema.Location(
                 id = "location",
                 name = "Manual Location Override",
-                desc = "Overrides automatic IP detection",
+                desc = "Location for moon and daylight calculations. Defaults to Tigard, Oregon.",
                 icon = "locationDot",
             ),
             schema.Toggle(

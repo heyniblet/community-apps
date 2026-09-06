@@ -142,6 +142,7 @@ Robustness:\r
 
 load("cache.star", "cache")
 load("encoding/base64.star", "base64")
+load("encoding/json.star", "json")
 load("hash.star", "hash")
 load("http.star", "http")
 load("render.star", "canvas", "render")
@@ -163,6 +164,7 @@ TOKEN_CACHE_TTL = 2700  # 45 min (tokens last 60, refresh early)
 ART_CACHE_TTL = 86400  # 24 hours (album art URLs are stable)
 ERROR_CACHE_TTL = 30  # 30 sec backoff on errors
 MAX_ERROR_BACKOFF = 300  # Max 5 min backoff
+SPOTIFY_IMAGE_ORIGIN = "https://i.scdn.co/image/"
 
 # Display Modes
 MODE_FULL = "full"  # Art + text + progress bar
@@ -249,17 +251,17 @@ def select_best_image(images):
         for img in reversed(images):
             url = img.get("url")
             w = img.get("width", 0)
-            if url and w >= 128:
+            if type(url) == "string" and url.startswith(SPOTIFY_IMAGE_ORIGIN) and w >= 128:
                 return url
 
         # Fallback to largest available
         for img in images:
-            if img.get("url"):
+            if type(img.get("url")) == "string" and img["url"].startswith(SPOTIFY_IMAGE_ORIGIN):
                 return img["url"]
     else:
         # For 1x, prefer smallest image
         for img in reversed(images):
-            if img.get("url"):
+            if type(img.get("url")) == "string" and img["url"].startswith(SPOTIFY_IMAGE_ORIGIN):
                 return img["url"]
     return None
 
@@ -333,30 +335,30 @@ def needs_scroll(text, available_width, font, scroll_speed):
         return False
     return text_width_estimate(text, font) > available_width
 
-def get_error_backoff():
+def get_error_backoff(backoff_key):
     """Get current error backoff time, implementing exponential backoff."""
-    backoff_str = cache.get(cache_key("error_backoff"))
+    backoff_str = cache.get(backoff_key)
     if backoff_str:
         return int(backoff_str)
     return 0
 
-def set_error_backoff(seconds):
+def set_error_backoff(backoff_key, seconds):
     """Set error backoff time."""
-    cache.set(cache_key("error_backoff"), str(seconds), ttl_seconds = seconds + 10)
+    cache.set(backoff_key, str(seconds), ttl_seconds = seconds + 10)
 
-def increase_error_backoff():
+def increase_error_backoff(backoff_key):
     """Increase error backoff exponentially."""
-    current = get_error_backoff()
+    current = get_error_backoff(backoff_key)
     if current == 0:
         new_backoff = ERROR_CACHE_TTL
     else:
         new_backoff = min(current * 2, MAX_ERROR_BACKOFF)
-    set_error_backoff(new_backoff)
+    set_error_backoff(backoff_key, new_backoff)
     return new_backoff
 
-def clear_error_backoff():
+def clear_error_backoff(backoff_key):
     """Clear error backoff on success."""
-    cache.set(cache_key("error_backoff"), "", ttl_seconds = 1)
+    cache.set(backoff_key, "", ttl_seconds = 1)
 
 def hash_string(s):
     """Simple string hash for cache keys."""
@@ -383,9 +385,10 @@ def get_access_token(client_id, client_secret, refresh_token):
 
     # Use a unique cache key for each Spotify account
     token_cache_key = cache_key("access_token_" + hash.sha256(refresh_token))
+    backoff_key = cache_key("error_backoff_" + hash.sha256(refresh_token))
 
     # Check if we're in error backoff
-    backoff = get_error_backoff()
+    backoff = get_error_backoff(backoff_key)
     if backoff > 0:
         # Still use cached token if available during backoff
         cached = cache.get(token_cache_key)
@@ -415,18 +418,18 @@ def get_access_token(client_id, client_secret, refresh_token):
 
     # Handle response
     if resp.status_code == 200:
-        data = resp.json()
+        data = response_json(resp, 64 * 1024)
         token = data.get("access_token")
         if token:
             # Cache token
             cache.set(token_cache_key, token, ttl_seconds = TOKEN_CACHE_TTL)
-            clear_error_backoff()
+            clear_error_backoff(backoff_key)
             return token, token_cache_key, None
         return None, token_cache_key, "No token in response"
 
     # Handle errors
     if resp.status_code == 400:
-        error_data = resp.json()
+        error_data = response_json(resp, 64 * 1024)
         error = error_data.get("error", "")
         if "invalid_grant" in error:
             return None, token_cache_key, "Token revoked - reauthorize"
@@ -437,11 +440,11 @@ def get_access_token(client_id, client_secret, refresh_token):
 
     if resp.status_code == 429:
         # Rate limited
-        increase_error_backoff()
+        increase_error_backoff(backoff_key)
         return None, token_cache_key, "Rate limited"
 
     # Other errors - implement backoff
-    increase_error_backoff()
+    increase_error_backoff(backoff_key)
     return None, token_cache_key, "Auth error: " + str(resp.status_code)
 
 # =============================================================================
@@ -470,7 +473,7 @@ def fetch_player_state(access_token, token_cache_key):
     if resp.status_code != 200:
         return None
 
-    return resp.json()
+    return response_json(resp, 512 * 1024)
 
 def fetch_currently_playing(access_token, token_cache_key):
     """
@@ -497,7 +500,7 @@ def fetch_currently_playing(access_token, token_cache_key):
     if resp.status_code != 200:
         return None
 
-    return resp.json()
+    return response_json(resp, 512 * 1024)
 
 def fetch_recently_played(access_token):
     """Fetch most recently played track."""
@@ -512,7 +515,7 @@ def fetch_recently_played(access_token):
     if resp.status_code != 200:
         return None
 
-    data = resp.json()
+    data = response_json(resp, 512 * 1024)
     items = data.get("items", [])
 
     if not items:
@@ -525,7 +528,7 @@ def fetch_album_art(url):
     Fetch album art image data with caching.
     Returns image bytes or None.
     """
-    if not url:
+    if type(url) != "string" or not url.startswith(SPOTIFY_IMAGE_ORIGIN):
         return None
 
     # Use URL hash for cache key
@@ -537,13 +540,17 @@ def fetch_album_art(url):
 
     resp = http.get(url, ttl_seconds = ART_CACHE_TTL)
 
-    if resp.status_code != 200:
-        return None
-
     art_data = resp.body()
+    if resp.status_code != 200 or not art_data or len(art_data) > 2 * 1024 * 1024 or not resp.headers.get("Content-Type", "").lower().startswith("image/"):
+        return None
     cache.set(art_cache_key, art_data, ttl_seconds = ART_CACHE_TTL)
 
     return art_data
+
+def response_json(response, maximum):
+    body = response.body()
+    data = json.decode(body, {}) if body and len(body) <= maximum else {}
+    return data if type(data) == "dict" else {}
 
 # =============================================================================
 # DATA PARSING
@@ -1353,12 +1360,14 @@ def get_schema():
                 name = "Spotify Client Secret",
                 desc = "From your Spotify Developer app. See https://github.com/tronbyt/apps/blob/main/apps/spotify/README.md for setup instructions.",
                 icon = "lock",
+                secret = True,
             ),
             schema.Text(
                 id = "refresh_token",
                 name = "Refresh Token",
                 desc = "Required before use. See https://github.com/tronbyt/apps/blob/main/apps/spotify/README.md for setup instructions to generate this token.",
                 icon = "rotate",
+                secret = True,
             ),
 
             # Display options

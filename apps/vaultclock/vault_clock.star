@@ -1908,7 +1908,7 @@ def looks_like_json(resp):
     if content_type.find("json") < 0:
         return False
     text = resp.body().strip()
-    return text.startswith("{") and text.endswith("}")
+    return len(text) <= 1024 * 1024 and text.startswith("{") and text.endswith("}")
 
 def shape(body):
     current = body["current"]

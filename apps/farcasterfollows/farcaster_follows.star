@@ -1,4 +1,4 @@
-load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/farcaster_icon_dark_bg.png", FARCASTER_ICON_DARK_BG_ASSET = "file")
@@ -8,6 +8,7 @@ load("schema.star", "schema")
 
 FARCASTER_ICON_DARK_BG = FARCASTER_ICON_DARK_BG_ASSET.readall()
 FARCASTER_ICON_LIGHT_BG = FARCASTER_ICON_LIGHT_BG_ASSET.readall()
+MAX_RESPONSE_BYTES = 128 * 1024
 
 # 1. Copy logo from Figma as SVG: https://www.figma.com/file/E1RJ5DNTM8eHZpJI1bcaP3/Public-logo?node-id=1-2&t=4PuwjeL9pH70lnxv-0
 # 2. Crop & revert the colors (for dark), export to PNG.
@@ -15,12 +16,10 @@ FARCASTER_ICON_LIGHT_BG = FARCASTER_ICON_LIGHT_BG_ASSET.readall()
 # 3. Copy to clipboard and convert to base64 using: https://onlineimagetools.com/convert-image-to-base64
 
 def main(config):
-    # https://gist.github.com/danromero/87be7035aab27bf6a603b2c956022370
-    # pixlet encrypt farcasterfollows $KEY
-    api_key = config.get("farcaster_api_key")
-
-    username = config.str("who", "nix")
-    count = get_followercount(username, api_key)
+    username = config.str("who", "nix").strip()
+    count = get_followercount(username)
+    if count == None:
+        return render.Root(child = render.WrappedText("Farcaster profile unavailable", color = "#ff5555"))
 
     scheme = config.str("scheme", "default")
 
@@ -82,27 +81,16 @@ def main(config):
 
     return render.Root(child = box)
 
-def get_followercount(username, api_key):
-    key = "followercount:" + username
-    cached = cache.get(key)
-    if cached != None:
-        print("Hit! Displaying cached data.")
-        count = int(cached)
-    else:
-        print("Miss! Calling Warpcaster API.")
-        rep = http.get(
-            "https://api.warpcast.com/v2/user-by-username?username={username}".format(username = username),
-            headers = {
-                "authorization": "Bearer {token}".format(token = api_key),
-            },
-        )
-        if rep.status_code != 200:
-            fail("warpcaster request failed with status %d", rep.status_code)
-        count = int(rep.json()["result"]["user"]["followerCount"])
-
-        cache.set(key, str(int(count)), ttl_seconds = 240)
-
-    return count
+def get_followercount(username):
+    if not username or len(username) > 64:
+        return None
+    rep = http.get("https://api.warpcast.com/v2/user-by-username?username=%s" % humanize.url_encode(username))
+    body = rep.body()
+    payload = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    result = payload.get("result") if type(payload) == "dict" else None
+    user = result.get("user") if type(result) == "dict" else None
+    count = user.get("followerCount") if type(user) == "dict" else None
+    return count if type(count) == "int" and count >= 0 and count <= 1000000000 else None
 
 def get_schema():
     return schema.Schema(
@@ -110,8 +98,8 @@ def get_schema():
         fields = [
             schema.Text(
                 id = "farcaster_api_key",
-                name = "Farcaster API Key",
-                desc = "Your Farcaster API key. See https://warpcast.com/~/developers/api for details.",
+                name = "Legacy Farcaster API Key",
+                desc = "Optional legacy setting; public follower counts no longer require this key.",
                 icon = "key",
                 secret = True,
             ),

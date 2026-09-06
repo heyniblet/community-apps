@@ -67,7 +67,7 @@ SUN_WITH_RAYS = (SUN_WITH_RAYS_ASSET_2X if IS_2X else SUN_WITH_RAYS_ASSET).reada
 # 24 hours — the window the displayed high/low covers. units=imperial keeps
 # the internal pipeline in °F like the original app; get_temp converts for
 # display.
-OPENWEATHER_FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=imperial&cnt=8"
+OPENWEATHER_FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
 DEFAULT_LOCATION = json.encode({
     "lat": "40.678",
@@ -245,6 +245,36 @@ def get_weather(condition_id, is_day):
         # default to clear, but should never happen
         return "sunny" if is_day else "clear_night"
 
+def parse_forecast(payload, now_epoch, display_celsius):
+    city = payload.get("city", {}) if type(payload) == "dict" else {}
+    entries = payload.get("list", []) if type(payload) == "dict" else []
+    if type(city) != "dict" or type(entries) != "list" or not entries:
+        return None
+    sunrise = city.get("sunrise")
+    sunset = city.get("sunset")
+    if type(sunrise) not in ["int", "float"] or type(sunset) not in ["int", "float"]:
+        return None
+
+    valid = []
+    for entry in entries[:8]:
+        main = entry.get("main", {}) if type(entry) == "dict" else {}
+        weather = entry.get("weather", []) if type(entry) == "dict" else []
+        if type(main) != "dict" or type(weather) != "list" or not weather or type(weather[0]) != "dict":
+            continue
+        low, high, condition = main.get("temp_min"), main.get("temp_max"), weather[0].get("id")
+        if type(low) in ["int", "float"] and type(high) in ["int", "float"] and type(condition) == "int":
+            valid.append([low, high, condition])
+    if not valid:
+        return None
+
+    return get_result_forecast(
+        int(math.round(min([entry[0] for entry in valid]))),
+        int(math.round(max([entry[1] for entry in valid]))),
+        valid[0][2],
+        sunrise <= now_epoch and now_epoch <= sunset,
+        display_celsius,
+    )
+
 def main(config):
     api_key = config.get("owmApiKey", None)
     temp_units = config.get("tempUnits", "F")
@@ -262,12 +292,17 @@ def main(config):
 
     result_forecast = None
     if not display_sample:
-        url = OPENWEATHER_FORECAST_URL.format(
-            lat = location["lat"],
-            lon = location["lng"],
-            api_key = api_key,
+        resp = http.get(
+            OPENWEATHER_FORECAST_URL,
+            params = {
+                "lat": location["lat"],
+                "lon": location["lng"],
+                "appid": api_key,
+                "units": "imperial",
+                "cnt": "8",
+            },
+            ttl_seconds = 3600,
         )
-        resp = http.get(url, ttl_seconds = 3600)
         if resp.status_code == 401:
             # a fresh OWM key can take up to ~2 hours to activate (and a
             # leftover key from the AccuWeather era is also a 401 here) —
@@ -277,34 +312,9 @@ def main(config):
             # other failures are transient; fail() keeps the last good render
             fail("OpenWeatherMap forecast request failed with status", resp.status_code)
         else:
-            resp_json = resp.json()
-
-            # day/night
-            rise_epoch = int(resp_json["city"]["sunrise"])
-            set_epoch = int(resp_json["city"]["sunset"])
-            now_epoch = now.unix
-            is_day = (rise_epoch <= now_epoch) and (now_epoch <= set_epoch)
-
-            # high/low across the coming 24 hours (8 x 3h slices). The free
-            # forecast API only carries future slices, so a true calendar-day
-            # range isn't available; a rolling 24h window stays meaningful at
-            # any hour of the day.
-            entries = resp_json["list"]
-            temp_min = entries[0]["main"]["temp_min"]
-            temp_max = entries[0]["main"]["temp_max"]
-            for entry in entries:
-                if entry["main"]["temp_min"] < temp_min:
-                    temp_min = entry["main"]["temp_min"]
-                if entry["main"]["temp_max"] > temp_max:
-                    temp_max = entry["main"]["temp_max"]
-
-            result_forecast = get_result_forecast(
-                int(math.round(temp_min)),
-                int(math.round(temp_max)),
-                int(entries[0]["weather"][0]["id"]),
-                is_day,
-                display_celsius,
-            )
+            body = resp.body().strip()
+            result_forecast = parse_forecast(resp.json(), now.unix, display_celsius) if len(body) <= 524288 and body.startswith("{") and body.endswith("}") else None
+            display_sample = result_forecast == None
 
     if display_sample:
         # sample data when no (working) API key is available, also useful for testing

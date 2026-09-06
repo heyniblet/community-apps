@@ -27,22 +27,28 @@ DEFAULT_LOCATION = """
 """
 
 def main(config):
-    LocationDetails = config.get("location", DEFAULT_LOCATION)
-    FuelType = config.get("FuelType", "U91")
+    LocationDetails = config.str("location", DEFAULT_LOCATION)
+    FuelType = config.str("FuelType", "U91")
+    if FuelType not in ["U91", "P95", "P98", "DL", "LPG", "E10", "E85", "PDL"]:
+        FuelType = "U91"
     Price = ""
 
     DecodeLoc = json.decode(LocationDetails)
-    Lat = DecodeLoc["lat"]
-    Long = DecodeLoc["lng"]
+    Lat = coordinate(DecodeLoc.get("lat") if type(DecodeLoc) == "dict" else None, -90, 90)
+    Long = coordinate(DecodeLoc.get("lng") if type(DecodeLoc) == "dict" else None, -180, 180)
+    if Lat == None or Long == None:
+        return render.Root(child = render.WrappedText(content = "Invalid location", font = "tom-thumb"))
 
     API_CALL = API_PREFIX + "Latitude=" + str(Lat) + "&" + "Longitude=" + str(Long) + "&fueltype=" + FuelType + "&brands=SelectAll&radius=3"
 
     #print(API_CALL)
     Cached = get_cachable_data(API_CALL, 300)
     FuelData = json.decode(Cached)
+    if type(FuelData) != "list" or not FuelData or type(FuelData[0]) != "dict":
+        return render.Root(child = render.WrappedText(content = "No fuel prices", font = "tom-thumb"))
 
-    Outlet = FuelData[0]["Name"]
-    Price = FuelData[0]["Price"]
+    Outlet = str(FuelData[0].get("Name", "Unknown"))[:120]
+    Price = FuelData[0].get("Price", "-")
     ListFuel = Type_to_Fuel(FuelType)
 
     mainFont = "CG-pixel-3x5-mono"
@@ -133,6 +139,14 @@ def Type_to_Fuel(type_id):
 
     return Type
 
+def coordinate(value, minimum, maximum):
+    text = str(value).strip()
+    unsigned = text[1:] if text.startswith("-") else text
+    if not unsigned or len(text) > 20 or unsigned.count(".") > 1 or not all([char in "0123456789." for char in unsigned.codepoints()]):
+        return None
+    number = float(text)
+    return number if minimum <= number and number <= maximum else None
+
 FuelOptions = [
     schema.Option(
         display = "Unleaded 91",
@@ -193,6 +207,9 @@ def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
 
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        fail("NSW Fuel Check request failed with status code: %d" % res.status_code)
 
-    return res.body()
+    body = res.body()
+    if not body or len(body) > 1048576:
+        fail("NSW Fuel Check returned an invalid response")
+    return body

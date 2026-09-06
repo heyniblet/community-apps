@@ -97,9 +97,9 @@ def retrieve_image(json_dict):
     """
 
     # Get the image URL from the response
-    image_url = json_dict["image"]["thumbnail"]["source"]
+    image_url = json_dict["image"]["thumbnail"]["source"].replace("/960px-", "/330px-")
 
     # Retrieve the actual image data from the source URL and cache the results for 4 hours
-    image = http.get(image_url, ttl_seconds = CACHE_DURATION).body()
+    image = http.get(image_url, ttl_seconds = CACHE_DURATION, headers = {"User-Agent": "TidbytApp/1.0"}).body()
 
     return image

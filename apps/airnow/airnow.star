@@ -1,19 +1,19 @@
 """
 Applet: AirNowAQI
 Summary: Air Now AQI
-Description: Displays the current AQI value and level by location using data provided by AirNow.gov.
+Description: Displays preliminary current AQI values and levels provided by AirNow.gov.
 Author: mjc-gh
 """
 
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
+load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
-# original tidbyt api key
-DEFAULT_API_KEY = "EAC9C956-3EDE-4955-A5BE-53492091A0DE"
 ACCURACY = "#.###"
+MAX_RESPONSE_BYTES = 256 * 1024
 
 DEFAULT_LOCATION = """
 {
@@ -37,15 +37,15 @@ CATEGORY_NAME_TO_NUMBER = {
 
 def get_alert_colors(category_num):
     if category_num == 1:
-        return ("#009966", "#FFF")
+        return ("#00e400", "#000")
     elif category_num == 2:
-        return ("#ffde33", "#000")
+        return ("#ffff00", "#000")
     elif category_num == 3:
-        return ("#ff9933", "#000")
+        return ("#ff7e00", "#000")
     elif category_num == 4:
-        return ("#cc0033", "#FFF")
+        return ("#ff0000", "#FFF")
     elif category_num == 5:
-        return ("#660099", "#FFF")
+        return ("#8f3f97", "#FFF")
     else:
         return ("#7e0023", "#FFF")
 
@@ -57,26 +57,37 @@ def get_current_observation_url(api_key, lat, lng):
     )
 
 def normalize_observation(raw):
+    if type(raw) != "dict":
+        return None
+
     hour_raw = raw.get("hourObserved", 0)
-    if type(hour_raw) == "string":
-        hour = int(hour_raw.split(":")[0])
-    else:
-        hour = int(hour_raw)
+    hour_text = str(hour_raw).split(":")[0]
+    if not re.findall("^[0-9]{1,2}$", hour_text):
+        return None
+    hour = int(hour_text)
 
     category_name = raw.get("aqiCategoryName", "")
+    if type(category_name) != "string":
+        return None
     category_number = CATEGORY_NAME_TO_NUMBER.get(category_name, -1)
 
     parameter_name = raw.get("parameterName", "")
+    if type(parameter_name) != "string":
+        return None
     if parameter_name == "OZONE":
         parameter_name = "O3"
+
+    aqi = raw.get("nowcastAQI", raw.get("aqi", -1))
+    if type(aqi) not in ["int", "float"] or aqi < 0 or aqi > 1000:
+        return None
 
     return {
         "DateObserved": raw.get("dateObserved", ""),
         "HourObserved": hour,
         "LocalTimeZone": raw.get("localTimeZone", ""),
-        "ReportingArea": raw.get("reportingAreaName", ""),
+        "ReportingArea": raw.get("reportingAreaName", "")[:80] if type(raw.get("reportingAreaName")) == "string" else "",
         "ParameterName": parameter_name,
-        "AQI": raw.get("nowcastAQI", raw.get("aqi", -1)),
+        "AQI": int(aqi),
         "Category": {
             "Number": category_number,
             "Name": category_name,
@@ -84,15 +95,18 @@ def normalize_observation(raw):
     }
 
 def get_current_observation(api_key, lat, lng):
-    response = http.get(url = get_current_observation_url(api_key, lat, lng), ttl_seconds = 30 * 60)
+    response = http.get(url = get_current_observation_url(api_key, lat, lng))
     if response.status_code != 200:
         return {"error": response.status_code}
 
-    data = response.json()
+    body = response.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    if type(data) != "list":
+        return None
 
-    for raw in data:
+    for raw in data[:32]:
         observation = normalize_observation(raw)
-        if observation["ParameterName"] == "PM2.5":
+        if observation and observation["ParameterName"] == "PM2.5":
             return observation
 
     return None
@@ -155,12 +169,30 @@ def render_category_text(category_name, reporting_area, alert_colors):
     )
 
 def main(config):
-    location = json.decode(config.get("location", DEFAULT_LOCATION))
-    api_key = config.get("api_key", DEFAULT_API_KEY)
+    location_raw = config.get("location", DEFAULT_LOCATION)
+    location = json.decode(location_raw, None) if type(location_raw) == "string" and len(location_raw) <= 8192 else None
+    api_key_raw = config.get("api_key", "")
+    api_key = api_key_raw.strip() if type(api_key_raw) == "string" else ""
     hide_below = config.get("hide_below", "0")
 
-    lat = humanize.float(ACCURACY, float(location["lat"]))
-    lng = humanize.float(ACCURACY, float(location["lng"]))
+    if type(location) != "dict" or not re.findall("^[A-Za-z0-9-]{16,128}$", api_key):
+        return render_error("Add a valid AirNow API key and location")
+    if hide_below not in ["0", "2", "3", "4", "5", "6"]:
+        return render_error("Choose a valid AQI threshold")
+
+    lat_raw = str(location.get("lat", ""))
+    lng_raw = str(location.get("lng", ""))
+    number_pattern = "^-?[0-9]{1,3}(\\.[0-9]+)?$"
+    if not re.findall(number_pattern, lat_raw) or not re.findall(number_pattern, lng_raw):
+        return render_error("Choose a valid location")
+
+    lat_value = float(lat_raw)
+    lng_value = float(lng_raw)
+    if lat_value < -90 or lat_value > 90 or lng_value < -180 or lng_value > 180:
+        return render_error("Choose a valid location")
+
+    lat = humanize.float(ACCURACY, lat_value)
+    lng = humanize.float(ACCURACY, lng_value)
 
     observation = get_current_observation(api_key, lat, lng)
 
@@ -168,28 +200,10 @@ def main(config):
         msg = "AirNow API Error: %d" % observation["error"]
         if observation["error"] == 429:
             msg = "Rate limit exceeded. Please configure your own API Key."
-        return render.Root(
-            child = render.Box(
-                child = render.WrappedText(
-                    content = msg,
-                    width = canvas.width(),
-                    align = "center",
-                    color = "#f66",
-                ),
-            ),
-        )
+        return render_error(msg)
 
     if not observation:
-        return render.Root(
-            child = render.Box(
-                child = render.WrappedText(
-                    content = "No PM2.5 data for this location",
-                    width = canvas.width(),
-                    align = "center",
-                    color = "#f66",
-                ),
-            ),
-        )
+        return render_error("No PM2.5 data for this location")
 
     category_num = observation["Category"]["Number"]
     category_name = observation["Category"]["Name"]
@@ -197,16 +211,7 @@ def main(config):
     aqi = observation["AQI"]
 
     if category_num == -1:
-        return render.Root(
-            child = render.Box(
-                child = render.WrappedText(
-                    content = "Unknown AQI category",
-                    width = canvas.width(),
-                    align = "center",
-                    color = "#f66",
-                ),
-            ),
-        )
+        return render_error("Unknown AQI category")
 
     if category_num < int(hide_below):
         return []
@@ -222,6 +227,18 @@ def main(config):
                 render_alert_circle(aqi, alert_colors),
                 render_category_text(category_name, reporting_area, alert_colors),
             ],
+        ),
+    )
+
+def render_error(message):
+    return render.Root(
+        child = render.Box(
+            child = render.WrappedText(
+                content = message,
+                width = canvas.width(),
+                align = "center",
+                color = "#f66",
+            ),
         ),
     )
 

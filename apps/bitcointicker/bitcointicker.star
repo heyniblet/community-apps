@@ -6,6 +6,7 @@ Author: PMK (@pmk)
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
@@ -21,6 +22,9 @@ COLOR_GREEN = "#0f0"
 COLOR_DIMMED = "#fff9"
 
 FONT = "tom-thumb"
+CURRENCIES = ["usd", "aed", "ars", "aud", "bch", "bdt", "bhd", "bmd", "bnb", "brl", "cad", "chf", "clp", "cny", "czk", "dkk", "dot", "eos", "eth", "eur", "gbp", "hkd", "huf", "idr", "ils", "inr", "jpy", "krw", "kwd", "lkr", "ltc", "mmk", "mxn", "myr", "ngn", "nok", "nzd", "php", "pkr", "pln", "rub", "sar", "sek", "sgd", "thb", "try", "twd", "uah", "vef", "vnd", "xag", "xau", "xdr", "xlm", "xrp", "yfi", "zar", "bits", "link"]
+PERIODS = ["24h", "7d", "14d", "30d", "60d", "200d", "1y"]
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 def print_market_data(currency, period, data, show_currency_abriviation = DEFAULT_SHOW_CURRENCY_ABBRIVIATION):
     percentage = get_percentage(data["price_change_percentage_{}_in_currency".format(period)][currency])
@@ -124,7 +128,8 @@ def get_market_data():
     data = get_data(url)
     if data == None:
         return None
-    return data["market_data"]
+    market_data = data.get("market_data") if type(data) == "dict" else None
+    return market_data if type(market_data) == "dict" else None
 
 def get_market_chart(currency, period):
     days = convert_period_to_days(period)
@@ -132,14 +137,18 @@ def get_market_chart(currency, period):
     data = get_data(url)
     if data == None:
         return None
-    return data["prices"]
+    prices = data.get("prices") if type(data) == "dict" else None
+    if type(prices) != "list":
+        return None
+    prices = [point for point in prices[:2000] if type(point) == "list" and len(point) >= 2 and type(point[0]) in ["int", "float"] and type(point[1]) in ["int", "float"]]
+    return prices if len(prices) > 1 else None
 
 def get_data(url, ttl_seconds = 60 * 5):
     response = http.get(url = url, ttl_seconds = ttl_seconds)
     if response.status_code != 200:
-        print("Coingecko request failed with status %d" % response.status_code)
         return None
-    return response.json()
+    body = response.body()
+    return json.decode(body) if len(body) <= MAX_RESPONSE_BYTES else None
 
 def convert_period_to_days(period):
     if period == "24h":
@@ -169,6 +178,10 @@ def get_start_price(currency, period, market_data):
 def main(config):
     currency = config.str("currency", DEFAULT_CURRENCY)
     period = config.str("period", DEFAULT_PERIOD)
+    if currency not in CURRENCIES:
+        currency = DEFAULT_CURRENCY
+    if period not in PERIODS:
+        period = DEFAULT_PERIOD
     show_currency_abbriviation = config.bool("show_currency_abbriviation", DEFAULT_SHOW_CURRENCY_ABBRIVIATION)
 
     market_data = get_market_data()
@@ -178,6 +191,13 @@ def main(config):
         return render.Root(
             child = render.WrappedText("Error fetching data"),
         )
+
+    percentage_key = "price_change_percentage_{}_in_currency".format(period)
+    current_price = market_data.get("current_price")
+    market_cap = market_data.get("market_cap")
+    percentage = market_data.get(percentage_key)
+    if type(current_price) != "dict" or type(market_cap) != "dict" or type(percentage) != "dict" or type(current_price.get(currency)) not in ["int", "float"] or type(market_cap.get(currency)) not in ["int", "float"] or type(percentage.get(currency)) not in ["int", "float"]:
+        return render.Root(child = render.WrappedText("Invalid market data"))
 
     start_price = get_start_price(currency, period, market_data)
 
@@ -192,10 +212,8 @@ def main(config):
     )
 
 def get_schema():
-    currencies = ["usd", "aed", "ars", "aud", "bch", "bdt", "bhd", "bmd", "bnb", "brl", "cad", "chf", "clp", "cny", "czk", "dkk", "dot", "eos", "eth", "eur", "gbp", "hkd", "huf", "idr", "ils", "inr", "jpy", "krw", "kwd", "lkr", "ltc", "mmk", "mxn", "myr", "ngn", "nok", "nzd", "php", "pkr", "pln", "rub", "sar", "sek", "sgd", "thb", "try", "twd", "uah", "vef", "vnd", "xag", "xau", "xdr", "xlm", "xrp", "yfi", "zar", "bits", "link"]
-
     currency_options = []
-    for c in currencies:
+    for c in CURRENCIES:
         currency_options.append(schema.Option(display = c.upper(), value = c))
 
     period_options = [

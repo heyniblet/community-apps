@@ -11,11 +11,16 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 BASE_URL = "https://fog.today/"
+MAX_PAGE_BYTES = 128 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_ANIMATION_FRAMES = 12
 
 def main(config):
     mode = config.get("mode", "current")
-    zoom_out = config.get("zoom_out", "false")
-    if zoom_out == "true":
+    if mode not in ["current", "short_list", "long_list"]:
+        mode = "current"
+    zoom_out = config.bool("zoom_out", False)
+    if zoom_out:
         params = {"img_native_res": (1600, 2048), "img_native_origin": (600, 675), "img_display_scale": 0.35}
     else:
         params = {"img_native_res": (1600, 2048), "img_native_origin": (628, 675), "img_display_scale": 0.5}
@@ -33,6 +38,8 @@ def main(config):
 
     else:
         image_urls = get_image_urls(mode)
+        if not image_urls:
+            return render.Root(child = render.WrappedText("Error loading fog.today :("))
         image_src_list = [load_image(image_url) for image_url in image_urls]
         if None in image_src_list:
             return render.Root(
@@ -48,21 +55,28 @@ def main(config):
         )
 
 def get_image_urls(mode):
-    resp = http.get(BASE_URL, ttl_seconds = 60)
-    if resp.status_code != 200:
+    resp = http.get(BASE_URL, ttl_seconds = 300)
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_PAGE_BYTES:
         return None
 
-    image_paths_raw = re.findall(r"var {} = \[(.*)\]".format(mode), resp.body())[0]
+    lists = re.findall(r"var {} = \[(.*)\]".format(mode), body)
+    if len(lists) == 0:
+        return None
+    image_paths_raw = lists[0]
     image_paths = re.findall(r"images/.*?\.jpg", image_paths_raw)
+    if len(image_paths) > MAX_ANIMATION_FRAMES:
+        step = (len(image_paths) + MAX_ANIMATION_FRAMES - 1) // MAX_ANIMATION_FRAMES
+        image_paths = [image_paths[index] for index in range(0, len(image_paths), step)][:MAX_ANIMATION_FRAMES]
     image_urls = [BASE_URL + image_path for image_path in image_paths]
     return image_urls
 
 def load_image(image_url):
-    resp = http.get(image_url, ttl_seconds = 60)
-    if resp.status_code != 200:
+    if type(image_url) != "string" or not image_url.startswith(BASE_URL):
         return None
-
-    return resp.body()
+    resp = http.get(image_url, ttl_seconds = 300)
+    body = resp.body()
+    return body if resp.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES else None
 
 def render_image(image_src, img_native_res, img_native_origin, img_display_scale):
     return render.Padding(

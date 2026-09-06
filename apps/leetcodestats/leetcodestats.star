@@ -176,7 +176,13 @@ def get_Stats(user_name):
         for error in errors:
             return struct(Header = error.get("message"), TotalSolved = 0, EasySolved = 0, MediumSolved = 0, HardSolved = 0, EasyPercent = 0, MediumPercent = 0, HardPercent = 0, HistogramMaxLength = 0, ResponseCode = code)
 
-    accepted_submissions = resp_as_json.get("data").get("matchedUser").get("submitStatsGlobal").get("acSubmissionNum")
+    data = resp_as_json.get("data")
+    matched_user = data.get("matchedUser") if data else None
+    if not matched_user:
+        return struct(Header = "User not found", TotalSolved = 0, EasySolved = 0, MediumSolved = 0, HardSolved = 0, EasyPercent = 0, MediumPercent = 0, HardPercent = 0, HistogramMaxLength = 0, ResponseCode = code)
+
+    submit_stats = matched_user.get("submitStatsGlobal")
+    accepted_submissions = submit_stats.get("acSubmissionNum") if submit_stats else []
 
     # parse through the list and get the easy/medium/hard counts
     # initialize variables to please the linter

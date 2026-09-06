@@ -11,10 +11,15 @@ load("images/bg_image.jpg", BG_IMAGE_ASSET = "file")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 load("xpath.star", "xpath")
 
 BG_IMAGE = BG_IMAGE_ASSET.readall()
+TTL_OPTIONS = [5, 20, 60, 900, 3600, 86400]
+MAX_DOCUMENT_BYTES = 1024 * 1024
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_HEADERS = 16
+MAX_HEADER_VALUE = 2048
+BLOCKED_HEADERS = ["connection", "content-length", "host", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]
 
 def main(config):
     api_url = config.str("api_url", "")
@@ -23,18 +28,11 @@ def main(config):
     debug_output = config.bool("debug_output", False)
     base_url = config.str("base_url", "")
     fit_screen = config.bool("fit_screen", False)
-    ttl_seconds = config.get("ttl_seconds", 20)
-    ttl_seconds = int(ttl_seconds)
+    ttl_value = str(config.get("ttl_seconds", "20"))
+    ttl_seconds = int(ttl_value) if ttl_value.isdigit() and int(ttl_value) in TTL_OPTIONS else 20
 
     if debug_output:
-        print("------------------------------")
-        print("CONFIG - api_url: " + api_url)
-        print("CONFIG - base_url: " + base_url)
-        print("CONFIG - response_path: " + response_path)
-        print("CONFIG - request_headers: " + request_headers)
-        print("CONFIG - debug_output: " + str(debug_output))
-        print("CONFIG - fit_screen: " + str(fit_screen))
-        print("CONFIG - ttl_seconds: " + str(ttl_seconds))
+        print("API Image debug enabled; URLs and headers are redacted")
 
     return get_image(api_url, base_url, response_path, request_headers, debug_output, fit_screen, ttl_seconds)
 
@@ -92,15 +90,12 @@ def get_image(api_url, base_url, response_path, request_headers, debug_output, f
         if debug_output:
             print(message)
 
-    else:
-        headerMap = {}
-        if request_headers != "" or request_headers != {}:
-            request_headers_array = request_headers.split(",")
+    elif not valid_https_url(api_url) or (base_url and not valid_https_url(base_url)):
+        failure = True
+        message = "Only HTTPS URLs are supported"
 
-            for app_header in request_headers_array:
-                headerKeyValueArray = app_header.split(":")
-                if len(headerKeyValueArray) > 1:
-                    headerMap[headerKeyValueArray[0].strip()] = headerKeyValueArray[1].strip()
+    else:
+        headerMap = parse_headers(request_headers)
 
         output_map = get_data(api_url, debug_output, headerMap, ttl_seconds)
         output_body = output_map["data"]
@@ -111,20 +106,6 @@ def get_image(api_url, base_url, response_path, request_headers, debug_output, f
 
             if output_body != "":
                 img = None
-
-                if debug_output:
-                    outputStr = str(output)
-                    outputLen = len(outputStr)
-                    if outputLen >= 200:
-                        outputLen = 200
-
-                    if output_type == "json":
-                        outputStr = outputStr[0:outputLen]
-                        if outputLen >= 200:
-                            outputStr = outputStr + "..."
-                            print("Decoded JSON truncated: " + outputStr)
-                        else:
-                            print("Decoded JSON: " + outputStr)
 
                 if failure == False:
                     if output_type == "json":
@@ -154,11 +135,16 @@ def get_image(api_url, base_url, response_path, request_headers, debug_output, f
                             else:
                                 url = output
 
-                            output_map = get_data(url, debug_output, headerMap, ttl_seconds)
-                            img = output_map["data"]
+                            if not allowed_nested_url(url, api_url, base_url):
+                                failure = True
+                                message = "Image host must match API URL or Base URL"
+                            else:
+                                nested_headers = headerMap if url_origin(url) == url_origin(api_url) else {}
+                                output_map = get_data(url, debug_output, nested_headers, ttl_seconds)
+                                img = output_map["data"]
 
-                            if debug_output:
-                                print("Image URL: " + url)
+                                if debug_output:
+                                    print("Image request completed")
                         else:
                             if message == "":
                                 message = "Bad response path for JSON. Must point to an image URL."
@@ -184,11 +170,16 @@ def get_image(api_url, base_url, response_path, request_headers, debug_output, f
                             else:
                                 url = output
 
-                            output_map = get_data(url, debug_output, headerMap, ttl_seconds)
-                            img = output_map["data"]
+                            if not allowed_nested_url(url, api_url, base_url):
+                                failure = True
+                                message = "Image host must match API URL or Base URL"
+                            else:
+                                nested_headers = headerMap if url_origin(url) == url_origin(api_url) else {}
+                                output_map = get_data(url, debug_output, nested_headers, ttl_seconds)
+                                img = output_map["data"]
 
-                            if debug_output:
-                                print("Image URL: " + url)
+                                if debug_output:
+                                    print("Image request completed")
                         elif response_path == "":
                             message = "Missing response path for XML"
                             if debug_output:
@@ -231,12 +222,11 @@ def get_image(api_url, base_url, response_path, request_headers, debug_output, f
                 message = "Invalid image URL"
                 if debug_output:
                     print(message)
-                    print(output)
                 failure = True
                 # return get_image(base_url, api_url, response_path, request_headers, debug_output)
 
         else:
-            message = "Oops! Check URL and header values. URL " + api_url + " must return JSON or text."
+            message = "Check the URL and headers; the endpoint must return JSON, XML, or an image."
             if debug_output:
                 print(message)
             failure = True
@@ -400,6 +390,8 @@ def parse_response_path(output, responsePathStr, debug_output, is_xml = False):
     return {"output": output, "failure": failure, "message": message}
 
 def get_data(url, debug_output, headerMap = {}, ttl_seconds = 20):
+    if not valid_https_url(url):
+        return {"data": None, "type": ""}
     if headerMap == {}:
         res = http.get(url, ttl_seconds = ttl_seconds)
     else:
@@ -428,18 +420,48 @@ def get_data(url, debug_output, headerMap = {}, ttl_seconds = 20):
             isValidContentType = True
 
     if debug_output:
-        print("isValidContentType for " + url + " content type " + contentType + ": " + str(isValidContentType))
+        print("Response content type: " + contentType + "; accepted: " + str(isValidContentType))
 
     if res.status_code != 200 or isValidContentType == False:
         if debug_output:
             print("status: " + str(res.status_code))
-            print("Requested url: " + str(url))
     else:
         data = res.body()
+        limit = MAX_IMAGE_BYTES if contentType == "image" else MAX_DOCUMENT_BYTES
+        if len(data) > limit:
+            return {"data": None, "type": contentType}
 
         return {"data": data, "type": contentType}
 
     return {"data": None, "type": contentType}
+
+def valid_https_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://") or any([char in value for char in [" ", "\t", "\r", "\n"]]):
+        return False
+    parts = value.split("/", 3)
+    return len(parts) >= 3 and parts[2] and "@" not in parts[2]
+
+def url_origin(value):
+    return value.split("/", 3)[2].lower() if valid_https_url(value) else ""
+
+def allowed_nested_url(value, api_url, base_url):
+    origin = url_origin(value)
+    return origin and origin in [url_origin(api_url), url_origin(base_url)]
+
+def parse_headers(value):
+    headers = {}
+    if type(value) != "string":
+        return headers
+    for item in value.split(",")[:MAX_HEADERS]:
+        parts = item.split(":", 1)
+        if len(parts) != 2:
+            continue
+        key = parts[0].strip()
+        header_value = parts[1].strip()
+        lowered = key.lower()
+        if key and header_value and len(key) <= 80 and len(header_value) <= MAX_HEADER_VALUE and lowered not in BLOCKED_HEADERS and not any([char in key + header_value for char in ["\r", "\n"]]):
+            headers[key] = header_value
+    return headers
 
 def get_schema():
     ttl_options = [
@@ -493,6 +515,7 @@ def get_schema():
                 desc = "Comma separated key:value pairs to build the request headers. eg, `x-api-key:abc123,content-type:application/json`",
                 icon = "code",
                 default = "",
+                secret = True,
             ),
             schema.Dropdown(
                 id = "ttl_seconds",
@@ -505,7 +528,7 @@ def get_schema():
             schema.Text(
                 id = "base_url",
                 name = "Base URL",
-                desc = "The base URL if needed",
+                desc = "The HTTPS base URL for relative images, or to authorize a separate image host",
                 icon = "globe",
                 default = "",
             ),

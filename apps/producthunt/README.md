@@ -14,23 +14,17 @@ Votes are cast by the Product Hunt community and are used to rank the products. 
 
 ## API Details
 
-Product Hunt does have an official and free [GraphQL API](https://api.producthunt.com/v2/docs). It supports OAuth2 authentication with the `authorization_code` and `client_credentials` flows.
-
-However, we noticed that the [GraphQL Explorer](https://ph-graph-api-explorer.herokuapp.com/) that is referenced on their documentation does not require any authentication and it returns the same production data as the "official" (authenticated) API.
-
-For the sake of simplicity, the app is currently using the unauthenticated GraphQL Explorer endpoint.
+The app uses Product Hunt's official [GraphQL API](https://api.producthunt.com/v2/docs). Create a developer token in your Product Hunt API dashboard and enter it in the app configuration.
 
 ### Rate Limiting
 
-The "official" (authenticated) API has a documented [Rate Limit](https://api.producthunt.com/v2/docs/rate_limits/headers) of 450 requests every 15 minutes.
-
-During development we did not reach any limits, even when using the unauthenticated API. Anyway, the app caches the results for 30 minutes using the `http` module's internal caching feature.
+The API publishes its current quota in response headers. The app caches results and thumbnails for 30 minutes.
 
 ---
 
 ## Configuration (Schema)
 
-The app supports only one configuration option where the user can choose if he/she wants to see only the current top product trending on Product Hunt, or the top 3.
+The app requires a developer token and lets the user choose whether to show the top product or the top three.
 
 ---
 

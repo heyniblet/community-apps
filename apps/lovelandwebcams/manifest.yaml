@@ -15,3 +15,5 @@ tags:
   - weather
 published: '2023-05-18T20:17:20Z'
 updated: '2025-12-05T22:28:51Z'
+broken: true
+brokenReason: The official Loveland webcam image host is parked and returns HTML instead of camera images.

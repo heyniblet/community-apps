@@ -61,10 +61,7 @@ def main(config):
     timezone = time.tz()
     now = time.now().in_location(timezone)
 
-    if config.get("teamid"):
-        teamid = json.decode(config.get("teamid"))["value"]
-    else:
-        teamid = DEFAULT_TEAM
+    teamid = team_value(config.get("teamid"))
 
     league = API % ("all", str(teamid))
     teamdata = get_scores(league)
@@ -543,12 +540,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "teamid",
-                name = "Team Name to search for",
-                desc = "Team Name to search for",
+                name = "ESPN Team ID",
+                desc = "Numeric ESPN team ID.",
                 icon = "futbol",
-                handler = search_teams,
+                default = str(DEFAULT_TEAM),
             ),
             schema.Dropdown(
                 id = "team_sequence",
@@ -598,6 +595,13 @@ def get_schema():
             ),
         ],
     )
+
+def team_value(raw):
+    if not raw:
+        return DEFAULT_TEAM
+    if type(raw) == "string" and raw.startswith("{"):
+        return json.decode(raw).get("value", DEFAULT_TEAM)
+    return raw
 
 def search_teams(team_text):
     if len(team_text) > 3:

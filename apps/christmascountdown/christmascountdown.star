@@ -16,6 +16,34 @@ load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
+DIGITS = {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+}
+
+def bounded_days(value, default = 365):
+    text = str(value)
+    if not text:
+        return default
+
+    result = 0
+    for index in range(len(text)):
+        digit = DIGITS.get(text[index:index + 1])
+        if digit == None:
+            return default
+        result = result * 10 + digit
+        if result >= 366:
+            return 366
+    return result
+
 def main(config):
     #-----------------------
     # Get Configured Values
@@ -25,10 +53,7 @@ def main(config):
     line1Color = config.get("line1Color", "#ff0000")
     line2Color = config.get("line2Color", "#00ff00")
     showCountdown = config.bool("showCountdown", True)
-    maxCountdownValue = config.get("maxCountdownValue", 365)
-
-    if maxCountdownValue == None or maxCountdownValue == "":
-        maxCountdownValue = 365
+    maxCountdownValue = bounded_days(config.get("maxCountdownValue", 365))
 
     #--------------------------------
     # Calculate days until Christmas
@@ -63,7 +88,7 @@ def main(config):
         render.Text(content = line1Text, font = font, color = line1Color),
         render.Text(content = line2Text, font = font, color = line2Color),
     ]
-    if showCountdown and days > 0:
+    if showCountdown and days > 0 and days <= maxCountdownValue:
         line3Color = config.get("line3Color", "#0000ff")
         line3Text = humanize.plural(days, tr("day"), tr("days"))
         child = render.Padding(
@@ -133,9 +158,6 @@ def main(config):
             ],
         ),
     ]
-
-    if days > int(maxCountdownValue):
-        return []
 
     #--------
     # Render

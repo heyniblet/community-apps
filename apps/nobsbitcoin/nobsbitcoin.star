@@ -14,28 +14,27 @@ load("xpath.star", "xpath")
 LOGO = LOGO_ASSET.readall()
 
 DEFAULT_CATEGORY = "all"
+VALID_CATEGORIES = ["all", "news", "releases", "research", "guides"]
 
 def get_news_feed(category = DEFAULT_CATEGORY, ttl_seconds = 60 * 5):
+    if category not in VALID_CATEGORIES:
+        category = DEFAULT_CATEGORY
     url = "https://www.nobsbitcoin.com/rss/"
     if category != "all":
         url = "https://www.nobsbitcoin.com/tag/{}/rss/".format(category)
     response = http.get(url = url, ttl_seconds = ttl_seconds)
     if response.status_code != 200:
         fail("Nobsbitcoin.com request failed with status %d @ %s", response.status_code, url)
-    return response.body()
+    body = response.body()
+    if not body or len(body) > 512000:
+        fail("Nobsbitcoin.com returned an invalid feed")
+    return body
 
 def get_latest_item_from_raw_xml(raw_xml):
     feed_item = xpath.loads(raw_xml).query_node("//rss/channel/item[1]")
-    return {
-        "description": feed_item.query("/description"),
-        "image": feed_item.query("/media:content/@url"),
-    }
-
-def get_image(image_url):
-    response = http.get(url = image_url, ttl_seconds = 60 * 60 * 24 * 7)
-    if response.status_code != 200:
-        fail("Image from nobsbitcoin.com request failed with status %d @ %s", response.status_code, image_url)
-    return response.body()
+    if feed_item == None:
+        return {"description": "No recent post"}
+    return {"description": feed_item.query("/description") or "No recent post"}
 
 def main(config):
     category = config.str("category", DEFAULT_CATEGORY)
@@ -49,14 +48,7 @@ def main(config):
         max_age = 60 * 5,
         child = render.Stack(
             children = [
-                render.Padding(
-                    pad = (11, 2, 0, 0),
-                    child = render.Image(
-                        src = LOGO,
-                        width = 40,
-                        height = 29,
-                    ),
-                ),
+                render.Padding(pad = (11, 2, 0, 0), child = render.Image(src = LOGO, width = 40, height = 29)),
                 render.Padding(
                     pad = (1, 1, 1, 1),
                     child = render.Marquee(

@@ -17,22 +17,26 @@ def main(config):
     attribute = config.get("attribute", None)
 
     if is_string_blank(entity_name):
-        print("using sample data")
         states = SAMPLE_DATA
     else:
         states = get_entity_states(config)
+        if type(states) != "dict":
+            return render.Root(child = render.WrappedText("Home Assistant request failed", width = 64, align = "center"))
+
+    attributes = states.get("attributes")
+    attributes = attributes if type(attributes) == "dict" else {}
 
     friendly_name = config.get("friendly_name", None)
     if is_string_blank(friendly_name):
-        friendly_name = states["attributes"]["friendly_name"]
+        friendly_name = str(attributes.get("friendly_name") or entity_name or "Home Assistant")[:100]
 
     if is_string_blank(attribute):
-        state = states["state"]
+        state = str(states.get("state") or "Unknown")[:200]
     else:
-        state = "{}".format(states["attributes"][attribute])
+        state = str(attributes.get(attribute) or "Unknown")[:200]
 
-    if "unit_of_measurement" in states["attributes"].keys():
-        state = state + states["attributes"]["unit_of_measurement"]
+    if attributes.get("unit_of_measurement"):
+        state = state + str(attributes.get("unit_of_measurement"))[:20]
 
     header_color = config.get("header_color", DEFAULT_COLOR)
     separator_color = config.get("separator_color", DEFAULT_COLOR)
@@ -73,9 +77,15 @@ def get_schema():
         version = "1",
         fields = [
             schema.Text(
+                id = "ha_url",
+                name = "Home Assistant URL",
+                desc = "Public HTTPS URL for your Home Assistant instance.",
+                icon = "link",
+            ),
+            schema.Text(
                 id = "nabu_casa_url_key",
-                name = "Nabu Casa Url Key",
-                desc = "The random letters and numbers in your Nabu Casa URL. Ex. Input 'abc123' for this nabu casa url https://abc123.ui.nabu.casa",
+                name = "Legacy Nabu Casa URL Key",
+                desc = "Retained for saved configuration compatibility; new Cloud installs use the public HTTPS URL above.",
                 icon = "link",
                 secret = True,
             ),
@@ -142,15 +152,20 @@ def is_string_blank(string):
 
 # Retrieve entity state from Home Assistant, return json response
 def get_entity_states(config):
-    nabu_casa_url_key = config.get("nabu_casa_url_key", None)
+    ha_url = config.get("ha_url", None)
     token = config.get("token", None)
     entity_name = config.get("entity_name", None)
 
-    if is_string_blank(token) or is_string_blank(entity_name) or is_string_blank(nabu_casa_url_key):
-        return []
+    if is_string_blank(token) or is_string_blank(entity_name) or len(token) > 4096 or len(entity_name) > 128 or not all([char.isalnum() or char in "._-" for char in entity_name.elems()]):
+        return None
+
+    if type(ha_url) == "string" and ha_url.startswith("https://") and len(ha_url) <= 512 and not any([char in ha_url for char in ["?", "#", "@"]]):
+        origin = ha_url.rstrip("/")
+    else:
+        return None
 
     full_token = "Bearer " + token
-    full_url = "https://" + nabu_casa_url_key + ".ui.nabu.casa" + STATIC_ENDPOINT + entity_name
+    full_url = origin + STATIC_ENDPOINT + entity_name
     headers = {
         "Authorization": full_token,
         "content-type": "application/json",
@@ -159,16 +174,14 @@ def get_entity_states(config):
     res = http.get(
         url = full_url,
         headers = headers,
-        ttl_seconds = 6,
     )
 
     if res.status_code != 200:
-        fail("HA Rest API request failed with status code: %d - %s" %
-             (res.status_code, res.body()))
+        return None
 
     states = res.json()
 
-    return states
+    return states if type(states) == "dict" else None
 
 SAMPLE_DATA = {
     "entity_id": "switch.front_door",

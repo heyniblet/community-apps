@@ -6,9 +6,11 @@ Author: flynnt
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/dino.png", DINO_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -18,6 +20,8 @@ DINO = DINO_ASSET.readall()
 BASE_URL = "https://api.nasa.gov/neo/rest/v1/feed"
 DEFAULT_UNIT = "miles"
 TERMINAL_TEXT_COLOR = "#33ff00"
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_NEOS = 100
 
 def main(config):
     """
@@ -26,17 +30,19 @@ def main(config):
     Returns rendered application root.
     """
     api_key = config.get("api_key")
-    if not api_key:
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
         return render.Root(
             child = render_static_dino(),
         )
     else:
         unit = config.get("distance_key", DEFAULT_UNIT)
+        if unit not in ["miles", "kilometers"]:
+            unit = DEFAULT_UNIT
         now = time.now()
         pretty_now = now.format("January 2, 2006")
         query_now = now.format("2006-01-02")
 
-        neos = get_neos(query_now, api_key)
+        neos = get_neos(query_now, api_key, unit)
         if not neos:
             return render.Root(
                 child = render.Box(
@@ -44,14 +50,14 @@ def main(config):
                 ),
             )
 
-        nearest_distance = get_shortest_distance(neos, unit)
-        nearest_neo = get_nearest_neo(neos, nearest_distance, unit)
+        nearest_distance = get_shortest_distance(neos)
+        nearest_neo = get_nearest_neo(neos, nearest_distance)
         pretty_distance = humanize.comma(int(nearest_distance))
 
         date_string = "On {}".format(pretty_now)
-        asteroid_string = "Asteroid: \n {}".format(nearest_neo["name"])
+        asteroid_string = "Asteroid: \n {}".format(nearest_neo["name"][:80])
         pre_proximity_string = "Will miss the Earth by..."
-        distance_string = config.get("distance_key", DEFAULT_UNIT)
+        distance_string = unit
         proximity_string = "{} \n {}".format(pretty_distance, distance_string)
 
         static_dino = [
@@ -147,36 +153,48 @@ def get_schema():
         ],
     )
 
-def get_neos(query_now, api_key):
+def get_neos(query_now, api_key, unit):
     params = {
         "api_key": api_key,
         "start_date": query_now,
         "end_date": query_now,
     }
-    req = http.get(BASE_URL, ttl_seconds = 3600, params = params)
+    req = http.get(BASE_URL, params = params)
     if req.status_code != 200:
-        fail("API request failed with status:", req.status_code)
+        return []
 
-    data = req.json()
-    if not data["element_count"]:
-        return None
+    body = req.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    if type(data) != "dict" or not data.get("element_count"):
+        return []
 
-    neos = data["near_earth_objects"][query_now]
+    near_earth_objects = data.get("near_earth_objects", {})
+    raw_neos = near_earth_objects.get(query_now, []) if type(near_earth_objects) == "dict" else []
+    if type(raw_neos) != "list":
+        return []
 
+    neos = []
+    for neo in raw_neos[:MAX_NEOS]:
+        approaches = neo.get("close_approach_data", []) if type(neo) == "dict" else []
+        approach = approaches[0] if type(approaches) == "list" and approaches and type(approaches[0]) == "dict" else {}
+        distances = approach.get("miss_distance", {}) if type(approach) == "dict" else {}
+        raw_distance = distances.get(unit) if type(distances) == "dict" else None
+        name = neo.get("name") if type(neo) == "dict" else None
+        if type(name) == "string" and name and valid_distance(raw_distance):
+            neos.append({"name": name, "distance": float(raw_distance)})
     return neos
 
-def get_nearest_neo(neos, nearest_distance, unit):
+def valid_distance(value):
+    return value != None and re.match(r"^[0-9]+(?:\.[0-9]+)?$", str(value)) != None
+
+def get_nearest_neo(neos, nearest_distance):
     for neo in neos:
-        if float(neo["close_approach_data"][0]["miss_distance"][unit]) == nearest_distance:
+        if neo["distance"] == nearest_distance:
             return neo
     return None
 
-def get_shortest_distance(neos, unit):
-    distances = []
-    for neo in neos:
-        distances.append(float(neo["close_approach_data"][0]["miss_distance"][unit]))
-
-    return min(*distances)
+def get_shortest_distance(neos):
+    return min(*[neo["distance"] for neo in neos])
 
 def generate_static_string_frames(string, duration):
     frames = []

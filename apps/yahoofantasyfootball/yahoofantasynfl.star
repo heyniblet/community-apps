@@ -5,46 +5,45 @@ Description: Display standings or scores for a Yahoo Fantasy Football league (NF
 Author: jweier extended from LunchBox8484
 """
 
-load("cache.star", "cache")
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 load("xpath.star", "xpath")
 
-# Constants for production repo
-TIDBYT_OAUTH_CALLBACK_URL = "https%3A%2F%2Fappauth.tidbyt.com%2Fyahoofantasynfl"  # registered https://appauth.tidbyt.com/yahoofantasynfl as redirect_uri at Yahoo
-YAHOO_CLIENT_ID = secret.decrypt("AV6+xWcESOzU0+vxd/pD9p6eJsSh+fkgPTLUMzJbnS00CHWXmoKWQbvmTpVIUUE3Y/J2LeplFDCPh3zEwpX0XEyHZubCkNlgu2CrTnGcGYRv4H7xOtS+BTwiEQUu40mgSarmMkxR/uo2BetzoVEctK3SkbEdVW5mZBJTPjoHZwfwPFhzXMyYKqO8EejDPYOg48beUv3MnNRx+nrtbtWf8Ip8Vj0riv9lceqgbGT5KiM5AgBNLSPHKyFwDLnj2R/3dhqyVBTR") or ""
-YAHOO_CLIENT_SECRET = secret.decrypt("AV6+xWcEUbzKOHZ63pL4mNLO8MGfmkVomrRiBERdm2WxRiPjMdymwN9lROH88N5pCfo5ZSUiNlOt9J3WeM9dUe1kGTPT6AykhXEXOXPjjqhVjKBGy3UOBDeYll33K6XxYiS06WP5Au6EBK6bc3gQd6+Y1h+zZyYL4NTzh2R4U/y1Xkj7sx/0wWQEmfhBww==") or ""
-
-# Common Constants
-YAHOO_CLIENT_ID_AND_SECRET_BASE_64 = base64.encode(YAHOO_CLIENT_ID + ":" + YAHOO_CLIENT_SECRET)
-YAHOO_OAUTH_AUTHORIZATION_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 YAHOO_OAUTH_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
-ACCESS_TOKEN_CACHE_TTL = 3000  # 50 minutes as Yahoo access tokens only last 60 minutes
-REFRESH_TOKEN_CACHE_TTL = 31536000  # Cache for 1 year
-STANDINGS_CACHE_TTL = 14400  # 4 days
-LEAGUE_NAME_CACHE_TTL = 28800  # 8 days
-GAME_KEY = "423"  #2023 Season
+YAHOO_REDIRECT_URI = "oob"
+GAME_KEY = "nfl"
 FONT = "CG-pixel-3x5-mono"
 
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
-                id = "auth",
-                name = "Yahoo Account",
-                desc = "Connect your Yahoo account.",
-                icon = "football",
-                handler = oauth_handler,
-                client_id = YAHOO_CLIENT_ID or "foo",
-                authorization_endpoint = "https://api.login.yahoo.com/oauth2/request_auth",
-                scopes = [
-                    "fspt-r",
-                ],
+            schema.Text(
+                id = "yahoo_client_id",
+                name = "Yahoo Client ID",
+                desc = "Consumer Key from your Yahoo-approved Fantasy Sports application.",
+                icon = "key",
+                secret = True,
+                default = "",
+            ),
+            schema.Text(
+                id = "yahoo_client_secret",
+                name = "Yahoo Client Secret",
+                desc = "Consumer Secret from your Yahoo-approved Fantasy Sports application.",
+                icon = "key",
+                secret = True,
+                default = "",
+            ),
+            schema.Text(
+                id = "yahoo_refresh_token",
+                name = "Yahoo Refresh Token",
+                desc = "Refresh token created with Yahoo's authorization-code flow and redirect URI oob.",
+                icon = "key",
+                secret = True,
+                default = "",
             ),
             schema.Text(
                 id = "league_id",
@@ -130,23 +129,16 @@ def main(config):
     show_projections = config.bool("show_projections", True)
     show_ties = config.bool("show_ties", False)
     num_of_loops = 1
+    client_id = config.get("yahoo_client_id")
+    client_secret = config.get("yahoo_client_secret")
+    refresh_token = config.get("yahoo_refresh_token")
 
-    #Try to load refresh token from cache since OAuth config could contain an outdated refresh token
-    refresh_token_cached = cache.get(league_id + "_refresh_token")
-    if refresh_token_cached != None:
-        refresh_token = refresh_token_cached
-    else:
-        refresh_token = config.get("auth")
-
-    if refresh_token:
-        tokens_dict = get_access_token(refresh_token)
+    if client_id and client_secret and refresh_token:
+        tokens_dict = get_access_token(client_id, client_secret, refresh_token)
 
         #Check for a 200 response from get_access_token call. If not, display the error on the screen.
         if (tokens_dict["response_status_code"] == "200"):
             access_token = tokens_dict["access_token"]
-            if refresh_token != tokens_dict["new_refresh_token"]:
-                cache.set(league_id + "_refresh_token", tokens_dict["new_refresh_token"], ttl_seconds = REFRESH_TOKEN_CACHE_TTL)
-                refresh_token = tokens_dict["new_refresh_token"]
 
             if (access_token):
                 league_name = get_league_name(access_token, GAME_KEY, league_id)
@@ -210,7 +202,7 @@ def main(config):
                     ),
                 )
         else:
-            error_message = "ERROR! " + str(tokens_dict["response_status_code"]) + " " + tokens_dict["response_body"]
+            error_message = "ERROR! Yahoo authentication failed. Reconnect your Yahoo credentials."
             print("Main - End")
             return render.Root(
                 child = render.Marquee(
@@ -450,128 +442,58 @@ color_scheme_options = [
     ),
 ]
 
-def oauth_handler(params):
-    print("oauth_handler - Start")
-    headers = {
-        "Content-type": "application/x-www-form-urlencoded",
-    }
-
-    # deserialize oauth2 parameters
-    params = json.decode(params)
-
-    body = (
-        "grant_type=authorization_code" +
-        "&client_id=" + params["client_id"] +
-        "&client_secret=" + YAHOO_CLIENT_SECRET +
-        "&code=" + params["code"] +
-        "&scope=fspt-r" +
-        "&redirect_uri=" + params["redirect_uri"]
-    )
-
-    # exchange parameters and client secret for an access token
+def get_access_token(client_id, client_secret, refresh_token):
     response = http.post(
-        url = YAHOO_OAUTH_TOKEN_URL,
-        headers = headers,
-        body = body,
-    )
-
-    if response.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (response.status_code, response.body()))
-
-    token_params = response.json()
-    refresh_token = token_params["refresh_token"]
-    print("oauth_handler - End")
-    return refresh_token
-
-def get_access_token(refresh_token):
-    return_dict = {}
-
-    #Try to load access token from cache
-    access_token_cached = cache.get(refresh_token + "_access_token")
-
-    if access_token_cached != None:
-        print("Cache Hit! Used cached access token")
-        access_token_cached = json.decode(access_token_cached)
-        return access_token_cached
-    else:
-        print("Cache Miss! Getting new access token from Yahoo API.")
-
-        url = "https://api.login.yahoo.com/oauth2/get_token"
-        body = (
-            "grant_type=refresh_token" +
-            "&redirect_uri=" + TIDBYT_OAUTH_CALLBACK_URL +
-            "&refresh_token=" + refresh_token
-        )
+        YAHOO_OAUTH_TOKEN_URL,
         headers = {
-            "Authorization": "Basic " + YAHOO_CLIENT_ID_AND_SECRET_BASE_64,
+            "Authorization": "Basic " + base64.encode(client_id + ":" + client_secret),
             "Content-Type": "application/x-www-form-urlencoded",
-        }
-        response = http.post(url, body = body, headers = headers)
-        body = response.json()
-        return_dict = {"access_token": body["access_token"], "new_refresh_token": body["refresh_token"], "response_status_code": str(response.status_code), "response_body": response.body()}
-        print("    Caching access token")
+        },
+        form_body = {
+            "grant_type": "refresh_token",
+            "redirect_uri": YAHOO_REDIRECT_URI,
+            "refresh_token": refresh_token,
+        },
+    )
+    if response.status_code != 200:
+        return {"access_token": "", "response_status_code": str(response.status_code)}
 
-        cache.set(refresh_token + "_access_token", json.encode(return_dict), ttl_seconds = ACCESS_TOKEN_CACHE_TTL)
-        return return_dict
+    return {"access_token": response.json().get("access_token", ""), "response_status_code": "200"}
 
 def get_league_name(access_token, GAME_KEY, league_id):
     league_name = ""
 
-    #Try to load league name and id from cache
-    league_id_cached = cache.get(access_token + "_league_id")
-    league_name_cached = cache.get(access_token + "_league_name")
-
-    if league_name_cached != None and league_id == league_id_cached:
-        league_name = league_name_cached
-    else:
-        url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_id
-        headers = {
-            "Authorization": "Bearer " + access_token,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        league_name_response = http.get(url, headers = headers, ttl_seconds = LEAGUE_NAME_CACHE_TTL)
-
-        league_name = xpath.loads(league_name_response.body()).query("/fantasy_content/league/name")
+    url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_id
+    headers = {
+        "Authorization": "Bearer " + access_token,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    league_name_response = http.get(url, headers = headers)
+    league_name = xpath.loads(league_name_response.body()).query("/fantasy_content/league/name")
 
     return league_name
 
 def get_standings_and_records(access_token, GAME_KEY, league_id):
     print("get_standings_and_records - Start")
     allstandings = []
-    league_id_cached = cache.get(access_token + "_league_id")
-    standings_cached = cache.get(access_token + "_standings")
+    url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_id + "/standings"
+    headers = {
+        "Authorization": "Bearer " + access_token,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    standings_response = http.get(url, headers = headers)
 
-    if league_id_cached != league_id or standings_cached == None:
-        # If the league ID has changed or the standings aren't cache, then make the call for the standings and set the cache
-        if league_id_cached != league_id:
-            print("    League ID changed so re-querying standings and records")
-        if standings_cached == None:
-            print("    Cache Miss! Getting new standings from Yahoo API.")
-        url = "https://fantasysports.yahooapis.com/fantasy/v2/league/" + GAME_KEY + ".l." + league_id + "/standings"
-        headers = {
-            "Authorization": "Bearer " + access_token,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        standings_response = http.get(url, headers = headers, ttl_seconds = STANDINGS_CACHE_TTL)
+    total_teams = int(xpath.loads(standings_response.body()).query("/fantasy_content/league/standings/teams/@count"))
+    team_names = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/name")
+    team_standings = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/rank")
+    team_wins = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/wins")
+    team_losses = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/losses")
+    team_ties = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/ties")
 
-        total_teams = int(xpath.loads(standings_response.body()).query("/fantasy_content/league/standings/teams/@count"))
-        team_names = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/name")
-        team_standings = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/rank")
-        team_wins = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/wins")
-        team_losses = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/losses")
-        team_ties = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/outcome_totals/ties")
-        team_standings = xpath.loads(standings_response.body()).query_all("/fantasy_content/league/standings/teams/team/team_standings/rank")
-
-        for team_number in range(total_teams):
-            allstandings.append({"Name": team_names[team_number], "Standings": team_standings[team_number], "Wins": team_wins[team_number], "Losses": team_losses[team_number], "Ties": team_ties[team_number]})
-
-    else:
-        # If league ID matches and standings are cached, then call the cache
-        print("    Cache Hit! Using cached standings!")
-        allstandings = json.decode(standings_cached)
+    for team_number in range(total_teams):
+        allstandings.append({"Name": team_names[team_number], "Standings": team_standings[team_number], "Wins": team_wins[team_number], "Losses": team_losses[team_number], "Ties": team_ties[team_number]})
     print("get_standings_and_records - End")
     return allstandings
 

@@ -9,6 +9,7 @@ load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -23,9 +24,6 @@ DEFAULT_LOCATION = json.encode({
     "timezone": "America/New_York",
 })
 
-# 6 hours (4 updates per day)
-DEFAULT_CACHE = 6 * 60 * 60
-
 # default options
 DEFAULT_LOCATION_NAME = ""
 DEFAULT_24H_CLOCK = False
@@ -38,37 +36,39 @@ DEFAULT_COLOR_AQI4 = "#ff0000"  # red (poor)
 DEFAULT_COLOR_AQI5 = "#ff41ff"  # purple (very poor)
 DEFAULT_COLOR_AQI6 = "#ffffff"  # white (unknown)
 
-# OpenWeather production API key
-OW_API_KEY = "AV6+xWcE8tlc8kG2+46k6VdWihmVUMUgF0UlFZa0ZzucnuUIVRSReDVB/Q+cfZg5oFeiFEvdP9Pi2bi5CjL4tFFsHe2Re2pqQ5bNxlvLqf8TeBhuE/C9SaFp3x3DX55DM2gAPc1I2kSWOH1hpVLrPrM8gI0VtJiWSVJ++i1Ba4ZPJcUCuSc="
-
-# development API key, provide your key here or the app will fail!
-OW_DEV_API_KEY = ""
-
 # OpenWeather API base url
 OW_API_URL = "https://api.openweathermap.org"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+POLLUTANT_CODES = ["so2", "no2", "co", "pm2_5", "pm10", "o3"]
 
-# print debug messages
-DEBUG = False
-
-def dprint(message):
-    if DEBUG:
-        print(message)
+def error_display(message):
+    return render.Root(child = render.WrappedText(content = message, width = 64, align = "center", color = "#f66"))
 
 def main(config):
     use24h = config.bool("use24h", DEFAULT_24H_CLOCK)
     display_type = config.str("display_type", DEFAULT_DISPLAY_TYPE)
     location_name = config.str("location_name", DEFAULT_LOCATION_NAME)
     location_cfg = config.str("location", DEFAULT_LOCATION)
-    location = json.decode(location_cfg)
+    location = json.decode(location_cfg, None)
+    if type(location) != "dict" or type(location.get("lat")) != "string" or type(location.get("lng")) != "string" or type(location.get("timezone")) != "string" or type(location.get("locality")) != "string" or not re.match(r"^-?[0-9]+(\.[0-9]+)?$", location["lat"]) or not re.match(r"^-?[0-9]+(\.[0-9]+)?$", location["lng"]):
+        return error_display("Choose a valid location")
     timezone = location["timezone"]
+    if len(timezone) > 80 or not re.match(r"^[A-Za-z0-9_+\-/]+$", timezone):
+        return error_display("Choose a valid location")
+    if float(location["lat"]) < -90 or float(location["lat"]) > 90 or float(location["lng"]) < -180 or float(location["lng"]) > 180:
+        return error_display("Choose a valid location")
     pollutant_code = config.str("pollutant", "")
+    if display_type not in [DEFAULT_DISPLAY_TYPE, "pollutants"]:
+        display_type = DEFAULT_DISPLAY_TYPE
+    if pollutant_code not in POLLUTANT_CODES:
+        pollutant_code = POLLUTANT_CODES[0]
+    location_name = location_name[:120]
 
     # load api key
     apikey = config.str("api_key", "")
 
     # validate if api key was provided
-    if apikey == "":
-        dprint("No API Key provided in config")
+    if not apikey or len(apikey) > 2048 or "\r" in apikey or "\n" in apikey:
         return render.Root(
             render.Box(
                 width = 64,
@@ -86,30 +86,27 @@ def main(config):
             ),
         )
 
-    # try to load from cache
-    dprint("Data not found in cache")
     data = get_data(location, apikey)
+    if data == None:
+        return error_display("Air quality data unavailable")
 
     # use locality from selected place
-    locality = location["locality"]
+    locality = location["locality"][:120]
 
     # if user chose to override location name
     if location_name != "":
         locality = location_name
 
-    # if there was an API error, use a fake location name
-    if data.get("api_error", False):
-        locality = "Unknown (API error)"
-
     # find data point closest to the current time
     # this allows using the cached data up to the
     # next 6th hour, where a refresh will happen
     now = time.now().unix
-    index = 1
+    index = 0
 
-    for i in range(1, len(data["list"])):
-        if int(data["list"][i]["dt"]) > now:
-            index = i - 1
+    for i in range(0, len(data["list"])):
+        if int(data["list"][i]["dt"]) <= now:
+            index = i
+        else:
             break
 
     # retrieve air quality index
@@ -203,10 +200,34 @@ def get_schema():
                 default = display_options[0].value,
                 options = display_options,
             ),
-            schema.Generated(
+            schema.Text(
+                id = "location_name",
+                name = "Location name (blank for default)",
+                desc = "Override location name, for example home or office.",
+                icon = "font",
+                default = DEFAULT_LOCATION_NAME,
+            ),
+            schema.Toggle(
+                id = "use24h",
+                name = "24-Hour Clock",
+                desc = "Use 24-Hour format in forecast.",
+                icon = "clock",
+                default = DEFAULT_24H_CLOCK,
+            ),
+            schema.Dropdown(
                 id = "pollutant",
-                source = "display_type",
-                handler = handle_display_type,
+                name = "Pollutant",
+                desc = "Pollutant to display when pollutant mode is selected.",
+                icon = "smog",
+                default = POLLUTANT_CODES[0],
+                options = [
+                    schema.Option(display = "SO2 (Sulphur Dioxide)", value = "so2"),
+                    schema.Option(display = "NO2 (Nitrogen Dioxide)", value = "no2"),
+                    schema.Option(display = "CO (Carbon Monoxide)", value = "co"),
+                    schema.Option(display = "PM2.5 (Fine Particulate)", value = "pm2_5"),
+                    schema.Option(display = "PM10 (Coarse Particulate)", value = "pm10"),
+                    schema.Option(display = "O3 (Ozone)", value = "o3"),
+                ],
             ),
             schema.Toggle(
                 id = "scroll_desc",
@@ -260,94 +281,39 @@ def get_schema():
         ],
     )
 
-def handle_display_type(display_type):
-    pollutants = [
-        schema.Option(display = "SO2 (Sulphur Dioxide)", value = "so2"),
-        schema.Option(display = "NO2 (Nitrogen Dioxide)", value = "no2"),
-        schema.Option(display = "CO (Carbon Monoxide)", value = "co"),
-        schema.Option(display = "PM2.5 (Fine Particulate)", value = "pm2_5"),
-        schema.Option(display = "PM10 (Coarse Particulate)", value = "pm10"),
-        schema.Option(display = "O3 (Ozone)", value = "o3"),
-    ]
-
-    if display_type == DEFAULT_DISPLAY_TYPE:
-        return [
-            schema.Text(
-                id = "location_name",
-                name = "Location name (blank for default)",
-                desc = "Override location name, (eg: home, office)",
-                icon = "font",
-                default = DEFAULT_LOCATION_NAME,
-            ),
-            schema.Toggle(
-                id = "use24h",
-                name = "24-Hour Clock",
-                desc = "Use 24-Hour format in forecast.",
-                icon = "clock",
-                default = DEFAULT_24H_CLOCK,
-            ),
-        ]
-    elif display_type == "pollutants":
-        return [
-            schema.Dropdown(
-                id = "pollutant",
-                name = "Pollutant",
-                desc = "Pollutant to be displayed.",
-                icon = "smog",
-                default = pollutants[0].value,
-                options = pollutants,
-            ),
-        ]
-    else:
-        return []
-
 def get_data(location, apikey):
     # round coordinates to avoid exposing user's precise location
     lat = get_rounded_coord(location["lat"])
     lon = get_rounded_coord(location["lng"])
-
-    dprint("Requesting data from API")
 
     # call openweather api
     res = http.get(OW_API_URL + "/data/2.5/air_pollution/forecast", params = {
         "appid": apikey,
         "lat": str(lat),
         "lon": str(lon),
-    }, ttl_seconds = DEFAULT_CACHE)
+    })
 
     # check response code
     if res.status_code != 200:
-        print("Failed to get air pollution data (%d): %s" % (res.status_code, res.body()))
+        return None
 
-        # return a fake dictionary forcing unknown values
-        now = time.now().unix
-        return {
-            "api_error": True,
-            "list": [
-                {"main": {"aqi": 6}, "dt": now},  # current
-                {"main": {"aqi": 6}, "dt": now + 3600},
-                {"main": {"aqi": 6}, "dt": now + 7200},
-                {"main": {"aqi": 6}, "dt": now + 10800},
-                {"main": {"aqi": 6}, "dt": now + 14400},
-                {"main": {"aqi": 6}, "dt": now + 18800},
-                {"main": {"aqi": 6}, "dt": now + 21600},  # 6h forecast
-                {"main": {"aqi": 6}, "dt": now + 25200},
-                {"main": {"aqi": 6}, "dt": now + 28800},
-                {"main": {"aqi": 6}, "dt": now + 32400},
-                {"main": {"aqi": 6}, "dt": now + 36000},
-                {"main": {"aqi": 6}, "dt": now + 39600},
-                {"main": {"aqi": 6}, "dt": now + 43200},  # 12h forecast
-            ],
-        }
-
-    # convert to json
-    data = res.json()
-
-    # remove excessive forecast data to alleviate cache
-    for _ in range(0, len(data["list"]) - 13):
-        data["list"].pop()
-
-    return data
+    body = res.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return None
+    data = json.decode(body, None)
+    items = data.get("list") if type(data) == "dict" else None
+    if type(items) != "list":
+        return None
+    clean = []
+    for item in items[:96]:
+        main = item.get("main") if type(item) == "dict" else None
+        components = item.get("components") if type(item) == "dict" else None
+        dt = item.get("dt") if type(item) == "dict" else None
+        aqi = main.get("aqi") if type(main) == "dict" else None
+        if type(dt) not in ["int", "float"] or type(aqi) not in ["int", "float"] or aqi < 1 or aqi > 5 or type(components) != "dict" or any([type(components.get(code)) not in ["int", "float"] for code in POLLUTANT_CODES]):
+            continue
+        clean.append({"dt": dt, "main": {"aqi": aqi}, "components": components})
+    return {"list": clean} if len(clean) >= 13 else None
 
 def get_rounded_coord(coord):
     # rounds to 4 decimal places
@@ -360,7 +326,7 @@ def get_color_for_aqi(aqi, config):
     aqi3_color = config.str("aqi3_color", DEFAULT_COLOR_AQI3)
     aqi4_color = config.str("aqi4_color", DEFAULT_COLOR_AQI4)
     aqi5_color = config.str("aqi5_color", DEFAULT_COLOR_AQI5)
-    aqi6_color = config.str("aqi6_color", DEFAULT_COLOR_AQI5)
+    aqi6_color = config.str("aqi6_color", DEFAULT_COLOR_AQI6)
 
     if aqi == 1:
         return aqi1_color
@@ -389,7 +355,6 @@ def get_text_for_aqi(aqi, config):
     # check if we are in widget mode
     widget_mode = config.bool("$widget", False)
     scroll = config.bool("scroll_desc", DEFAULT_SCROLL_AQI)
-    dprint("Scroll={}, Widget={}, Result={}".format(scroll, widget_mode, (scroll and not widget_mode)))
     safe_aqi = int(aqi - 1) if aqi <= 5 else 5
 
     # widgets don't support animation, we can only scroll text if not in widget mode
@@ -489,7 +454,6 @@ def render_pollutant(pollutant_code, pollutant_level, config):
     ]
 
 def render_pollutant_level_bar(pollutant_code, pollutant_level, config):
-    descriptions = ["Good", "Fair", "Moderate", "Poor", "Very Poor"]
     ranges = {
         "so2": [0, 20, 80, 250, 350],
         "no2": [0, 40, 70, 150, 200],
@@ -501,9 +465,6 @@ def render_pollutant_level_bar(pollutant_code, pollutant_level, config):
 
     range = ranges[pollutant_code]
     less = [x for x in range if x <= pollutant_level]
-    description = descriptions[len(less) - 1]
-
-    dprint("{} = {} ({})".format(pollutant_code, pollutant_level, description))
 
     return render.Column(
         children = [

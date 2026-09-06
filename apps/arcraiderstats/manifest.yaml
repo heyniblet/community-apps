@@ -6,7 +6,7 @@ desc: Shows current Arc Raiders player count from Steam and active event timers 
 author: Chris Nourse
 fileName: arc_raiders_stats.star
 packageName: arcraiderstats
-recommendedInterval: 600
+recommendedInterval: 5
 supports2x: true
 category: gaming
 tags:

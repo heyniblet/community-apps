@@ -29,9 +29,8 @@ AVAILABLE_FEEDS = {
     "WaPo Business": "https://feeds.washingtonpost.com/rss/business",
     "WaPo Technology": "https://feeds.washingtonpost.com/rss/business/technology",
     # Other news sources...
-    "BBC Top Stories": "http://feeds.bbci.co.uk/news/rss.xml",
+    "BBC Top Stories": "https://feeds.bbci.co.uk/news/rss.xml",
     "BBC World News": "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "CNN Top Stories": "http://rss.cnn.com/rss/cnn_topstories.rss",
     "NPR News": "https://feeds.npr.org/1001/rss.xml",
     "The Guardian": "https://www.theguardian.com/international/rss",
     "TechCrunch": "https://techcrunch.com/feed/",
@@ -63,11 +62,14 @@ def main(config):
     Returns:
         render.Root: A display containing scrolling news content.
     """
-    selected_feeds = {
-        config.str("feed1", "WSJ US News"): AVAILABLE_FEEDS[config.str("feed1", "WSJ US News")],
-        config.str("feed2", "WSJ World News"): AVAILABLE_FEEDS[config.str("feed2", "WSJ World News")],
-        config.str("feed3", "BBC Top Stories"): AVAILABLE_FEEDS[config.str("feed3", "BBC Top Stories")],
-    }
+    selected_feeds = {}
+    for field, default in [("feed1", "WSJ US News"), ("feed2", "WSJ World News"), ("feed3", "BBC Top Stories")]:
+        name = config.str(field, default)
+        if name in AVAILABLE_FEEDS:
+            selected_feeds[name] = AVAILABLE_FEEDS[name]
+
+    if not selected_feeds:
+        selected_feeds["WSJ US News"] = AVAILABLE_FEEDS["WSJ US News"]
 
     feed_names = list(selected_feeds.keys())
 
@@ -81,7 +83,7 @@ def main(config):
     scroll_speed = int(config.str("scroll_speed", "75"))  # Default to normal speed
 
     # Get the stored index from cache, default to 0 if not found
-    current_index = int(cache.get("feed_index") or "0")
+    current_index = int(cache.get("feed_index") or "0") % len(feed_names)
     feed_name = feed_names[current_index]
     feed_url = selected_feeds[feed_name]
 
@@ -93,7 +95,7 @@ def main(config):
 
     # If primary feed fails, try others as fallback
     if not headline or not description:
-        headline, description = try_other_feeds(feed_name, selected_feeds)
+        feed_name, headline, description = try_other_feeds(feed_name, selected_feeds)
 
     if not headline or not description:
         return render.Root(
@@ -154,8 +156,8 @@ def get_feed_content(url):
             return (None, None)
         parts = cached.split("||||")
         if len(parts) >= 6:
-            headlines = [parts[i] for i in range(0, len(parts), TOP_N_HEADLINES - 1)]
-            descriptions = [parts[i] for i in range(1, len(parts), TOP_N_HEADLINES - 1)]
+            headlines = [parts[i] for i in range(0, len(parts), 2)]
+            descriptions = [parts[i] for i in range(1, len(parts), 2)]
             return get_random_pair(headlines, descriptions)
 
     headlines, descriptions = fetch_and_parse_feed(url)
@@ -179,15 +181,15 @@ def try_other_feeds(current_feed_name, selected_feeds):
       selected_feeds: Dictionary of feed name to feed URL
 
     Returns:
-      tuple: (headline, description) or (None, None) if all feeds fail
+      tuple: (feed name, headline, description), with empty content if all feeds fail
     """
     for feed_name, feed_url in selected_feeds.items():
         if feed_name != current_feed_name:
             headline, description = get_feed_content(feed_url)
             if headline and description:
-                return (headline, description)
+                return (feed_name, headline, description)
 
-    return (None, None)
+    return (current_feed_name, None, None)
 
 def fetch_and_parse_feed(url):
     """Fetch and parse RSS feed content.
@@ -198,12 +200,15 @@ def fetch_and_parse_feed(url):
     Returns:
       tuple: (headlines, descriptions) lists or (None, None) on error
     """
-    resp = http.get(url)
+    resp = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
 
     if resp.status_code != 200:
         return (None, None)
 
-    feed = xpath.loads(resp.body())
+    body = resp.body()
+    if not body or len(body) > 512000:
+        return (None, None)
+    feed = xpath.loads(body)
     headlines = feed.query_all("//item/title")
     descriptions = feed.query_all("//item/description")
 

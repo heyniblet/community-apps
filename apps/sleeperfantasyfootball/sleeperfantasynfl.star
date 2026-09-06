@@ -373,9 +373,6 @@ def render_standings_and_records(x, standings, entries_to_display, heading_font_
     return output
 
 def get_schema():
-    print("get_schema - Start")
-    print("get_schema - End")
-
     return schema.Schema(
         version = "1",
         fields = [
@@ -385,12 +382,13 @@ def get_schema():
                 desc = "Enter your username",
                 icon = "gear",
             ),
-            schema.Generated(
-                id = "generated_leagues",
-                source = "username",
-                handler = get_current_leagues,
+            schema.Text(
+                id = "league_name",
+                name = "League ID",
+                desc = "Sleeper league ID.",
+                icon = "gear",
             ),
-        ],
+        ] + league_settings(),
     )
 
 def get_current_leagues(username):
@@ -439,6 +437,10 @@ def get_current_leagues(username):
             options = league_name_options,
             default = league_name_options[0].value,
         ),
+    ] + league_settings()
+
+def league_settings():
+    return [
         schema.Toggle(
             id = "show_scores",
             name = "Show Scores",

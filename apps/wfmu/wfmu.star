@@ -5,6 +5,7 @@ Description: Displays what's currently playing on the WFMU radio station. WFMU-F
 Author: Tom O'Dea
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/wfmu_logo.png", WFMU_LOGO_ASSET = "file")
 load("render.star", "render")
@@ -41,7 +42,6 @@ def get_schema():
 WFMU_NOW_PLAYING_URL = "https://wfmu.org/wp-content/themes/wfmu-theme/library/php/includes/liveNow.php"
 
 def api_error():
-    print("Error connecting to the API")
     return render.Root(
         child = render.Column(
             expanded = True,
@@ -58,13 +58,14 @@ def main(config):
     color = config.str("color", DEFAULT_COLOR)
     rep = http.get(WFMU_NOW_PLAYING_URL, ttl_seconds = 30)
     if rep.status_code != 200:
-        print("The json request failed with status %d", rep.status_code)
         return api_error()
 
-    song = rep.json()["song"]
-    show = rep.json()["show"]
-
-    print("song=", song)
+    body = rep.body()
+    data = json.decode(body, {}) if body and len(body) <= 256 * 1024 else {}
+    if type(data) != "dict":
+        return api_error()
+    song = str(data.get("song") or "")[:200]
+    show = str(data.get("show") or "")[:200]
 
     # if song is empty, display the show name instead
     if song:
@@ -72,14 +73,6 @@ def main(config):
     else:
         now_playing = show
         show = ""
-
-    print("playing=", now_playing)
-
-    # check if result was served from cache or not
-    if rep.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling WFMU API.")
 
     return render.Root(
         child = render.Column(

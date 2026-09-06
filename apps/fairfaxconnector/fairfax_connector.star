@@ -5,7 +5,6 @@ Description: Shows when your next bus is arriving. Visit fairfaxconnector.com fo
 Author: Austin Pearce
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/bus_stop_picture.png", BUS_STOP_PICTURE_ASSET = "file")
@@ -14,88 +13,53 @@ load("schema.star", "schema")
 
 BUS_STOP_PICTURE = BUS_STOP_PICTURE_ASSET.readall()
 
-ONE_MINUTE = 60
-ONE_DAY = ONE_MINUTE * 60 * 24
-ONE_WEEK = ONE_DAY * 7
 BASE_URL = "https://www.fairfaxcounty.gov/bustime/api/v3"
 DEFAULT_STOP = "6484"
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_ROUTES = 200
 
-def getAllRoutes(config):
-    routesUrl = BASE_URL + "/getroutes?key=" + config.get("fairfax_connector_api_key") + "&format=json"
-    routes = http.get(routesUrl, ttl_seconds = ONE_DAY).body()
-
-    routes = json.decode(routes).get("bustime-response").get("routes")
-    return routes
-
-def getRouteDirections(route, config):
-    dirUrl = BASE_URL + "/getdirections?key=" + config.get("fairfax_connector_api_key") + "&rt=" + route.get("rt") + "&format=json"
-    directions = http.get(dirUrl, ttl_seconds = ONE_DAY).body()
-
-    directions = json.decode(directions).get("bustime-response").get("directions")
-    return directions
-
-def getStops(route, direction, config):
-    stopsUrl = BASE_URL + "/getstops?key=" + config.get("fairfax_connector_api_key") + "&rt=" + route.get("rt") + "&dir=" + direction.get("id") + "&format=json"
-
-    # Some of the directions have spaces in their IDs. Why this is allowed, I have no clue. I can't seem to find a starlark lib
-    # for URL encoding, so I'm doing this one-off here where it's needed.
-    stopsUrl = stopsUrl.replace(" ", "%20")
-    stops = http.get(stopsUrl, ttl_seconds = ONE_DAY).body()
-
-    stops = json.decode(stops).get("bustime-response").get("stops")
-    return stops
-
-# Warning: Expensive operation! Sends a lot of network requests the first time it's called
-# before the cache is filled up (and again every 24h when the cache expires).
-def getAllStops(config):
-    allStops = []
-    routes = getAllRoutes(config)
-    for route in routes:
-        directions = getRouteDirections(route, config)
-        for direction in directions:
-            stops = getStops(route, direction, config)
-            if stops == None:
-                continue
-            for stop in stops:
-                allStops.append([route, stop])
-
-    return allStops
-
-def getRouteColor(routeId, config):
-    routeColor = cache.get("COLOR-" + routeId)
-    if routeColor == None:
-        routes = getAllRoutes(config)
-
-        # Find the matching route and extract its color
-        for route in routes:
-            if route["rt"] == routeId:
-                routeColor = route["rtclr"]
-
-                cache.set("COLOR-" + routeId, routeColor, ONE_WEEK)
-                break
-    return routeColor or "#ffffff"
+def get_route_colors(api_key):
+    payload = api_json("/getroutes", {"key": api_key, "format": "json"})
+    routes = payload.get("routes") if type(payload) == "dict" else None
+    colors = {}
+    for route in routes[:MAX_ROUTES] if type(routes) == "list" else []:
+        route_id = safe_route(route.get("rt")) if type(route) == "dict" else None
+        color = safe_color(route.get("rtclr")) if type(route) == "dict" else None
+        if route_id and color:
+            colors[route_id] = color
+    return colors
 
 # Gets the list of predicted bus times for an individual bus stop
-def getPredictions(stopId, config):
-    api_key = config.get("fairfax_connector_api_key")
-    if not api_key:
+def get_predictions(stop_id, api_key):
+    payload = api_json("/getpredictions", {"key": api_key, "stpid": stop_id, "top": "2", "format": "json"})
+    if type(payload) != "dict":
         return None
-
-    predictionUrl = BASE_URL + "/getpredictions?key=" + api_key + "&stpid=" + stopId + "&format=json"
-    stopPredictions = http.get(predictionUrl, ttl_seconds = ONE_MINUTE).body()
-
-    stopPredictions = json.decode(stopPredictions).get("bustime-response")
-    if (stopPredictions.get("error") != None):
-        if (len(stopPredictions.get("error")) > 0 and stopPredictions.get("error")[0].get("msg") == "No arrival times"):
+    errors = payload.get("error")
+    if type(errors) == "list" and errors:
+        message = errors[0].get("msg") if type(errors[0]) == "dict" else ""
+        if message == "No arrival times":
             return []
-        else:
-            return None
-    return stopPredictions.get("prd")
+        return None
+    predictions = payload.get("prd")
+    if type(predictions) != "list":
+        return None
+    result = []
+    for prediction in predictions[:2]:
+        route = safe_route(prediction.get("rt")) if type(prediction) == "dict" else None
+        minutes = str(prediction.get("prdctdn") or "") if type(prediction) == "dict" else ""
+        stop_name = prediction.get("stpnm") if type(prediction) == "dict" else None
+        if route and (minutes == "DUE" or minutes.isdigit()) and type(stop_name) == "string":
+            result.append({"rt": route, "prdctdn": minutes[:4], "stpnm": stop_name[:120]})
+    return result
 
-def renderBusRow(prediction, config):
-    routeColor = getRouteColor(prediction.get("rt"), config)
-    if prediction == None:
-        return render.Text("")
+def api_json(path, params):
+    response = http.get(BASE_URL + path, params = params)
+    body = response.body()
+    data = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    return data.get("bustime-response") if type(data) == "dict" else None
+
+def renderBusRow(prediction, colors):
+    routeColor = colors.get(prediction.get("rt"), "#ffffff")
     minutesRemaining = prediction.get("prdctdn")
     if minutesRemaining != "DUE":
         minutesRemaining = minutesRemaining + " min"
@@ -114,7 +78,8 @@ def renderBusRow(prediction, config):
     )
 
 def main(config):
-    stop = config.get("stop") or DEFAULT_STOP
+    stop = safe_stop(config.get("stop") or DEFAULT_STOP)
+    api_key = safe_api_key(config.get("fairfax_connector_api_key"))
     banner = render.Row(
         children = [
             render.Text(
@@ -127,7 +92,7 @@ def main(config):
             ),
         ],
     )
-    predictions = getPredictions(stop, config)
+    predictions = get_predictions(stop, api_key) if api_key else None
     if predictions == None:
         return render.Root(
             child = render.Column(
@@ -166,13 +131,30 @@ def main(config):
             ),
         ),
     ]
+    colors = get_route_colors(api_key)
     for prediction in predictions:
-        rows.append(renderBusRow(prediction, config))
+        rows.append(renderBusRow(prediction, colors))
     return render.Root(
         child = render.Column(
             children = rows,
         ),
     )
+
+def safe_api_key(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 128 and "\r" not in value and "\n" not in value else ""
+
+def safe_stop(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 12 and value.isdigit() else DEFAULT_STOP
+
+def safe_route(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 12 and all([char.isalnum() or char in "-_" for char in value.codepoints()]) else None
+
+def safe_color(value):
+    value = str(value or "").strip().lstrip("#")
+    return "#" + value if len(value) == 6 and all([char in "0123456789abcdefABCDEF" for char in value.codepoints()]) else None
 
 def get_schema():
     return schema.Schema(

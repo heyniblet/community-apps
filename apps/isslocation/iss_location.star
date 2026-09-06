@@ -9,13 +9,11 @@ load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
-API_URL = "http://api.open-notify.org/iss-now.json"
-GEO_URL = "http://api.geonames.org/findNearbyPlaceNameJSON?username="
-OCEAN_URL = "http://api.geonames.org/oceanJSON?username="
+API_URL = "https://api.wheretheiss.at/v1/satellites/25544"
+GEO_URL = "https://secure.geonames.org/findNearbyPlaceNameJSON"
+OCEAN_URL = "https://secure.geonames.org/oceanJSON"
 FONT = "tom-thumb"
 LOC_FONT = "tb-8"
-
-TTL_SECONDS = 180
 
 ################################################################################
 
@@ -25,6 +23,8 @@ def get_geo_info(geonames):
     adminName1 = ""
     countryCode = ""
     for g in geonames:
+        if type(g) != "dict":
+            continue
         if "countryCode" in g:
             countryCode = g["countryCode"]
         if "countryName" in g:
@@ -37,16 +37,19 @@ def get_geo_info(geonames):
     if (countryCode == "US"):
         country = adminName1
 
-    return (city, country)
+    return (str(city)[:100], str(country)[:100])
 
 ################################################################################
 
 def get_lat_lon():
-    rep = http.get(API_URL, ttl_seconds = TTL_SECONDS)
+    rep = http.get(API_URL)
     if (rep.status_code != 200):
-        fail("API failed wiht status %d", rep.status_code)
-    lat = rep.json()["iss_position"]["latitude"]
-    lon = rep.json()["iss_position"]["longitude"]
+        return None
+    data = rep.json()
+    if type(data) != "dict" or type(data.get("latitude")) not in ["int", "float"] or type(data.get("longitude")) not in ["int", "float"]:
+        return None
+    lat = str(data.get("latitude"))
+    lon = str(data.get("longitude"))
 
     if (len(lat) > 7):
         lat = lat[:7]
@@ -58,18 +61,18 @@ def get_lat_lon():
 ################################################################################
 
 def get_ocean(api_key, lat, lon):
-    temp_url = OCEAN_URL + api_key + "&lat=" + lat + "&lng=" + lon
     country = ""
-    rep = http.get(temp_url, ttl_seconds = TTL_SECONDS)
+    rep = http.get(OCEAN_URL, params = {"username": api_key, "lat": lat, "lng": lon})
     if (rep.status_code != 200):
-        fail("API failed wiht status %d", rep.status_code)
+        return ("unknown location", country, "#444444")
 
-    #print(str(rep.json()))
-    if ("afraid" in str(rep.json())):
+    data = rep.json()
+    ocean = data.get("ocean") if type(data) == "dict" else None
+    if type(ocean) != "dict":
         city = "unknown location"
         color = "#444444"
     else:
-        city = rep.json()["ocean"]["name"]
+        city = str(ocean.get("name") or "unknown location")[:100]
         color = "#33A2FF"
 
     return (city, country, color)
@@ -77,19 +80,25 @@ def get_ocean(api_key, lat, lon):
 ################################################################################
 
 def get_iss_dict(api_key):
-    (lat, lon) = get_lat_lon()
+    position = get_lat_lon()
+    if position == None:
+        return None
+    (lat, lon) = position
 
-    temp_url = GEO_URL + api_key + "&lat=" + lat + "&lng=" + lon
-    rep = http.get(temp_url, ttl_seconds = TTL_SECONDS)
+    rep = http.get(GEO_URL, params = {"username": api_key, "lat": lat, "lng": lon})
     if (rep.status_code != 200):
-        fail("API failed with status %d", rep.status_code)
+        return None
 
-    geonames = rep.json()["geonames"]
+    data = rep.json()
+    geonames = data.get("geonames") if type(data) == "dict" else None
+    if type(geonames) != "list":
+        return None
+    geonames = geonames[:10]
 
     if len(geonames) == 0:
         (city, country, color) = get_ocean(api_key, lat, lon)
     else:
-        (city, country) = get_geo_info(rep.json()["geonames"])
+        (city, country) = get_geo_info(geonames)
         color = "#E29315"
 
     iss_dict = {"lat": lat, "lon": lon, "city": city, "country": country, "color": color}
@@ -99,10 +108,12 @@ def get_iss_dict(api_key):
 
 def main(config):
     api_key = config.get("api_key")
-    if (api_key == None):
+    if type(api_key) != "string" or not api_key or len(api_key) > 128:
         return render.Root(child = render.Text("Need api_key."))
 
     iss_dict = get_iss_dict(api_key)
+    if iss_dict == None:
+        return render.Root(child = render.WrappedText("ISS location unavailable", width = 64, align = "center"))
 
     content = iss_dict["city"] + " " + iss_dict["country"]
     content = content.strip()
@@ -127,7 +138,7 @@ def get_schema():
             schema.Text(
                 id = "api_key",
                 name = "Geonames API Key",
-                desc = "API key for Geonames (http://www.geonames.org/enablefreewebservice)",
+                desc = "GeoNames username enabled for free web services (geonames.org).",
                 icon = "key",
                 secret = True,
             ),

@@ -34,7 +34,7 @@ def main(config):
             ),
         )
 
-    stop_id = json.decode(stop)["value"]
+    stop_id = json.decode(stop)["value"] if stop.startswith("{") else stop
 
     queryString = SWP_PASSAGEINFO_URL.format(humanize.url_encode(stop_id))
 
@@ -76,17 +76,26 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "stop",
                 name = "Stop",
-                desc = "Train stop to watch.",
+                desc = "Potsdam stop ID (Potsdam Hbf is 423).",
                 icon = "train",
-                handler = get_stops,
+                default = "423",
             ),
-            schema.Generated(
-                id = "generated",
-                source = "stop",
-                handler = more_options,
+            schema.Text(
+                id = "direction",
+                name = "Direction",
+                desc = "Optional departure direction, or all.",
+                icon = "compass",
+                default = "all",
+            ),
+            schema.Text(
+                id = "route",
+                name = "Route",
+                desc = "Optional route ID, or 0 for all.",
+                icon = "route",
+                default = "0",
             ),
         ],
     )

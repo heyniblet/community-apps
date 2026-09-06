@@ -5,26 +5,26 @@ Description: Display shouldideploy.today answer.
 Author: humbertogontijo
 """
 
-load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
-SHOULD_I_DEPLOY_URL = "https://shouldideploy.today/api?tz="
+SHOULD_I_DEPLOY_URL = "https://shouldideploy.today/api"
 DEFAULT_TIMEZONE = "UTC"
 
 def main(config):
     tz = config.get("tz", DEFAULT_TIMEZONE)
-    resp_cache = cache.get("api_message")
-    if resp_cache != None:
-        msg_txt = resp_cache
-    else:
-        resp = http.get(SHOULD_I_DEPLOY_URL + tz)
-        if resp.status_code != 200:
-            fail("Request failed with status %d", resp.status_code)
-        msg_txt = resp.json()["message"]
-
-        cache.set("api_message", msg_txt, ttl_seconds = 120)
+    if type(tz) != "string" or len(tz) > 64 or not re.match(r"^[A-Za-z0-9_+./-]+$", tz):
+        tz = DEFAULT_TIMEZONE
+    resp = http.get(SHOULD_I_DEPLOY_URL, params = {"tz": tz}, ttl_seconds = 120)
+    body = resp.body()
+    data = json.decode(body, {}) if resp.status_code == 200 and body and len(body) <= 16 * 1024 else {}
+    msg_txt = data.get("message") if type(data) == "dict" else None
+    if type(msg_txt) != "string" or not msg_txt:
+        msg_txt = "Answer unavailable"
+    msg_txt = msg_txt[:300]
 
     return render.Root(
         child = render.Column(

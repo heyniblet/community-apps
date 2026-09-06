@@ -8,6 +8,7 @@ Author: KDubs
 load("cache.star", "cache")
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
+load("hash.star", "hash")
 load("http.star", "http")
 load("images/dh_icon.png", DH_ICON_ASSET = "file")
 load("images/dk_icon.png", DK_ICON_ASSET = "file")
@@ -23,6 +24,7 @@ load("images/shaman_icon.png", SHAMAN_ICON_ASSET = "file")
 load("images/warlock_icon.png", WARLOCK_ICON_ASSET = "file")
 load("images/warrior_icon.png", WARRIOR_ICON_ASSET = "file")
 load("images/wow_icon.png", WOW_ICON_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -68,7 +70,7 @@ def main(config):
     client_id = config.get("client")
     client_secret = config.get("secret")
 
-    if not client_id or not client_secret:
+    if not client_id or not client_secret or len(client_id) > 512 or len(client_secret) > 512 or "\n" in client_id or "\n" in client_secret or not re.match("^[A-Za-z0-9-]{1,80}$", character_name) or not re.match("^[A-Za-z0-9-]{1,80}$", realm_name) or region not in ["us", "eu", "kr", "tw"]:
         return render.Root(
             child = render.Row(
                 expanded = True,
@@ -249,31 +251,29 @@ def get_schema():
                 name = "Client Secret",
                 desc = "Battle.net Client Secret",
                 icon = "key",
+                secret = True,
             ),
         ],
     )
 
 def get_auth_token(url, id, secret):
-    token = cache.get("access_token")
-    if token != None:
-        print("Valid Auth token found!")
-    else:
-        print("Auth Token is not valid. Calling API to fetch new token...")
+    cache_key = "wow_access_token_" + hash.sha256(id + ":" + secret)
+    token = cache.get(cache_key)
+    if token == None:
         headers = {
             "Authorization": "Basic %s" % base64.encode("%s:%s" % (id, secret)),
         }
         response = http.post(url, headers = headers)
         if response.status_code != 200:
-            print("Blizzard request failed with status %d" % response.status_code)
             return None
 
-        # cache call is needed because ttl is dynamic based on the response body values
-        cache.set(
-            "access_token",
-            json.decode(response.body())["access_token"],
-            ttl_seconds = json.decode(response.body())["expires_in"],
-        )
-        token = json.decode(response.body())["access_token"]
+        body = response.body()
+        data = json.decode(body, {}) if body and len(body) <= 64 * 1024 else {}
+        token = data.get("access_token") if type(data) == "dict" else None
+        expires = data.get("expires_in", DEFAULT_AUTH_TTL) if type(data) == "dict" else DEFAULT_AUTH_TTL
+        if type(token) != "string" or not token or len(token) > 4096:
+            return None
+        cache.set(cache_key, token, ttl_seconds = min(int(expires), DEFAULT_AUTH_TTL))
 
     return token
 
@@ -283,10 +283,10 @@ def fetch_data(url, token):
     }
     response = http.get(url, headers = headers, ttl_seconds = 300)
     if response.status_code != 200:
-        print("Blizzard request failed with status %d" % response.status_code)
         return None
-
-    return response.json()
+    body = response.body()
+    data = json.decode(body, {}) if body and len(body) <= 1024 * 1024 else {}
+    return data if type(data) == "dict" else None
 
 def determine_icon(profile):
     player_class = profile["character_class"]["name"]

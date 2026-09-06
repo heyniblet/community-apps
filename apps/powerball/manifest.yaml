@@ -1,13 +1,12 @@
 ---
 id: powerball
 name: PowerBall
-summary: Shows Powerball Numbers
-desc: Shows up to date powerball numbers and next drawing.
+summary: Latest Powerball numbers
+desc: Shows the latest published Powerball drawing results.
 author: kylejohnson
 fileName: powerball.star
 packageName: powerball
-broken: true
-recommendedInterval: 5
+recommendedInterval: 60
 category: entertainment
 tags:
   - art

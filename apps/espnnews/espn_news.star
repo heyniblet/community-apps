@@ -8,12 +8,15 @@ Author: rs7q5
 #Created 20211231 RIS
 #Last Modified 20230516 RIS
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 #this list are any of the sports that have a "Top headlines" section and can be done with the following base ESPN_URL
 ESPN_URL = "https://www.espn.com/"
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_HEADLINES = 50
 ESPN_SPORTS_LIST = {
     "All": ["All", ""],  #default
     "NFL": ["NFL", "nfl"],
@@ -37,7 +40,9 @@ ESPN_SPORTS_LIST = {
 
 def main(config):
     sport = config.get("sport") or "All"
-    sport_txt, sport_ext = ESPN_SPORTS_LIST.get(sport)
+    if sport not in ESPN_SPORTS_LIST:
+        sport = "All"
+    sport_txt, sport_ext = ESPN_SPORTS_LIST[sport]
 
     #create full URL
     ESPN_API_URL = ESPN_URL + sport_ext
@@ -49,21 +54,14 @@ def main(config):
     font = "CG-pixel-4x5-mono"  #set font
 
     #get data
-    rep = http.get(url = ESPN_API_URL, ttl_seconds = 14400)  #update every 4 hours
-    if rep.status_code != 200:
-        title = ["Error getting data!!!!", "", ""]
-    else:
-        #get top 3 newest headlines
-        title = []
-        for i in range(3):
-            title.append(rep.json()["headlines"][i]["headline"])
-
-        #format strings so they are all the same length (leads to better scrolling)
-        max_len = max([len(x) for x in title])  #length of each string
-
-        #add padding to shorter titles
-        for i, x in enumerate(title):
-            title[i] = x + " " * (max_len - len(x))
+    rep = http.get(url = ESPN_API_URL, ttl_seconds = 600)
+    body = rep.body()
+    payload = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    title = normalized_headlines(payload)
+    if not title:
+        title = ["Headlines unavailable", "", ""]
+    max_len = max([len(x) for x in title])
+    title = [x + " " * (max_len - len(x)) for x in title]
 
     #format output
     title_format = []
@@ -101,7 +99,7 @@ def main(config):
             offset_end = 64,
         )
     return render.Root(
-        delay = int(config.str("speed", "30")),  #speed up scroll text
+        delay = int(safe_speed(config.str("speed", "30"))),
         show_full_animation = True,
         child = render.Row(
             expanded = True,
@@ -118,6 +116,22 @@ def main(config):
             ],
         ),
     )
+
+def normalized_headlines(payload):
+    headlines = payload.get("headlines") if type(payload) == "dict" else None
+    if type(headlines) != "list":
+        return []
+    result = []
+    for item in headlines[:MAX_HEADLINES]:
+        headline = item.get("headline") if type(item) == "dict" else None
+        if type(headline) == "string" and headline.strip():
+            result.append(headline.strip()[:200])
+        if len(result) == 3:
+            break
+    return result
+
+def safe_speed(value):
+    return value if value in ["30", "50", "70", "100"] else "30"
 
 def get_schema():
     sports = [

@@ -1,9 +1,4 @@
-"""
-Applet: London Bus Stop
-Summary: Upcoming arrivals
-Description: Shows upcoming arrivals at a specific bus stop in London.
-Author: dinosaursrarr
-"""
+"""Show upcoming arrivals at a London bus stop."""
 
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -12,393 +7,129 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 DEFAULT_STOP_ID = "490020255S"
-STOP_URL = "https://api.tfl.gov.uk/StopPoint"
-ARRIVALS_URL = "https://api.tfl.gov.uk/StopPoint/%s/Arrivals"
-USER_AGENT = "Tidbyt london_bus_stop"
-
-RED = "#DA291C"  # Pantone 485 C - same as the buses
-ORANGE = "#FFA500"  # Like the countdown timers at bus stops
-COUNTDOWN_HEIGHT = 24
+API_URL = "https://api.tfl.gov.uk/StopPoint"
+USER_AGENT = "Niblet london-bus-stop"
+RED = "#DA291C"
+ORANGE = "#FFA500"
 FONT = "tom-thumb"
 
-def app_key(config):
-    return config.get("tfl_app_key") or ""  # fall back to anonymous quota
+def config_value(value, default):
+    if type(value) != "string" or not value.strip():
+        return default
+    value = value.strip()
+    if value.startswith("{"):
+        option = json.decode(value, {})
+        value = option.get("value") if type(option) == "dict" else None
+    return value.strip() if type(value) == "string" and value.strip() else default
 
-# Validate and get stop details from search results.
-def extract_stop(stop):
-    if not stop.get("commonName"):
-        print(stop)
-        print("TFL StopPoint search result does not contain name")
+def valid_stop(value):
+    return len(value) <= 64 and all([value[i].isalnum() or value[i] in ["-", "_"] for i in range(len(value))])
+
+def request_json(path, params):
+    response = http.get(API_URL + path, params = params, headers = {"Accept": "application/json", "User-Agent": USER_AGENT})
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 1048576:
         return None
-    if not stop.get("stopLetter"):
-        print(stop)
-        print("TFL StopPoint search result does not contain stop code")
+    return json.decode(body, None)
+
+def extract_child(stop_id, children, depth = 0):
+    if depth >= 8 or type(children) != "list":
         return None
-    if not stop.get("id"):
-        print(stop)
-        print("TFL StopPoint search result does not contain id")
-        return None
-
-    return schema.Option(
-        display = "%s - %s" % (stop["stopLetter"], stop["commonName"]),
-        value = stop["id"],
-    )
-
-# Perform the actual fetch of stops for a location, but use cache if available
-def fetch_stops(loc, config):
-    truncated_lat = math.round(1000.0 * float(loc["lat"])) / 1000.0  # Truncate to 3dp for better caching
-    truncated_lng = math.round(1000.0 * float(loc["lng"])) / 1000.0  # Means to the nearest ~110 metres.
-    resp = http.get(
-        STOP_URL,
-        params = {
-            "app_key": app_key(config),
-            "lat": str(truncated_lat),
-            "lon": str(truncated_lng),
-            "radius": "300",
-            "stopTypes": "NaptanPublicBusCoachTram",
-            "modes": "bus",
-            "returnLines": "false",
-            "categories": "Direction",
-        },
-        headers = {
-            "User-Agent": USER_AGENT,
-        },
-        ttl_seconds = 86400,  # Bus stops don't move often
-    )
-    if resp.status_code != 200:
-        print("TFL StopPoint search failed with status ", resp.status_code)
-        return None
-    if not resp.json().get("stopPoints"):
-        print("TFL StopPoint search does not contain stops")
-        return None
-    return resp.json()
-
-# API gives errors when searching for locations outside the United Kingdom.
-def outside_uk_bounds(loc):
-    lat = float(loc["lat"])
-    lng = float(loc["lng"])
-    if lat <= 49.9 or lat >= 58.7 or lng <= -11.05 or lng >= 1.78:
-        return True
-    return False
-
-# Find list of stops near a given location.
-def get_stops(location, config):
-    loc = json.decode(location)
-    if outside_uk_bounds(loc):
-        return [schema.Option(
-            display = "Default option - location is outside the UK",
-            value = DEFAULT_STOP_ID,
-        )]
-
-    data = fetch_stops(loc, config)
-    if not data:
-        return []
-    extracted = [extract_stop(stop) for stop in data["stopPoints"]]
-    return [e for e in extracted if e]
-
-# Perform the actual fetch for a stop, but use cache if available.
-def fetch_stop(stop_id, config):
-    resp = http.get(
-        url = STOP_URL + "/" + stop_id,
-        params = {
-            "app_key": app_key(config),
-        },
-        headers = {
-            "User-Agent": USER_AGENT,
-        },
-        ttl_seconds = 30,
-    )
-    if resp.status_code != 200:
-        print("TFL StopPoint request failed with status ", resp.status_code)
-        return None
-    return resp.json()
-
-# The hierarchy of stops can be deeply nested, with grandchildren or lower.
-def extract_child(stop_id, children):
-    for child in children:
-        if child["naptanId"] == stop_id:
-            if "commonName" in child and "stopLetter" in child:
-                return {
-                    "name": child["commonName"],
-                    "code": child["stopLetter"],
-                }
-        grandchild = extract_child(stop_id, child.get("children", []))
-        if grandchild:
-            return grandchild
+    for child in children[:100]:
+        if type(child) != "dict":
+            continue
+        if child.get("naptanId") == stop_id and type(child.get("commonName")) == "string":
+            return {"name": child["commonName"][:120], "code": str(child.get("stopLetter") or "?")[:3]}
+        found = extract_child(stop_id, child.get("children"), depth + 1)
+        if found:
+            return found
     return None
 
-# Look up a particular stop by its Naptan ID. There can be a hierarchy of
-# StopPoints. It seems like for buses, there is a parent ID for all the stops
-# with a given name/at a given junction, and then a child ID for each stop.
-# This looks for the inner-most child to get specific arrivals.
-def get_stop(stop_id, config):
-    data = fetch_stop(stop_id, config)
-    if not data:
+def get_stop(stop_id, api_key):
+    data = request_json("/" + stop_id, {"app_key": api_key})
+    if type(data) != "dict":
         return None
-
-    child = extract_child(stop_id, data.get("children", []))
+    child = extract_child(stop_id, data.get("children"))
     if child:
         return child
-
-    commonName = data.get("commonName")
-    if not commonName:
+    name = data.get("commonName")
+    if type(name) != "string" or not name:
         return None
+    return {"name": name[:120], "code": str(data.get("stopLetter") or "?")[:3]}
 
-    return {
-        "name": commonName,
-        "code": data.get("stopLetter", "?"),
-    }
-
-def get_arrivals(stop_id, config):
-    resp = http.get(
-        ARRIVALS_URL % stop_id,
-        params = {
-            "serviceTypes": "bus,night",
-            "app_key": app_key(config),
-        },
-        headers = {
-            "User-Agent": USER_AGENT,
-        },
-    )
-    if resp.status_code != 200:
-        fail("TFL Arrivals request failed with status ", resp.status_code)
-
+def get_arrivals(stop_id, api_key):
+    data = request_json("/%s/Arrivals" % stop_id, {"serviceTypes": "bus,night", "app_key": api_key})
+    if type(data) != "list":
+        return []
     arrivals = []
-    for arrival in resp.json():
-        if not arrival.get("lineName"):
-            print("TFL Arrivals response did not contain line")
+    for item in data[:200]:
+        if type(item) != "dict":
             continue
-        if not arrival.get("timeToStation"):
-            print("TFL Arrivals response did not contain arrival prediction")
+        seconds = item.get("timeToStation")
+        line = item.get("lineName")
+        if type(seconds) not in ["int", "float"] or seconds < 0 or seconds > 21600 or type(line) != "string":
             continue
         arrivals.append({
-            "line": arrival["lineName"],
-            "due_in_seconds": arrival["timeToStation"],
-            "destination": arrival["destinationName"],
+            "line": line[:12],
+            "seconds": seconds,
+            "destination": str(item.get("destinationName") or "Unknown destination")[:120],
         })
-
-    arrivals = sorted(arrivals, key = lambda x: x["due_in_seconds"])
-    for i in range(len(arrivals)):
-        arrivals[i]["index"] = i + 1
+    arrivals = sorted(arrivals, key = lambda item: item["seconds"])[:12]
+    for index in range(len(arrivals)):
+        arrivals[index]["index"] = index + 1
     return arrivals
 
-# How long till a given bus comes?
-def render_due(index, line, due_in_seconds):
-    # Not 100% confident this is what the countdown timers at stops do,
-    # but they have both "due" and "1 min", so there must be a difference.
-    if due_in_seconds < 30:
-        due = "due"
-    else:
-        due = "%d min" % math.round(due_in_seconds / 60.0)
+def due_row(item):
+    due = "due" if item["seconds"] < 30 else "%d min" % math.round(item["seconds"] / 60.0)
+    return render.Row(expanded = True, children = [
+        render.WrappedText(str(item["index"]), width = 12, color = ORANGE, font = FONT),
+        render.WrappedText(item["line"], width = 20, color = ORANGE, font = FONT),
+        render.Row(main_align = "end", expanded = True, children = [render.Text(due, color = ORANGE, font = FONT)]),
+    ])
 
-    return render.Row(
-        expanded = True,
-        children = [
-            # Include an index to a) mimic the countdown timers at bus stops
-            # and b) if I can work out how to scroll to show more than 3 for
-            # particularly busy stops.
-            render.WrappedText(
-                content = str(index),
-                width = 12,
-                color = ORANGE,
-                font = FONT,
-            ),
-            render.WrappedText(
-                content = line,
-                width = 20,
-                color = ORANGE,
-                font = FONT,
-            ),
-            render.Row(
-                main_align = "end",
-                expanded = True,
-                children = [
-                    render.Text(
-                        content = due,
-                        color = ORANGE,
-                        font = FONT,
-                    ),
-                ],
-            ),
-        ],
-    )
+def destination_row(item):
+    return render.Row(expanded = True, children = [
+        render.WrappedText(str(item["index"]), width = 12, color = ORANGE, font = FONT),
+        render.Text(item["destination"], color = ORANGE, font = FONT),
+    ])
 
-# Where is a given bus going?
-def render_destination(index, destination):
-    return render.Row(
-        expanded = True,
-        children = [
-            # Include an index to a) mimic the countdown timers at bus stops
-            # and b) if I can work out how to scroll to show more than 4 for
-            # particularly busy stops.
-            render.WrappedText(
-                content = str(index),
-                width = 12,
-                color = ORANGE,
-                font = FONT,
-            ),
-            render.Text(
-                content = destination,
-                color = ORANGE,
-                font = FONT,
-            ),
-        ],
-    )
-
-# Renders two frames for a set of four arrivals.
-def render_arrivals_section(arrivals):
-    if len(arrivals) == 0:
-        return render.Box(
-            height = COUNTDOWN_HEIGHT,
-            child = render.WrappedText(
-                content = "No upcoming arrivals",
-                color = ORANGE,
-            ),
-        )
-
-    return [
-        # Show the number and how long to wait for each bus.
-        render.Padding(
-            pad = (1, 0, 1, 0),
-            child = render.Box(
-                height = COUNTDOWN_HEIGHT,
-                child = render.Column(
-                    main_align = "start",
-                    expanded = True,
-                    children = [
-                        render_due(a["index"], a["line"], a["due_in_seconds"])
-                        for a in arrivals
-                    ],
-                ),
-            ),
-        ),
-        # Show the destination for each bus.
-        render.Padding(
-            pad = (1, 0, 1, 0),
-            child = render.Box(
-                height = COUNTDOWN_HEIGHT,
-                child = render.Column(
-                    main_align = "start",
-                    expanded = True,
-                    children = [
-                        render_destination(a["index"], a["destination"])
-                        for a in arrivals
-                    ],
-                ),
-            ),
-        ),
-    ]
-
-# Show up to 4 on a screen for as many screens as needed
-def render_arrivals(arrivals):
-    sections = []
-    for i in range(0, len(arrivals), 4):
-        sections.extend(render_arrivals_section(arrivals[i:i + 4]))
+def arrivals_view(arrivals):
+    if not arrivals:
+        return render.Box(height = 24, child = render.WrappedText("No upcoming arrivals", width = 64, align = "center", color = ORANGE))
     frames = []
-    for s in sections:
-        frames.extend([s] * 100)
-    return render.Animation(
-        children = frames,
-    )
+    for start in range(0, len(arrivals), 4):
+        section = arrivals[start:start + 4]
+        frames.append(render.Box(height = 24, child = render.Column(children = [due_row(item) for item in section])))
+        frames.append(render.Box(height = 24, child = render.Column(children = [destination_row(item) for item in section])))
+    return render.Animation(children = frames)
 
-def render_stop_details(name, code):
-    return render.Row(
-        expanded = True,
-        main_align = "space_between",
-        children = [
-            # There's no room to say where each bus is heading, so just give the
-            # direction for the stop. That makes it long, so scroll it.
-            render.Padding(
-                pad = (1, 1, 1, 0),
-                child = render.Marquee(
-                    scroll_direction = "horizontal",
-                    width = 50,
-                    height = 6,
-                    child = render.Text(
-                        content = name,
-                        font = FONT,
-                    ),
-                ),
-            ),
-            # There are often multiple nearby stops with the same name, so be precise.
-            # Can be up to two letters long.
-            render.Box(
-                width = 13,
-                height = 7,
-                child = render.Padding(
-                    pad = (1, 1, 0, 0),
-                    child = render.Text(
-                        content = code,
-                        font = FONT,
-                    ),
-                ),
-                color = RED,
-            ),
-        ],
-    )
-
-def render_separator():
-    return render.Padding(
-        pad = (0, 0, 0, 0),
-        child = render.Box(
-            height = 1,
-            color = ORANGE,
-        ),
-    )
+def stop_header(stop):
+    return render.Row(expanded = True, main_align = "space_between", children = [
+        render.Padding(pad = (1, 1, 1, 0), child = render.Marquee(width = 50, height = 6, child = render.Text(stop["name"], font = FONT))),
+        render.Box(width = 13, height = 7, color = RED, child = render.Padding(pad = (1, 1, 0, 0), child = render.Text(stop["code"], font = FONT))),
+    ])
 
 def main(config):
-    # Get data from TfL
-    stop_id = config.get("stop_id")
-    if not stop_id:
-        stop_id = DEFAULT_STOP_ID
-    else:
-        stop_id = json.decode(stop_id)["value"]
-
-    stop = get_stop(stop_id, config)
-    if not stop:
-        arrivals = []
-        stop_name = "Unknown stop"
-        stop_code = "?"
-    else:
-        arrivals = get_arrivals(stop_id, config)
-        stop_name = stop["name"]
-        stop_code = stop["code"]
-
+    stop_id = config_value(config.get("stop_id"), DEFAULT_STOP_ID)
+    api_key = config.str("tfl_app_key", "")
+    if not valid_stop(stop_id) or len(api_key) > 512:
+        return render.Root(child = render.WrappedText("Configure a valid TfL stop", width = 64, align = "center"))
+    stop = get_stop(stop_id, api_key)
+    if stop == None:
+        return render.Root(child = render.WrappedText("TfL stop unavailable", width = 64, align = "center"))
     return render.Root(
-        max_age = 120,
-        delay = 25,
-        child = render.Column(
-            expanded = True,
-            main_align = "start",
-            cross_align = "start",
-            children = [
-                # Top part is about the stop, because there are several near my flat
-                # and I want to keep an eye on all of them
-                render_stop_details(stop_name, stop_code),
-                render_separator(),
-                # Bottom part shows the countdown for the next few arrivals
-                render_arrivals(arrivals[:12]),  # Up to 3 screens
-            ],
-        ),
+        max_age = 60,
+        delay = 2000,
+        show_full_animation = True,
+        child = render.Column(children = [
+            stop_header(stop),
+            render.Box(height = 1, color = ORANGE),
+            arrivals_view(get_arrivals(stop_id, api_key)),
+        ]),
     )
 
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Text(
-                id = "tfl_app_key",
-                name = "TfL App Key",
-                desc = "Your Transport for London (TfL) App Key. See https://api.tfl.gov.uk/ for details.",
-                icon = "key",
-                secret = True,
-            ),
-            schema.LocationBased(
-                id = "stop_id",
-                name = "Bus Stop",
-                desc = "A list of bus stops based on a location.",
-                icon = "bus",
-                handler = get_stops,
-            ),
-        ],
-    )
+    return schema.Schema(version = "1", fields = [
+        schema.Text(id = "tfl_app_key", name = "TfL App Key", desc = "Optional key from api.tfl.gov.uk; anonymous quota is supported.", icon = "key", secret = True),
+        schema.Text(id = "stop_id", name = "Bus Stop", desc = "TfL NaPTAN stop ID, such as 490020255S.", icon = "bus", default = DEFAULT_STOP_ID),
+    ])

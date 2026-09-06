@@ -5,33 +5,18 @@ Description: Displays the daily economic or earnings calendar.
 Author: Rob Kimball
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("images/importance_high.png", IMPORTANCE_HIGH_ASSET = "file")
 load("images/importance_low.png", IMPORTANCE_LOW_ASSET = "file")
 load("images/importance_medium.png", IMPORTANCE_MEDIUM_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 BASE_URL = "https://api.tradingeconomics.com"
-AUTH = "guest:guest"
-SAMPLE_DATA = [
-    {"CalendarId": "292068", "Date": "2022-03-23T07:00:00", "Country": "United Kingdom", "Category": "Inflation Rate", "Event": "Inflation Rate YoY", "Reference": "Feb", "ReferenceDate": "2022-02-28T00:00:00", "Source": "Office for National Statistics", "SourceURL": "http://www.ons.gov.uk/", "Actual": "6.2%", "Previous": "5.5%", "Forecast": "5.9%", "TEForecast": "6.1%", "URL": "/united-kingdom/inflation-cpi", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-23T07:00:00", "Revised": "", "Currency": "", "Unit": "%", "Ticker": "UKRPCJYR", "Symbol": "UKRPCJYR"},
-    {"CalendarId": "292037", "Date": "2022-03-23T14:00:00", "Country": "United States", "Category": "New Home Sales", "Event": "New Home Sales", "Reference": "Feb", "ReferenceDate": "2022-02-28T00:00:00", "Source": "U.S. Census Bureau", "SourceURL": "https://www.census.gov", "Actual": "0.772M", "Previous": "0.788M", "Forecast": "0.81M", "TEForecast": "0.81M", "URL": "/united-states/new-home-sales", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-23T14:00:00", "Revised": "0.801M", "Currency": "", "Unit": "M", "Ticker": "UNITEDSTANEWHOMSAL", "Symbol": "UNITEDSTANEWHOMSAL"},
-    {"CalendarId": "310998", "Date": "2022-03-24T00:00:00", "Country": "Belgium", "Category": "Calendar", "Event": "Extraordinary NATO Summit", "Reference": "", "ReferenceDate": None, "Source": "", "SourceURL": "", "Actual": "", "Previous": "", "Forecast": "", "TEForecast": "", "URL": "/belgium/calendar", "DateSpan": "1", "Importance": 3, "LastUpdate": "2022-03-18T11:24:00", "Revised": "", "Currency": "", "Unit": "", "Ticker": "BEL CALENDAR", "Symbol": ""},
-    {"CalendarId": "292083", "Date": "2022-03-24T08:30:00", "Country": "Germany", "Category": "Manufacturing PMI", "Event": "Markit Manufacturing PMI Flash", "Reference": "Mar", "ReferenceDate": "2022-03-31T00:00:00", "Source": "Markit Economics", "SourceURL": "https://www.markiteconomics.com", "Actual": "", "Previous": "58.4", "Forecast": "55.8", "TEForecast": "56.2", "URL": "/germany/manufacturing-pmi", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "", "Ticker": "GERMANYMANPMI", "Symbol": "GERMANYMANPMI"},
-    {"CalendarId": "292088", "Date": "2022-03-24T09:30:00", "Country": "United Kingdom", "Category": "Manufacturing PMI", "Event": "Markit/CIPS Manufacturing PMI Flash", "Reference": "Mar", "ReferenceDate": "2022-03-31T00:00:00", "Source": "Markit Economics", "SourceURL": "https://www.markiteconomics.com", "Actual": "", "Previous": "58", "Forecast": "56.7", "TEForecast": "57.1", "URL": "/united-kingdom/manufacturing-pmi", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "", "Ticker": "UNITEDKINMANPMI", "Symbol": "UNITEDKINMANPMI"},
-    {"CalendarId": "292089", "Date": "2022-03-24T09:30:00", "Country": "United Kingdom", "Category": "Services PMI", "Event": "Markit/CIPS UK Services PMI Flash", "Reference": "Mar", "ReferenceDate": "2022-03-31T00:00:00", "Source": "Markit Economics", "SourceURL": "https://www.markiteconomics.com", "Actual": "", "Previous": "60.5", "Forecast": "58", "TEForecast": "58.8", "URL": "/united-kingdom/services-pmi", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "", "Ticker": "UNITEDKINSERPMI", "Symbol": "UNITEDKINSERPMI"},
-    {"CalendarId": "292098", "Date": "2022-03-24T12:30:00", "Country": "United States", "Category": "Durable Goods Orders", "Event": "Durable Goods Orders MoM", "Reference": "Feb", "ReferenceDate": "2022-02-28T00:00:00", "Source": "U.S. Census Bureau", "SourceURL": "https://www.census.gov/", "Actual": "", "Previous": "1.6%", "Forecast": "-0.5%", "TEForecast": "-0.5%", "URL": "/united-states/durable-goods-orders", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "%", "Ticker": "UNITEDSTADURGOOORD", "Symbol": "UNITEDSTADURGOOORD"},
-    {"CalendarId": "291879", "Date": "2022-03-25T00:01:00", "Country": "United Kingdom", "Category": "Consumer Confidence", "Event": "Gfk Consumer Confidence", "Reference": "Mar", "ReferenceDate": "2022-03-31T00:00:00", "Source": "GfK Group", "SourceURL": "https://www.gfk.com", "Actual": "", "Previous": "-26", "Forecast": "-30", "TEForecast": "-35", "URL": "/united-kingdom/consumer-confidence", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "", "Ticker": "UKCCI", "Symbol": "UKCCI"},
-    {"CalendarId": "292119", "Date": "2022-03-25T07:00:00", "Country": "United Kingdom", "Category": "Retail Sales MoM", "Event": "Retail Sales MoM", "Reference": "Feb", "ReferenceDate": "2022-02-28T00:00:00", "Source": "Office for National Statistics", "SourceURL": "http://www.ons.gov.uk/", "Actual": "", "Previous": "1.9%", "Forecast": "0.6%", "TEForecast": "0.7%", "URL": "/united-kingdom/retail-sales", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "%", "Ticker": "GBRRETAILSALESMOM", "Symbol": "GBRRetailSalesMoM"},
-    {"CalendarId": "292169", "Date": "2022-03-25T09:00:00", "Country": "Germany", "Category": "Business Confidence", "Event": "Ifo Business Climate", "Reference": "Mar", "ReferenceDate": "2022-03-31T00:00:00", "Source": "Ifo Institute", "SourceURL": "https://www.ifo.de", "Actual": "", "Previous": "98.9", "Forecast": "94.2", "TEForecast": "92.2", "URL": "/germany/business-confidence", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "", "Ticker": "GRIFPBUS", "Symbol": "GRIFPBUS"},
-    {"CalendarId": "292037", "Date": "2022-03-23T14:00:00", "Country": "United States", "Category": "New Home Sales", "Event": "New Home Sales", "Reference": "Feb", "ReferenceDate": "2022-02-28T00:00:00", "Source": "U.S. Census Bureau", "SourceURL": "https://www.census.gov", "Actual": "0.772M", "Previous": "0.788M", "Forecast": "0.81M", "TEForecast": "0.81M", "URL": "/united-states/new-home-sales", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-23T14:00:00", "Revised": "0.801M", "Currency": "", "Unit": "M", "Ticker": "UNITEDSTANEWHOMSAL", "Symbol": "UNITEDSTANEWHOMSAL"},
-    {"CalendarId": "292098", "Date": "2022-03-24T12:30:00", "Country": "United States", "Category": "Durable Goods Orders", "Event": "Durable Goods Orders MoM", "Reference": "Feb", "ReferenceDate": "2022-02-28T00:00:00", "Source": "U.S. Census Bureau", "SourceURL": "https://www.census.gov/", "Actual": "", "Previous": "1.6%", "Forecast": "-0.5%", "TEForecast": "-0.5%", "URL": "/united-states/durable-goods-orders", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-21T14:15:00", "Revised": "", "Currency": "", "Unit": "%", "Ticker": "UNITEDSTADURGOOORD", "Symbol": "UNITEDSTADURGOOORD"},
-    {"CalendarId": "292693", "Date": "2022-03-29T14:00:00", "Country": "United States", "Category": "Job Offers", "Event": "JOLTs Job Openings", "Reference": "Feb", "ReferenceDate": "2022-02-28T00:00:00", "Source": "U.S. Bureau of Labor Statistics", "SourceURL": "http://www.bls.gov", "Actual": "", "Previous": "11.263M", "Forecast": "", "TEForecast": "", "URL": "/united-states/job-offers", "DateSpan": "0", "Importance": 3, "LastUpdate": "2022-03-17T16:37:00", "Revised": "", "Currency": "", "Unit": "M", "Ticker": "UNITEDSTAJOBOFF", "Symbol": "UNITEDSTAJOBOFF"},
-]
 DATEFMT = "2006-01-02T15:04:05"
 MAX_RELEASE_SECONDS = 60 * 90  # we only show releases occurring the last/next N minutes
 DEFAULT_HIDDEN = False
@@ -372,75 +357,80 @@ IMPORTANCE_ICONS = {
 }
 
 def flag_api(country_name):
-    print("Getting %s flag from the flag CDN, ISO3166 code: %s" % (country_name, ISO3166.get(country_name)))
-    flag_resp = http.get("https://flagcdn.com/w20/%s.png" % ISO3166.get(country_name), ttl_seconds = 60 * 60 * 24 * 30)
-    if flag_resp.status_code != 200:
-        flag = ISO3166.get(country_name)
-    else:
-        flag = flag_resp.body()
+    code = ISO3166.get(country_name)
+    if not code:
+        return None
+    flag_resp = http.get("https://flagcdn.com/w20/%s.png" % code, ttl_seconds = 60 * 60 * 24 * 30)
+    body = flag_resp.body()
+    return body if flag_resp.status_code == 200 and body and len(body) <= 64 * 1024 else None
 
-    return flag
+def event_value(value, limit):
+    return str(value)[:limit] if type(value) in ["string", "int", "float"] else ""
+
+def clean_event(event, countries):
+    if type(event) != "dict":
+        return None
+    date = event.get("Date")
+    country = event.get("Country")
+    name = event.get("Event")
+    importance = event.get("Importance")
+    if type(date) != "string" or re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", date) == None:
+        return None
+    if type(country) != "string" or not country or len(country) > 100 or countries and country not in countries:
+        return None
+    if type(name) != "string" or not name or len(name) > 300:
+        return None
+    if type(importance) not in ["int", "float"] or int(importance) not in [1, 2, 3]:
+        return None
+    return {
+        "Date": date,
+        "Country": country,
+        "Event": name,
+        "Importance": int(importance),
+        "Previous": event_value(event.get("Previous"), 40),
+        "Forecast": event_value(event.get("Forecast"), 40),
+        "TEForecast": event_value(event.get("TEForecast"), 40),
+        "Actual": event_value(event.get("Actual"), 40),
+    }
+
+def make_error(message):
+    return render.Root(child = render.WrappedText(message, color = "#ff5555"))
 
 def random(max):
     """Borrowed from nipterink's nft.star"""
     return (time.now().nanosecond // 1000) % max
 
 def main(config):
+    api_key = config.get("api_key")
+    if type(api_key) != "string" or not api_key or len(api_key) > 512:
+        return make_error("Trading Economics key required")
     timezone = time.tz()
-    countries = REGIONS.get(config.get("region"), [])
-    future_events = config.bool("future")
+    region = config.get("region", "US-only")
+    region = region if region in REGIONS else "US-only"
+    countries = REGIONS[region]
+    future_events = config.bool("future", True)
     self_hide = config.bool("self-hide", DEFAULT_HIDDEN)
-    importance = int(config.get("importance", "2"))
+    importance_value = str(config.get("importance", "3"))
+    importance = int(importance_value) if importance_value in ["1", "2", "3"] else 3
     title_font = "CG-pixel-3x5-mono"
     NULL = "--"
 
     now = time.now()
 
-    # Events are cached globally for 30 minutes, individualization is not necessary
-    cache_id = "%s/%s/%s/%s" % ("finevent", "econ", config.get("region", "all"), importance)
-    data = cache.get(cache_id)
     filtered_events = []
-    if not data:
-        url_countries = "all"
-        if len(countries):
-            url_countries = ",".join([country.lower().replace(" ", "%20") for country in countries])
-
-        for imp in range(importance, 4):
-            request_url = "%s/calendar/country/%s?c=%s&f=json&importance=%s" % (BASE_URL, url_countries, AUTH, imp)
-            print("Getting latest events from API %s" % request_url)
-
-            response = http.get(request_url)
-            if response.status_code != 200:
-                print("API Error.")
-            else:
-                data = response.json()
-                if countries:
-                    for evt in data:
-                        if evt["Country"] in countries:
-                            filtered_events.append(evt)
-                        else:
-                            print(evt["Country"], " is not in ", countries)
-                else:
-                    filtered_events.extend(data)
-
-        if len(filtered_events):
-            times = []
-            print("got " + str(len(filtered_events)) + " events")
-            for event in filtered_events:
-                times.append(time.parse_time(event.get("Date", ""), format = DATEFMT).in_location(timezone))
-            future_times = [int((now - t).seconds) for t in times if t > now]
-            if future_times:
-                next_release = abs(max(future_times))
-                print("Caching %s results as %s until next release in %s seconds" % (len(filtered_events), cache_id, next_release))
-
-                cache.set(cache_id, json.encode(filtered_events), ttl_seconds = next_release)
-            else:
-                print("No future events found, caching for 1 hour")
-
-                cache.set(cache_id, json.encode(filtered_events), ttl_seconds = 3600)
-    else:
-        print("Displaying cached data from %s" % cache_id)
-        filtered_events = json.decode(data)
+    url_countries = "all" if not countries else ",".join([country.lower().replace(" ", "%20") for country in countries])
+    encoded_key = humanize.url_encode(api_key)
+    for imp in range(importance, 4):
+        request_url = "%s/calendar/country/%s?c=%s&f=json&importance=%s" % (BASE_URL, url_countries, encoded_key, imp)
+        response = http.get(request_url)
+        body = response.body()
+        events = json.decode(body, None) if response.status_code == 200 and body and len(body) <= 2 * 1024 * 1024 else None
+        if type(events) != "list":
+            continue
+        for candidate in events[:500]:
+            event = clean_event(candidate, countries)
+            if event:
+                filtered_events.append(event)
 
     for event in filtered_events:
         event["ReleaseTime"] = time.parse_time(event.get("Date", ""), format = DATEFMT).in_location(timezone)
@@ -459,24 +449,7 @@ def main(config):
         sorted_events = _events
 
     if not len(sorted_events):
-        print("No upcoming or recently-reported data.")
         return []
-    else:
-        for event in sorted_events:
-            print(
-                event.get("Importance", NULL) or NULL,
-                event.get("ReleaseTime", NULL),
-                event.get("Country", NULL) or NULL,
-                event.get("Event", NULL) or NULL,
-                event.get("Previous", NULL) or NULL,
-                "|",
-                event.get("Forecast", NULL) or NULL,
-                event.get("TEForecast", NULL) or NULL,
-                "|",
-                event.get("Actual", NULL) or NULL,
-                ">>",
-                event.get("Revised", NULL) or NULL,
-            )
 
     choice = random(len(sorted_events))
     right_title = "Prior"
@@ -508,7 +481,7 @@ def main(config):
     country = event.get("Country", None)
 
     flag = flag_api(country)
-    print(importance, display_time, country, name, survey, right)
+    country_code = (ISO3166.get(country) or "??").upper()
 
     defaults = {
         "main_align": "space_between",
@@ -525,7 +498,7 @@ def main(config):
                     main_align = "space_around",
                     children = [
                         render.Image(IMPORTANCE_ICONS[importance], width = 10, height = 10),
-                        render.Image(flag, width = 15, height = 10),
+                        render.Image(flag, width = 15, height = 10) if flag else render.Text(country_code, font = title_font),
                         render.Row(expanded = True, main_align = "center", children = [render.Text(display_time)]),
                     ],
                 ),
@@ -564,6 +537,13 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
+            schema.Text(
+                id = "api_key",
+                name = "Trading Economics API Key",
+                desc = "Your Trading Economics API key or client:secret credential.",
+                icon = "key",
+                secret = True,
+            ),
             schema.Dropdown(
                 id = "region",
                 name = "Event Region",

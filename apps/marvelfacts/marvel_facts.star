@@ -8,8 +8,6 @@ Last updated: 7/10/2023
 Last update: Fixed API call error due to incorrect BASE_URL
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("hash.star", "hash")
 load("http.star", "http")
 load("random.star", "random")
@@ -17,7 +15,7 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-BASE_URL = "https://gateway.marvel.com/v1/public/characters?"
+BASE_URL = "https://gateway.marvel.com/v1/public/characters"
 LIMIT = "50"
 
 def main(config):
@@ -26,30 +24,7 @@ def main(config):
     Returns:
         Root: Character info and display
     """
-    rate_cached = cache.get("new-char")
-    if rate_cached != None:
-        if cache.get("charName") != None:
-            print("Hit! Displaying cached data.")
-            char_name = cache.get("char_name")
-            char_desc = cache.get("char_desc")
-            char_comics = cache.get("char_comics")
-            char_series = cache.get("char_series")
-        else:
-            print("Miss! Calling Marvel API.")
-            char = getNew(config)
-            char_name = char[0]
-            char_desc = char[1]
-            char_comics = char[2]
-            char_series = char[3]
-            cache.set("new-char", "got", ttl_seconds = 1800)
-    else:
-        print("Miss! Calling Marvel API.")
-        char = getNew(config)
-        char_name = char[0]
-        char_desc = char[1]
-        char_comics = char[2]
-        char_series = char[3]
-        cache.set("new-char", "got", ttl_seconds = 1800)
+    char_name, char_desc, char_comics, char_series = getNew(config)
 
     if char_desc == "":
         next_text = "Comics: " + str(char_comics) + "\nSeries: " + str(char_series)
@@ -111,36 +86,40 @@ def getNew(config):
     public_key = config.get("marvel_public_key")
     private_key = config.get("marvel_private_key")
 
-    if private_key != None and public_key != None:
+    if type(private_key) == "string" and type(public_key) == "string" and private_key and public_key and len(private_key) <= 512 and len(public_key) <= 512:
         digest = str(now) + private_key + public_key
         FULL_KEY = hash.md5(digest)
 
         MAX_OFFSET = 1562 - int(LIMIT) - 1
         OFFSET = random.number(0, MAX_OFFSET)
 
-        FINAL_URL = BASE_URL + "&limit=" + LIMIT + "&offset=" + str(OFFSET) + "&ts=" + str(now) + "&hash=" + FULL_KEY + "&apikey=" + public_key
+        response = http.get(BASE_URL, params = {
+            "apikey": public_key,
+            "hash": FULL_KEY,
+            "limit": LIMIT,
+            "offset": str(OFFSET),
+            "ts": str(now),
+        })
+        if response.status_code != 200:
+            return ["Marvel API", "Request failed (" + str(response.status_code) + ")", 0, 0]
 
-        full_list = http.get(FINAL_URL).body()
-        full_json = json.decode(full_list)
+        full_json = response.json()
+        data = full_json.get("data") if type(full_json) == "dict" else None
+        results = data.get("results") if type(data) == "dict" else None
+        if type(results) != "list" or not results:
+            return ["Marvel API", "No characters returned", 0, 0]
 
-        CHOICE = random.number(0, int(LIMIT) - 1)
-
-        CHARACTER = full_json["data"]["results"][CHOICE]
-
-        char_name = CHARACTER["name"]
-        char_desc = CHARACTER["description"]
-        char_comics = CHARACTER["comics"]["available"]
-        char_series = CHARACTER["series"]["available"]
-
-        cache.set("char_name", char_name)
-        cache.set("char_desc", char_desc)
-        cache.set("char_comics", str(char_comics))
-        cache.set("char_series", str(char_series))
-
-        if char_name == "None":
-            return getNew()
-        else:
-            return [char_name, char_desc, char_comics, char_series]
+        character = results[random.number(0, len(results) - 1)]
+        if type(character) != "dict":
+            return ["Marvel API", "Invalid character data", 0, 0]
+        comics = character.get("comics") if type(character.get("comics")) == "dict" else {}
+        series = character.get("series") if type(character.get("series")) == "dict" else {}
+        return [
+            str(character.get("name") or "Unknown")[:80],
+            str(character.get("description") or "")[:500],
+            comics.get("available", 0),
+            series.get("available", 0),
+        ]
     else:
         return ["Character Name", "Character Info", None, None]
 

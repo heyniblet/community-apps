@@ -5,6 +5,7 @@ Description: Checks all the colorado ski resorts for their current conditions.
 Author: mharlach
 """
 
+load("encoding/json.star", "json")
 load("html.star", "html")
 load("http.star", "http")
 load("images/a_basin_logo.png", A_BASIN_LOGO_ASSET = "file")
@@ -217,8 +218,9 @@ def main(config):
     screens = []
     for resort in RESORTS_DATA:
         if config.bool(resort.id):
+            data = get_data(resort.urlPath)
             for display in displays:
-                screens.append(build_screen(resort, display))
+                screens.append(build_screen(resort, display, data))
 
     return render.Root(
         delay = 5000,
@@ -230,8 +232,7 @@ def main(config):
         ),
     )
 
-def build_screen(resort, display):
-    data = get_data(resort.urlPath)
+def build_screen(resort, display, data):
     isOpen = is_open(data)
     logoBox = build_logo_box(resort)
 
@@ -290,24 +291,22 @@ def build_title_screen(resort):
     )
 
 def build_weather_screen(data):
-    temperature = data.find(".styles_h4__2Uc5w").eq(1).text()
-
-    # print(temperature)
-    temperatureSplit = temperature.split(" ")
+    weather = data["currentWeather"]
+    temperature = weather["base"]
 
     weatherIcon = render.WrappedText(
-        content = data.find(".styles_iconWeather__R1V9M").children().eq(0).attr("title"),
+        content = weather["type"].replace("_", " ").title(),
         font = "tom-thumb",
         align = "center",
     )
 
     highData = render.Text(
-        content = "H:" + temperatureSplit[0] + "°",
+        content = "H:" + str(int(temperature["max"])) + "°C",
         font = "tom-thumb",
     )
 
     lowData = render.Text(
-        content = "L:" + temperatureSplit[2] + "°",
+        content = "L:" + str(int(temperature["min"])) + "°C",
         font = "tom-thumb",
     )
 
@@ -334,8 +333,8 @@ def build_conditions_screen(data, isOpen):
     summit = "-"
     base = "-"
     if isOpen:
-        summit = data.find("[title='Summit']").parent().find("figcaption").text()
-        base = data.find("[title='Base']").parent().find("figcaption").text()
+        summit = value_or_dash(data["snow"]["summit"])
+        base = value_or_dash(data["snow"]["base"])
 
     baseData = render.Text(
         content = " Summit " + summit,
@@ -358,11 +357,8 @@ def build_trails_screen(data, isOpen):
     trails = "-/-"
     lifts = "-/-"
     if isOpen:
-        trailsSplit = data.find("[title='Runs Open']").parent().find("figcaption").text().split(" ")
-        trails = trailsSplit[0] + "/" + trailsSplit[2]
-
-        liftsSplit = data.find("[title='Lifts Open']").parent().find("figcaption").text().split(" ")
-        lifts = liftsSplit[0] + "/" + liftsSplit[2]
+        trails = value_or_dash(data["runs"]["open"]) + "/" + value_or_dash(data["runs"]["total"])
+        lifts = value_or_dash(data["lifts"]["open"]) + "/" + value_or_dash(data["lifts"]["total"])
 
     # print(trails)
 
@@ -408,11 +404,10 @@ def build_trails_screen(data, isOpen):
     )
 
 def is_open(data):
-    open = data.find(".styles_open__3MfH6")
-    if open.len() == 1:
-        return True
-    else:
-        return False
+    return data["status"]["openFlag"] == 1
+
+def value_or_dash(value):
+    return "-" if value == None else str(int(value))
 
 def get_data(resort):
     url = "https://www.onthesnow.com/colorado/" + resort + "/skireport"
@@ -421,4 +416,7 @@ def get_data(resort):
     if response.status_code != 200:
         fail("Webpage down")
 
-    return html(response.body())
+    serialized = html(response.body()).find("#__NEXT_DATA__").text()
+    if not serialized:
+        fail("OnTheSnow response is missing resort data")
+    return json.decode(serialized)["props"]["pageProps"]["fullResort"]

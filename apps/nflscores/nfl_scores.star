@@ -94,6 +94,7 @@ def main(config):
     selectedTeam = config.get("selectedTeam", "all")
     scores = get_scores(league, selectedTeam)
     if len(scores) > 0:
+        rotationSpeed = str(max(3, min(int(rotationSpeed), 60 // len(scores))))
         for i, s in enumerate(scores):
             gameStatus = s["status"]["type"]["state"]
             competition = s["competitions"][0]
@@ -486,7 +487,8 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
-            show_full_animation = True,
+            max_age = 180,
+            show_full_animation = len(renderCategory) > 1,
             child = render.Column(
                 children = [
                     render.Animation(
@@ -900,13 +902,18 @@ def get_background_color(team, displayType, color):
 def get_logoType(team, logo):
     usealtlogo = json.decode(ALT_LOGO)
     usealt = usealtlogo.get(team, "NO")
+    originalLogo = logo
     if usealt != "NO":
-        logo = get_cachable_data(usealt, 36000)
+        candidates = [usealt, originalLogo]
     else:
         logo = logo.replace("500/scoreboard", "500-dark/scoreboard")
         logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=", 36000)
-        logo = get_cachable_data(logo + "&h=50&w=50")
-    return logo
+        candidates = [logo + "&h=50&w=50", originalLogo]
+    for candidate in candidates:
+        res = http.get(url = candidate, ttl_seconds = 36000)
+        if res.status_code == 200:
+            return res.body()
+    return get_cachable_data("https://i.ibb.co/5LMp8T1/transparent.png", 36000)
 
 def get_logoSize(team):
     usealtsize = json.decode(MAGNIFY_LOGO)

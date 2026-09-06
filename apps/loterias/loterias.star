@@ -34,51 +34,61 @@ DEFAULT_LOCATION = json.encode({
 })
 
 CACHE_TTL = 3600
+API_BASE_URL = "https://servicebus2.caixa.gov.br/portaldeloterias/api"
 
 # modalities configuration
 MODALITIES = {
     "megasena": {
+        "api": "megasena",
         "name": "MEGASENA",
         "color": "#4b966d",
         "icon": ICON_MEGASENA_ASSET.readall(),
     },
     "diaDeSorte": {
+        "api": "diadesorte",
         "name": "DIA DE SORTE",
         "color": "#c1893f",
         "font": "CG-pixel-3x5-mono",
         "icon": ICON_DIADESORTE_ASSET.readall(),
     },
     "duplasena": {
+        "api": "duplasena",
         "name": "DUPLA SENA",
         "color": "#98262a",
         "icon": ICON_DUPLASENA_ASSET.readall(),
     },
     "maisMilionaria": {
+        "api": "maismilionaria",
         "name": "MILIONÁRIA",
         "color": "#1c3176",
         "icon": ICON_MAISMILIONARIA_ASSET.readall(),
     },
     "lotofacil": {
+        "api": "lotofacil",
         "name": "LOTOFÁCIL",
         "color": "#871985",
         "icon": ICON_LOTOFACIL_ASSET.readall(),
     },
     "lotomania": {
+        "api": "lotomania",
         "name": "LOTOMANIA",
         "color": "#e88732",
         "icon": ICON_LOTOMANIA_ASSET.readall(),
     },
     "timemania": {
+        "api": "timemania",
         "name": "TIMEMANIA",
         "color": "#75fb4c",
         "icon": ICON_TIMEMANIA_ASSET.readall(),
     },
     "superSete": {
+        "api": "supersete",
         "name": "SUPER SETE",
         "color": "#b1ce5b",
         "icon": ICON_SUPERSETE_ASSET.readall(),
     },
     "quina": {
+        "api": "quina",
         "name": "QUINA",
         "color": "#21027f",
         "icon": ICON_QUINA_ASSET.readall(),
@@ -93,8 +103,13 @@ def main(config):
     location = json.decode(location_cfg)
     timezone = location["timezone"]
 
-    # call loterias API
-    res = http.get("https://tidbyt-loterias.vercel.app/api/%s" % modality, ttl_seconds = CACHE_TTL)
+    modality_config = MODALITIES.get(modality, MODALITIES[DEFAULT_MODALITY])
+
+    # Call the same first-party API used by the Loterias CAIXA portal.
+    res = http.get(
+        "%s/%s" % (API_BASE_URL, modality_config["api"]),
+        ttl_seconds = CACHE_TTL,
+    )
 
     # handle API error
     if res.status_code != 200:
@@ -138,10 +153,10 @@ def main(config):
         prize_value = prize_value + humanize.float("#.###,", data["valorAcumuladoProximoConcurso"])
 
     # grab the modality display configuration
-    modality_name = MODALITIES.get(modality)["name"]
-    modality_color = MODALITIES.get(modality)["color"]
-    modality_icon = MODALITIES.get(modality)["icon"]
-    modality_font = MODALITIES.get(modality).get("font", "tb-8")
+    modality_name = modality_config["name"]
+    modality_color = modality_config["color"]
+    modality_icon = modality_config["icon"]
+    modality_font = modality_config.get("font", "tb-8")
 
     # render the final display
     return render.Root(

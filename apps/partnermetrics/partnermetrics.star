@@ -27,6 +27,7 @@ IMAGE_STARFIELD = IMAGE_STARFIELD_ASSET.readall()
 SHOPIFY_COUNTER_API_HOST = "https://www.partnermetrics.io/chart_data?chart_type%5Bcalculation%5D=sum&chart_type%5Bcolumn%5D=revenue&chart_type%5Bdirection_good%5D=up&chart_type%5Bdisplay%5D=currency&chart_type%5Bmetric_type%5D=recurring_revenue&chart_type%5Btitle%5D=Revenue&chart_type%5Btype%5D=recurring_revenue&date="
 
 CACHE_TTL = 3600  # 1 hour
+MAX_RESPONSE_BYTES = 256 * 1024
 
 # COLORS
 COLOR_LIME = "#D0F224"
@@ -56,16 +57,17 @@ TRENDS_ANIMATED_BACKGROUND = TRENDS_ANIMATED_ASSET.readall()
 
 APP_ID = "shopify_sales"
 
-def api_fetch(partnermetricsCookie, request_config):
+def api_fetch(partnermetrics_cookie, request_config):
     now = request_config["now"]
     print("Calling Counter API.")
     url = "{}{}&period=30".format(SHOPIFY_COUNTER_API_HOST, now)
-    rep = http.get(url, headers = {"Cookie": "_PartnerMetrics_session={}".format(partnermetricsCookie)}, ttl_seconds = CACHE_TTL)
-    if rep.status_code != 200:
-        print("Counter API request failed with status {}".format(rep))
+    rep = http.get(url, headers = {"Cookie": "_PartnerMetrics_session={}".format(partnermetrics_cookie)}, ttl_seconds = CACHE_TTL)
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        print("Counter API request failed with status {}".format(rep.status_code))
         return None
     api_response = rep.json()
-    return api_response
+    return api_response if type(api_response) == "dict" else None
 
 # Error View
 # Renders an error message
@@ -120,19 +122,20 @@ def error_view():
     )
 
 def main(config):
-    partnermetricsCookie = config.get("partnermetricsCookie")
+    partnermetrics_cookie = config.get("partnermetricsCookie")
+    if type(partnermetrics_cookie) != "string" or not partnermetrics_cookie or len(partnermetrics_cookie) > 4096 or "\r" in partnermetrics_cookie or "\n" in partnermetrics_cookie:
+        return error_view()
     timezone = time.tz()
-    now = time.now().in_location(timezone)
-    date = "{}-0{}-0{}".format(now.year, now.month, now.day - 1)
+    date = (time.now().in_location(timezone) - time.parse_duration("24h")).format("2006-01-02")
     request_config = {
         "now": date,
     }
-    api_response = api_fetch(partnermetricsCookie, request_config)
-    if not api_response:
+    api_response = api_fetch(partnermetrics_cookie, request_config)
+    if not api_response or date not in api_response:
         return error_view()
-    print("API response: {}".format(api_response))
-    api_data = api_response[date]
-    value = api_data
+    value = api_response[date]
+    if type(value) not in ["int", "float", "string"]:
+        return error_view()
 
     return render.Root(
         child = render.Stack(
@@ -146,7 +149,7 @@ def main(config):
                             render_single_label("TrustReviews"),
                             render.WrappedText(
                                 align = "center",
-                                content = "$" + value,
+                                content = "$" + str(value),
                                 color = COLOR_ALOE,
                                 font = FONT_TOM_THUMB,
                             ),

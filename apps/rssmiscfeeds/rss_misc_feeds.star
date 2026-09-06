@@ -5,7 +5,6 @@ Description: Based upon a curated list, allow user to select display of various 
 Author: jvivona
 """
 
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
@@ -16,8 +15,19 @@ VERSION = 23318
 
 # cache data for 15 minutes
 CACHE_TTL_SECONDS = 900
+MAX_FEED_BYTES = 1024 * 1024
 
-FEEDS_LIST = "https://raw.githubusercontent.com/jvivona/tidbyt-data/main/rssmiscfeeds/feeds.json"
+FEEDS = [
+    {"value": "0", "url": "https://movieweb.com/feed/", "display": "MovieWeb", "shortName": "MovieWeb", "showdesc": True, "descElement": "description", "itemElement": "item"},
+    {"value": "1", "url": "https://www.polygon.com/feed/", "display": "Polygon", "shortName": "Polygon", "showdesc": False, "descElement": "description", "itemElement": "item"},
+    {"value": "2", "url": "https://slickdeals.net/newsearch.php?searchin=first&forumchoice[]=9&rss=1", "display": "Slickdeals Hot Deals", "shortName": "Slickdeals", "showdesc": False, "descElement": "description", "itemElement": "item"},
+    {"value": "3", "url": "https://www.theverge.com/rss/index.xml", "display": "The Verge - All Posts", "shortName": "The Verge", "showdesc": False, "descElement": "content", "itemElement": "entry"},
+    {"value": "4", "url": "https://la.eater.com/rss/front-page/index.xml", "display": "LA Eater - Front Page", "shortName": "LA Eater", "showdesc": False, "descElement": "content", "itemElement": "entry"},
+    {"value": "5", "url": "https://9to5google.com/feed/", "display": "9 to 5 Google", "shortName": "9 to 5 Google", "showdesc": False, "descElement": "content", "itemElement": "item"},
+    {"value": "6", "url": "https://9to5mac.com/feed/", "display": "9 to 5 Mac", "shortName": "9 to 5 Mac", "showdesc": False, "descElement": "content", "itemElement": "item"},
+    {"value": "7", "url": "https://admin.cnnbrasil.com.br/feed/", "display": "CNN Brasil", "shortName": "CNN Brasil", "showdesc": False, "descElement": "description", "itemElement": "item"},
+    {"value": "8", "url": "https://feeds.arstechnica.com/arstechnica/index.rss", "display": "Ars Technica - All News", "shortName": "Ars Technica", "showdesc": True, "descElement": "description", "itemElement": "item"},
+]
 
 DEFAULT_ARTICLE_COUNT = "3"
 TEXT_COLOR = "#fff"
@@ -36,10 +46,16 @@ ARTICLE_LINESPACING = 0
 ARTICLE_AREA_HEIGHT = 24
 
 def main(config):
-    feed_source = json.decode(get_cacheable_data(FEEDS_LIST))
-    selected_feed = feed_source[int(config.get("feed", "0"))]
-    articlecount = int(config.get("articlecount", DEFAULT_ARTICLE_COUNT))
+    selected_feed = FEEDS[1]
+    for feed in FEEDS:
+        if feed["value"] == config.get("feed", "1"):
+            selected_feed = feed
+            break
+    articlecount = config.get("articlecount", DEFAULT_ARTICLE_COUNT)
+    articlecount = int(articlecount) if str(articlecount).isdigit() and 1 <= int(articlecount) and int(articlecount) <= 5 else int(DEFAULT_ARTICLE_COUNT)
     articles = get_feed(selected_feed["url"], articlecount, selected_feed)
+    if articles == None or len(articles) == 0:
+        return render.Root(child = render.WrappedText("Feed unavailable", width = 64, align = "center"))
 
     if canvas.is2x():
         return render_2x(articles, selected_feed)
@@ -113,9 +129,9 @@ def render_article(news, showDesc):
     news_text = []
 
     for article in news:
-        news_text.append(render.WrappedText(article[0].strip(), color = ARTICLE_SUB_TITLE_COLOR, font = ARTICLE_SUB_TITLE_FONT))
+        news_text.append(render.WrappedText(clean_text(article[0]), color = ARTICLE_SUB_TITLE_COLOR, font = ARTICLE_SUB_TITLE_FONT))
         if showDesc:
-            news_text.append(render.WrappedText(article[1].strip(), font = ARTICLE_SUB_TITLE_FONT, color = ARTICLE_COLOR, linespacing = ARTICLE_LINESPACING))
+            news_text.append(render.WrappedText(clean_text(article[1]), font = ARTICLE_SUB_TITLE_FONT, color = ARTICLE_COLOR, linespacing = ARTICLE_LINESPACING))
         news_text.append(render.Box(width = 64, height = 8, color = SPACER_COLOR))
 
     return (news_text)
@@ -131,18 +147,14 @@ def clean_text(s):
     return s.strip()
 
 def get_schema():
-    feeds = json.decode(get_cacheable_data(FEEDS_LIST))
-
     feed_options = []
-
-    if len(feeds) > 0:
-        for feed in feeds:
-            feed_options.append(
-                schema.Option(
-                    display = feed["display"],
-                    value = feed["value"],
-                ),
-            )
+    for feed in FEEDS:
+        feed_options.append(
+            schema.Option(
+                display = feed["display"],
+                value = feed["value"],
+            ),
+        )
 
     return schema.Schema(
         version = "1",
@@ -190,18 +202,20 @@ def get_schema():
 def get_feed(url, articlecount, selected_feed):
     articles = []
     data = get_cacheable_data(url)
+    if data == None:
+        return None
 
     data_xml = xpath.loads(data)
     for i in range(1, articlecount + 1):
         title_query = "//%s[%s]/title" % (selected_feed["itemElement"], str(i))
         desc_query = "//%s[%s]/%s" % (selected_feed["itemElement"], str(i), selected_feed["descElement"])
-        articles.append((data_xml.query(title_query), str(data_xml.query(desc_query)).replace("None", "")))
+        title = data_xml.query(title_query)
+        if title:
+            articles.append((clean_text(str(title))[:160], clean_text(str(data_xml.query(desc_query) or ""))[:320]))
 
     return articles
 
 def get_cacheable_data(url):
     res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
+    body = res.body()
+    return body if res.status_code == 200 and body and len(body) <= MAX_FEED_BYTES else None

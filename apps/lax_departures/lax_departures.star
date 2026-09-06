@@ -4,7 +4,10 @@ load("render.star", "render")
 
 # Fetch data from your deployed Lambda API
 def fetch_data():
-    res = http.get("https://up8y1e1xae.execute-api.us-east-1.amazonaws.com/lax-departures")
+    res = http.get(
+        "https://up8y1e1xae.execute-api.us-east-1.amazonaws.com/lax-departures",
+        ttl_seconds = 10800,
+    )
     if res.status_code != 200:
         return None
 
@@ -37,8 +40,8 @@ def make_page(flights, page_index, total_pages):
 
         rows.append(
             render.Row(children = [
-                render.Text(flight["scheduled_time"], font = "5x8", color = time_color),
-                render.Text(" {} {}".format(flight["airline"], flight["destination"]), font = "5x8"),
+                render.Text(flight.get("scheduled_time", "--:--"), font = "5x8", color = time_color),
+                render.Text(" {} {}".format(flight.get("airline", ""), flight.get("destination", "")), font = "5x8"),
             ]),
         )
 
@@ -49,6 +52,8 @@ def main():
     flights = fetch_data()
     if flights == None:
         return render.Root(child = render.Text("Error", font = "5x8", color = "#ff0000"))
+    if len(flights) == 0:
+        return render.Root(child = render.Text("No departures", font = "5x8"))
 
     pages = []
     total_pages = (min(len(flights), 6) + 2) // 3  # ceil(len / 3)

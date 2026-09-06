@@ -10,12 +10,18 @@ load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 
-NFTS_URL = "https://api.opensea.io/v2/chain/ethereum/account/{}/nfts"
-COLLECTION_STATS_URL = "https://api.opensea.io/api/v1/collection/{}/stats"
+NFTS_URL = "https://api.opensea.io/api/v2/chain/ethereum/account/{}/nfts?limit=50"
+COLLECTION_STATS_URL = "https://api.opensea.io/api/v2/collections/{}/stats"
+ETHEREUM_ADDRESS_LENGTH = 42
 
 def main(config):
     api_key = config.get("opensea-api-key") or ""
-    public_address = config.get("public_address")
+    public_address = (config.get("public_address") or "").strip()
+
+    if not api_key:
+        return render_error("Add an OpenSea API key")
+    if len(public_address) != ETHEREUM_ADDRESS_LENGTH or not public_address.startswith("0x") or any([char not in "0123456789abcdefABCDEF" for char in public_address[2:].codepoints()]):
+        return render_error("Invalid Ethereum address")
 
     nfts = fetch_opensea_nfts(public_address, api_key)
     if nfts == -1:
@@ -35,7 +41,8 @@ def main(config):
     if display_floor:
         collection_stats = fetch_collection_stats(nft, api_key)
         if collection_stats:
-            floor_price = str(collection_stats["floor_price"])[:4] if collection_stats["floor_price"] else None
+            total = collection_stats.get("total") or {}
+            floor_price = str(total.get("floor_price"))[:4] if total.get("floor_price") else None
 
     return render.Root(
         child = render.Box(
@@ -65,27 +72,25 @@ def main(config):
 
 def fetch_opensea_nfts(public_address, api_key):
     fetch_url = NFTS_URL.format(public_address)
-    print("Fetch URL:", fetch_url)
-
     nfts_resp = http.get(fetch_url, headers = {"X-API-KEY": api_key}, ttl_seconds = 3600)
     if (nfts_resp.status_code != 200):
         print("OpenSea request failed with status", nfts_resp.status_code)
         return -1
 
-    nfts = nfts_resp.json()["nfts"]
-    return nfts
+    body = nfts_resp.json()
+    return body.get("nfts", []) if type(body) == "dict" and type(body.get("nfts", [])) == "list" else []
 
 def fetch_nft_thumbnail(nft):
-    nft_name = nft["name"] if nft["name"] else ""
-    thumbnail_url = nft["image_url"]
-    if not thumbnail_url:
+    if type(nft) != "dict":
+        return ("", None)
+    nft_name = nft.get("name") or "Untitled NFT"
+    thumbnail_url = nft.get("image_url") or ""
+    if not thumbnail_url.startswith("https://i.seadn.io/"):
         print("NFT has no image to display")
         return (nft_name, None)
 
     # request a much smaller thumbnail than the default
     thumbnail_url = thumbnail_url.replace("?w=500", "?w=64")
-    print("Thumbnail URL for {}:".format(nft_name), thumbnail_url)
-
     thumbnail_resp = http.get(thumbnail_url, ttl_seconds = 3600)
     if (thumbnail_resp.status_code != 200):
         print("Failed to fetch thumbnail with status", thumbnail_resp.status_code)
@@ -94,17 +99,18 @@ def fetch_nft_thumbnail(nft):
     return (nft_name, thumbnail_resp.body())
 
 def fetch_collection_stats(nft, api_key):
-    collection_slug = nft["collection"]
+    collection_slug = nft.get("collection") if type(nft) == "dict" else None
+    if not collection_slug:
+        return None
     collection_url = COLLECTION_STATS_URL.format(collection_slug)
-    print("Collection Stats URL for {}:".format(collection_slug), collection_url)
 
     collection_resp = http.get(collection_url, headers = {"X-API-KEY": api_key}, ttl_seconds = 3600)
     if (collection_resp.status_code != 200):
         print("OpenSea request failed with status", collection_resp.status_code)
         return -1
 
-    collection_stats = collection_resp.json()["stats"]
-    return collection_stats
+    collection_stats = collection_resp.json()
+    return collection_stats if type(collection_stats) == "dict" else None
 
 def render_error(error_message):
     return render.Root(

@@ -5,6 +5,7 @@ Description: Displays new bible verse every 3 seconds from different bible trans
 Author: blaiseAI
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -13,21 +14,30 @@ API_URL = "https://bible-api.com/?random=verse&translation={}"
 
 DEFAULT_TRANSLATION = "kjv"
 DEFAULT_REFERENCE_COLOR = "#00FF00"
+TRANSLATIONS = ["kjv", "asv", "web", "oeb-us"]
+MAX_RESPONSE_BYTES = 64 * 1024
 
 def main(config):
     translation = config.get("translation", DEFAULT_TRANSLATION)
+    if translation not in TRANSLATIONS:
+        translation = DEFAULT_TRANSLATION
     color = config.str("color", DEFAULT_REFERENCE_COLOR)
     response = http.get(API_URL.format(translation), ttl_seconds = 180)
     if response.status_code != 200:
-        fail("Bible API request failed with status %d" % response.status_code)
+        return render.Root(child = render.WrappedText(content = "Bible API unavailable", align = "center"))
 
-    data = response.json()
-    verse_text = data["verses"][0]["text"].strip()
-    reference = data["reference"]
-    if response.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling Bible API.")
+    body = response.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return render.Root(child = render.WrappedText(content = "Bible API unavailable", align = "center"))
+    data = json.decode(body)
+    verses = data.get("verses") if type(data) == "dict" else None
+    verse = verses[0] if type(verses) == "list" and verses else None
+    verse_text = verse.get("text") if type(verse) == "dict" else None
+    reference = data.get("reference") if type(data) == "dict" else None
+    if type(verse_text) != "string" or type(reference) != "string" or not verse_text or not reference:
+        return render.Root(child = render.WrappedText(content = "Bible API unavailable", align = "center"))
+    verse_text = verse_text.strip()[:2000]
+    reference = reference[:120]
     return render.Root(
         delay = 100,
         child = render.Column(

@@ -48,10 +48,9 @@ LOTR_URL = "https://the-one-api.dev/v2"
 
 HTTP_OK = 200
 
-CACHE_TIMEOUT = 600  # ten minutes
-
 def main(config):
     char_id = config.get("character") or RANDOM
+    api_key = config.get("lotr_api_key") or ""
 
     # if character is set to random, choose one at random based on timestamp
     if char_id == RANDOM:
@@ -61,31 +60,36 @@ def main(config):
     # set up web request
     headers = {
         "Content-Type": "application/json",
-        "Authorization": "Bearer {0}".format(config.get("lotr_api_key")),
+        "Authorization": "Bearer {0}".format(api_key),
     }
-    resp = http.get("https://the-one-api.dev/v2/character/{0}/quote".format(char_id), headers = headers, ttl_seconds = CACHE_TIMEOUT)
+    resp = http.get("https://the-one-api.dev/v2/character/{0}/quote".format(char_id), headers = headers) if api_key else None
 
     # check the HTTP response code
     # if we fail, send back "shall not pass"
-    status_code = resp.status_code
+    status_code = resp.status_code if resp else 401
     if (status_code != HTTP_OK):
         char_id = GANDALF_ID
-        quote = SHALL_NOT_PASS_QUOTE.format(status_code, resp.json()["message"])
+        quote = SHALL_NOT_PASS_QUOTE.format(status_code, "API request failed")
         movie = SHALL_NOT_PASS_MOVIE
     else:
-        quotes = resp.json()["docs"]
+        quotes = resp.json().get("docs", [])
 
-        # get a "random" quote_id based on the current timestamp
-        quote_id = int(time.now().nanosecond / 1000) % len(quotes)
+        if not quotes:
+            char_id = GANDALF_ID
+            quote = SHALL_NOT_PASS_QUOTE.format(status_code, "No quotes returned")
+            movie = SHALL_NOT_PASS_MOVIE
+        else:
+            # get a "random" quote_id based on the current timestamp
+            quote_id = int(time.now().nanosecond / 1000) % len(quotes)
 
-        quote = quotes[quote_id].get("dialog")
+            quote = quotes[quote_id].get("dialog") or SHALL_NOT_PASS_QUOTE.format(status_code, "Invalid quote")
 
-        # clean up the quote if necessary, the db is not perfect
-        if not quote_has_punctuation(quote):
-            quote = quote + "."
+            # clean up the quote if necessary, the db is not perfect
+            if not quote_has_punctuation(quote):
+                quote = quote + "."
 
-        # map it to the right movie
-        movie = MOVIE_LOOKUP[quotes[quote_id].get("movie")]
+            # map it to the right movie
+            movie = MOVIE_LOOKUP.get(quotes[quote_id].get("movie"), "The Lord of the Rings")
 
     # get the character we are using out of the character metadata dictionary
     character_to_use = CHARACTER_LOOKUP[char_id]

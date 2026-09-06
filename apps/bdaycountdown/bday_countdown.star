@@ -21,6 +21,8 @@ def main(config):
     now = time.now().in_location(timezone)
     birth_month = int(config.get("birthMonth", "1"), 10)
     birth_day = int(config.get("birthDay", "1"), 10)
+    days_in_month = [31, 29 if now.year % 400 == 0 or (now.year % 4 == 0 and now.year % 100 != 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    birth_day = min(birth_day, days_in_month[birth_month - 1])
     bday = time.time(year = now.year, month = birth_month, day = birth_day, location = timezone)
     name = config.str("name")
     days_until = bday - now

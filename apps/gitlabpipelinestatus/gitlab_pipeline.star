@@ -55,10 +55,10 @@ def get_pipeline_status(accesstoken, id, ref):
     api_endpoint = "https://gitlab.com/api/v4"
 
     # Specify the project and branch for which to check the pipeline status
-    pipeline_url = "%s/projects/%s/pipelines?ref=%s&access_token=%s" % (api_endpoint, id, ref, accesstoken)
+    pipeline_url = "%s/projects/%s/pipelines?ref=%s" % (api_endpoint, id, ref)
 
     #Gitlab request limit is 150 calls per user per minute, so caching is not needed
-    pipeline_data = http.get(pipeline_url)
+    pipeline_data = http.get(pipeline_url, headers = {"PRIVATE-TOKEN": accesstoken})
     if pipeline_data.status_code != 200:
         return "invalid"
     pipeline_data = pipeline_data.json()

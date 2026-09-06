@@ -2,13 +2,11 @@
 id: path-train-schedule
 name: Path Schedule
 summary: Schedule for path train
-desc: Shows train arrivals for upcoming inbound and outbound trains at path train stations.
+desc: Shows real-time inbound and outbound arrivals for PATH train stations using Port Authority data.
 author: Todd Greenberg
 fileName: path_train_schedule.star
 packageName: pathtrainschedule
-recommendedInterval: 5
-broken: true
-brokenReason: 'path.api.razza.dev: no such host'
+recommendedInterval: 1
 category: transit
 tags:
   - productivity

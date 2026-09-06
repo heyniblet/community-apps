@@ -4,7 +4,7 @@ name: CPI Tracker
 summary: Track monthly CPI trends
 desc: Track monthly CPI trends as well as the current CPI value today!
 author: Robert Ison
-recommendedInterval: 1
+recommendedInterval: 720
 fileName: cpi_tracker.star
 packageName: cpitracker
 supports2x: true

@@ -242,12 +242,7 @@ def get_schema():
                 desc = "Can be found in the mobile app under Site Details",
                 icon = "eye",
             ),
-            schema.Generated(
-                id = "apiversion_key",
-                source = "apiversion",
-                handler = show_apikey_options,
-            ),
-        ],
+        ] + show_apikey_options("1"),
     )
 
 def show_apikey_options(apiversion):

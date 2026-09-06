@@ -5,6 +5,7 @@ Description: Show pool and user stats for the Satoshi Radio mining pool.
 Author: @redboer
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/logo.webp", LOGO_ASSET = "file")
@@ -18,9 +19,20 @@ DEFAULT_ADDRESS = ""
 DEFAULT_TIMEFRAME = "hashrate5m"
 DEFAULT_SHOW_POOL_HASHRATE = True
 DEFAULT_SHOW_POOL_WORKERS = False
+MAX_RESPONSE_BYTES = 32 * 1024
+
+def parse_hashrate(value):
+    value = str(value)
+    number = re.sub(r"([A-Za-z])", "", value)
+    unit = re.sub(r"(\d|\.)", "", value)[:4]
+    if not re.match(r"^\d+(\.\d+)?$", number):
+        return None
+    return humanize.ftoa(float(number), 1), unit + "H"
 
 def main(config):
-    address = config.str("address", DEFAULT_ADDRESS)
+    address = config.str("address", DEFAULT_ADDRESS).strip()
+    if address and not re.match(r"^[A-Za-z0-9]{14,90}$", address):
+        address = ""
     timeframe = config.get("timeframe", DEFAULT_TIMEFRAME)
     show_pool_hashrate = config.bool("show_pool_hashrate", DEFAULT_SHOW_POOL_HASHRATE)
     show_pool_workers = config.bool("show_pool_workers", DEFAULT_SHOW_POOL_WORKERS)
@@ -32,8 +44,11 @@ def main(config):
         if user.get("error"):
             render_info(info, False, "", user.get("error"))
         else:
-            hashrate = user.get(timeframe, "0")
-            render_info(info, True, humanize.ftoa(float(re.sub(r"([A-Za-z])", "", hashrate)), 1), re.sub(r"(\d|\.)", "", hashrate) + "H")
+            hashrate = parse_hashrate(user.get(timeframe, "0"))
+            if hashrate:
+                render_info(info, True, hashrate[0], hashrate[1])
+            else:
+                render_info(info, True, "?", "H")
 
     if show_pool_hashrate or show_pool_workers:
         pool = pool_data()
@@ -42,10 +57,14 @@ def main(config):
             render_info(info, False, "", pool.get("error"))
         else:
             if show_pool_hashrate:
-                hashrate = pool.get(timeframe, "0")
-                render_info(info, (address == ""), humanize.ftoa(float(re.sub(r"([A-Za-z])", "", hashrate)), 1), re.sub(r"(\d|\.)", "", hashrate) + "H")
+                hashrate = parse_hashrate(pool.get(timeframe, "0"))
+                if hashrate:
+                    render_info(info, (address == ""), hashrate[0], hashrate[1])
+                else:
+                    render_info(info, (address == ""), "?", "H")
             if show_pool_workers:
-                render_info(info, False, humanize.ftoa(pool["Workers"]), "W")
+                workers = pool.get("Workers")
+                render_info(info, False, humanize.ftoa(float(workers)) if type(workers) in ["int", "float"] else "?", "W")
 
     if not address and not show_pool_hashrate and not show_pool_workers:
         render_info(info, False, "Satoshi", "")
@@ -91,16 +110,16 @@ def render_info(info, big, number, unit):
     )
 
 def pool_data():
-    res = http.get("https://pool.satoshiradio.nl/api/v1/pool", ttl_seconds = 3600)  # cache for 1 hour
-    if res.status_code != 200:
-        return {"error": "API error"}
-    return res.json()
+    return get_data("https://pool.satoshiradio.nl/api/v1/pool", 3600, "API error")
 
 def user_data(address):
-    res = http.get("https://pool.satoshiradio.nl/api/v1/users/%s" % address, ttl_seconds = 300)  # cache for 5 minutes
-    if res.status_code != 200:
-        return {"error": "no user"}
-    return res.json()
+    return get_data("https://pool.satoshiradio.nl/api/v1/users/%s" % humanize.url_encode(address), 300, "no user")
+
+def get_data(url, ttl_seconds, error):
+    res = http.get(url, ttl_seconds = ttl_seconds)
+    body = res.body()
+    data = json.decode(body, None) if res.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    return data if type(data) == "dict" else {"error": error}
 
 def get_schema():
     options = [

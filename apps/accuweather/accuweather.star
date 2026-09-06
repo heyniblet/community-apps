@@ -36,7 +36,7 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-ACCUWEATHER_FORECAST_URL = "http://dataservice.accuweather.com/forecasts/v1/daily/5day/{location_key}?apikey={api_key}&details=true"
+ACCUWEATHER_FORECAST_URL = "https://dataservice.accuweather.com/forecasts/v1/daily/5day/{location_key}?apikey={api_key}&details=true"
 
 # weather icons borrowed from stock Tidbyt Weather app
 WEATHER_ICONS = {
@@ -254,7 +254,6 @@ def get_schema():
                 name = "AccuWeather Location Key",
                 desc = "Location key for AccuWeather data access",
                 icon = "locationDot",
-                secret = True,
             ),
             schema.Dropdown(
                 id = "tempUnits",

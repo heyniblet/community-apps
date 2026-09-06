@@ -48,7 +48,7 @@ def main(config):
         if config.get("location") == None:
             return render.Root(render.WrappedText("Fix config:\nMissing\nlocation"))
 
-        service = config.get("service", "openweather")
+        service = config.get("service", "openuv")
 
         if service == "openweather":
             current_uv, max_uv = get_openweather_uv(config)
@@ -227,10 +227,6 @@ def get_schema():
                     schema.Option(
                         display = "OpenUV (openuv.io)",
                         value = "openuv",
-                    ),
-                    schema.Option(
-                        display = "OpenWeather OneCall 3.0",
-                        value = "openweather",
                     ),
                 ],
             ),

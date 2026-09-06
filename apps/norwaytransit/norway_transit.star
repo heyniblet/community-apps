@@ -7,6 +7,7 @@ Author: Mats Grosvik
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -16,23 +17,33 @@ RUTER_RED = "#E60000"
 WHITE = "#FFFFFF"
 YELLOW = "#f9C66b"
 BLACK = "#000000"
+DEFAULT_STOP = "NSR:StopPlace:5900"
+
+def parse_stop(raw):
+    if type(raw) != "string" or not raw.strip():
+        return struct(id = DEFAULT_STOP, display = "Ryen")
+    raw = raw.strip()
+    if raw.startswith("{"):
+        ids = re.findall('"value"\\s*:\\s*"([^"]+)"', raw)
+        names = re.findall('"display"\\s*:\\s*"([^"]+)"', raw)
+        if len(ids) == 0:
+            return None
+        return struct(id = ids[0][0], display = names[0][0] if len(names) > 0 else ids[0][0])
+    return struct(id = raw, display = raw)
 
 def main(config):
     direction = config.get("directionId", "outbound")
-    air = config.get("showAir", True)
-    bus = config.get("showBus", True)
-    cableway = config.get("showCableway", True)
-    water = config.get("showWater", False)
-    funicular = config.get("showFunicular", True)
-    lift = config.get("showLift", True)
-    rail = config.get("showRail", True)
-    metro = config.get("showMetro", True)
-    tram = config.get("showTram", True)
-    coach = config.get("showCoach", True)
     search = config.get("searchId", '{"display": "Ryen", "value": "NSR:StopPlace:5900"}')
-    searchHit = json.decode(search)
+    search_hit = parse_stop(search)
+    if search_hit == None or len(re.findall("^NSR:StopPlace:[A-Za-z0-9:_-]+$", search_hit.id)) == 0:
+        return render.Root(child = render.Text("Invalid stop ID", color = "#F00"))
+    if direction not in ["inbound", "outbound"]:
+        direction = "outbound"
 
-    checkTransportMode = [{"air": air}, {"bus": bus}, {"cableway": cableway}, {"water": water}, {"funicular": funicular}, {"lift": lift}, {"rail": rail}, {"metro": metro}, {"tram": tram}, {"coach": coach}]
+    selected_modes = []
+    for mode, default in [("air", True), ("bus", True), ("cableway", True), ("water", False), ("funicular", True), ("lift", True), ("rail", True), ("metro", True), ("tram", True), ("coach", True)]:
+        if config.bool("show" + mode.capitalize(), default):
+            selected_modes.append(mode)
 
     graphql_query = """\r
     query ($id: String!) {\r
@@ -61,13 +72,11 @@ def main(config):
     }\r
     """
 
-    query_variables = '{"id": "' + searchHit["value"] + '"}'
-
-    graphql_payload = '{"query": ' + repr(graphql_query) + ', "variables": ' + repr(query_variables) + "}"
+    graphql_payload = json.encode({"query": graphql_query, "variables": {"id": search_hit.id}})
 
     headers = {
         "Content-Type": "application/json",
-        "ET-Client-Name": "tidbyt-widgett",
+        "ET-Client-Name": "niblet-norway-transit",
     }
 
     rep = http.post(
@@ -85,12 +94,13 @@ def main(config):
         )
 
     response_json = rep.json()
-
-    selected_modes = [mode_key for mode in checkTransportMode for mode_key, value in mode.items() if value == "true"]
-    stop_place = response_json.get("data", {}).get("stopPlace", {})
+    data = response_json.get("data", {}) if type(response_json) == "dict" else {}
+    stop_place = data.get("stopPlace") if type(data) == "dict" else None
+    stop_place = stop_place if type(stop_place) == "dict" else {}
     estimated_calls = stop_place.get("estimatedCalls", [])
+    estimated_calls = estimated_calls if type(estimated_calls) == "list" else []
 
-    filtered_calls = [call for call in estimated_calls if call.get("serviceJourney", {}).get("journeyPattern", {}).get("directionType") == direction and call.get("serviceJourney", {}).get("line", {}).get("transportMode") in selected_modes]
+    filtered_calls = [call for call in estimated_calls if type(call) == "dict" and call.get("serviceJourney", {}).get("journeyPattern", {}).get("directionType") == direction and call.get("serviceJourney", {}).get("line", {}).get("transportMode") in selected_modes]
     fall_back = ""
     first_arrival_time = ""
     first_destination = ""
@@ -123,7 +133,7 @@ def main(config):
         if color == "000000":
             return WHITE
         if color:
-            return color
+            return "#" + color if len(color) == 6 else WHITE
         if transport == "tram":
             return TRAM_BLUE
         if transport == "bus":
@@ -136,7 +146,7 @@ def main(config):
     now = time.now().in_location("Europe/Oslo")
 
     if (filtered_calls == []):
-        fall_back = "Found no calls @ " + searchHit["display"]
+        fall_back = "Found no calls @ " + search_hit.display
     elif (len(filtered_calls) == 1):
         first_call = filtered_calls[0]
 
@@ -287,31 +297,6 @@ def main(config):
             ),
         )
 
-def search(pattern):
-    headers = {
-        "Content-Type": "application/json",
-        "ET-Client-Name": "tidbyt-widgett",
-    }
-    stopList = http.get(
-        "https://api.entur.io/geocoder/v1/autocomplete?text=" + pattern + "",
-        headers = headers,
-    )
-    if stopList.status_code == 200:
-        response_json = stopList.json()
-
-        options = [
-            schema.Option(
-                display = feature["properties"]["name"],
-                value = feature["properties"]["id"],
-            )
-            for feature in response_json["features"]
-            if feature["properties"]["id"].startswith("NSR:StopPlace")
-        ]
-        return options
-    else:
-        print("Error:", stopList.status_code)
-        return []
-
 def get_schema():
     directionOptions = [
         schema.Option(
@@ -338,12 +323,11 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "searchId",
-                name = "Search",
-                desc = "Find your stop",
+                name = "Stop place ID",
+                desc = "Entur NSR stop ID, for example NSR:StopPlace:5900",
                 icon = "bus",
-                handler = search,
             ),
             schema.Dropdown(
                 id = "directionId",

@@ -6,7 +6,7 @@ desc: Displays the next due or overdue task from todoist.
 author: Alisdair/Akeslo/oleksii-ivanov
 fileName: todoist_next.star
 packageName: todoistnext
-recommendedInterval: 60
+recommendedInterval: 10
 category: utilities
 tags:
   - productivity

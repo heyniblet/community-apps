@@ -124,7 +124,7 @@ def fetch_aqi_data(lat, long, api_key, freq_update):
         end = math.round(now.unix / CACHE_TTL_SEC) * CACHE_TTL_SEC
 
     start = end - (60 * 60 * 24)
-    historical_aqi_url = "http://api.openweathermap.org/data/2.5/air_pollution/history?lat=" + lat + "&lon=" + long + "&start=" + "%d" % start + "&end=" + "%d" % end + "&appid=" + api_key
+    historical_aqi_url = "https://api.openweathermap.org/data/2.5/air_pollution/history?lat=" + lat + "&lon=" + long + "&start=" + "%d" % start + "&end=" + "%d" % end + "&appid=" + api_key
 
     return fetch(historical_aqi_url, "AQI", freq_update)
 

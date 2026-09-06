@@ -4,6 +4,8 @@ name: Acidwarp
 summary: Acidwarp
 desc: Classic Acidwarp Animations.
 author: tavdog
+fileName: acidwarp.star
+packageName: acidwarp
 recommendedInterval: 5
 category: entertainment
 tags:

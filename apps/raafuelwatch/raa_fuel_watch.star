@@ -11,6 +11,8 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 API_PREFIX = "https://our.raa.com.au/assets/ajax/FuelPricesService.ashx?op=GetStationsByRadius&"
+MAX_RESPONSE_BYTES = 512 * 1024
+FUEL_TYPES = ["2", "3", "4", "5", "8", "12", "19"]
 
 DEFAULT_LOCATION = """
 {
@@ -23,43 +25,39 @@ DEFAULT_LOCATION = """
 """
 
 def main(config):
-    LocationDetails = config.get("location", DEFAULT_LOCATION)
+    LocationDetails = json.decode(config.get("location", DEFAULT_LOCATION), None)
     FuelType = config.get("FuelType", "2")
-    Price = ""
-    # LastUpdated = ""
-
-    DecodeLoc = json.decode(LocationDetails)
-    Lat = DecodeLoc["lat"]
-    Long = DecodeLoc["lng"]
-    #print(Lat)
-    #print(Long)
+    FuelType = FuelType if FuelType in FUEL_TYPES else "2"
+    if type(LocationDetails) != "dict":
+        return message("Invalid location")
+    Lat = safe_coordinate(LocationDetails.get("lat"), -90, 90)
+    Long = safe_coordinate(LocationDetails.get("lng"), -180, 180)
+    if Lat == None or Long == None:
+        return message("Invalid location")
 
     API_CALL = API_PREFIX + "Lon=" + str(Long) + "&" + "Lat=" + str(Lat) + "&Radius=5" + "&Brand=&FuelType=" + FuelType + "&Sort=true"
 
     # Update every 5 mins
-    Cached = get_cachable_data(API_CALL, 300)
-    FuelData = json.decode(Cached)
-
-    Outlet = FuelData["Result"][0]["name"]
-    Fuel = FuelData["Result"][0]["fuel"]
-
-    for z in range(0, len(Fuel), 1):
-        if int(FuelType) == Fuel[z]["type_id"]:
-            Price = Fuel[z]["price"]
-            #LastUpdated = Fuel[z]["updated_at"]
-
-    # if LastUpdated != "":
-    #    LastUpdated = LastUpdated[:16]
-    #    LastUpdated_Format = time.parse_time(LastUpdated, format = "2006-01-02T15:04")
-    #   Diff = time.now() - LastUpdated_Format
-
-    # print(Outlet)
-    # print(Price)
-    # print(int(Diff.minutes))
+    FuelData = get_cachable_data(API_CALL, 300)
+    results = FuelData.get("Result", []) if type(FuelData) == "dict" else []
+    station = results[0] if type(results) == "list" and len(results) > 0 and type(results[0]) == "dict" else None
+    if station == None:
+        return message("No fuel data")
+    Outlet = station.get("name", "Unknown")
+    Outlet = Outlet[:80] if type(Outlet) == "string" else "Unknown"
+    Fuel = station.get("fuel", [])
+    Price = None
+    if type(Fuel) == "list":
+        for fuel in Fuel:
+            if type(fuel) == "dict" and str(fuel.get("type_id")) == FuelType and type(fuel.get("price")) in ["int", "float"]:
+                Price = fuel["price"]
+                break
+    if Price == None:
+        return message("No price found")
 
     mainFont = "CG-pixel-3x5-mono"
     priceFont = "Dina_r400-6"
-    Price = "$" + str(Price)
+    Price = str(Price) + "c"
     ListFuel = Type_to_Fuel(FuelType)
 
     return render.Root(
@@ -133,7 +131,7 @@ def Type_to_Fuel(type_id):
     elif type_id == "3":
         Type = "Diesel"
     elif type_id == "4":
-        Type = "LFG"
+        Type = "LPG"
     elif type_id == "12":
         Type = "e10"
     elif type_id == "19":
@@ -142,6 +140,18 @@ def Type_to_Fuel(type_id):
         Type = ""
 
     return Type
+
+def safe_coordinate(value, minimum, maximum):
+    text = str(value).strip()
+    if not text or len(text) > 20 or not any([char.isdigit() for char in text.codepoints()]) or text.count(".") > 1 or text.count("-") > 1 or ("-" in text and not text.startswith("-")):
+        return None
+    if any([char not in "0123456789.-" for char in text.codepoints()]):
+        return None
+    number = float(text)
+    return text if minimum <= number and number <= maximum else None
+
+def message(text):
+    return render.Root(child = render.Box(child = render.WrappedText(content = text, align = "center")))
 
 FuelOptions = [
     schema.Option(
@@ -197,8 +207,7 @@ def get_schema():
 
 def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
-
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    return json.decode(body, None)

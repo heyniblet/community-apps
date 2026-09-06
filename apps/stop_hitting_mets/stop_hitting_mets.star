@@ -22,11 +22,14 @@ load("http.star", "http")
 load("render.star", "render")
 
 def main():
-    response = http.get("https://canweplease.stophittingthemets.info/tidbyt")
-    if response.status_code != 200:
-        fail("Can We Please Stop Hitting The Mets request failed with status %d", response.status_code)
+    response = http.get("https://canweplease.stophittingthemets.info/tidbyt", ttl_seconds = 300)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 256:
+        return answer_frame("Unavailable")
 
-    answer = response.body().removesuffix("\n")
+    return answer_frame(body.strip()[:64])
+
+def answer_frame(answer):
     return render.Root(
         child = render.Box(
             color = "#002D72",

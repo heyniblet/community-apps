@@ -51,7 +51,7 @@ def main(config):
         next_year = now.year + 1
         event_time_str = "{}-01-01T00:00:00Z".format(next_year)
 
-    future = time.parse_time(event_time_str)
+    future = time.parse_time(event_time_str, format = "2006-01-02T15:04", location = timezone) if len(event_time_str) == 16 else time.parse_time(event_time_str).in_location(timezone)
     dateDiff = future - time.now().in_location(timezone)
     days = math.floor(dateDiff.hours / 24)
     hours = math.floor(dateDiff.hours - days * 24)

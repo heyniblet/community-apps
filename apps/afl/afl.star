@@ -34,6 +34,7 @@ load("time.star", "time")
 #URLs for AFL API data
 AFL_STANDINGS_URL = "https://api.squiggle.com.au/?q=standings"
 AFL_GAMES_URL = "https://api.squiggle.com.au/?q=games;year={0};team={1};complete=!100"
+SQUIGGLE_HEADERS = {"User-Agent": "Niblet/Tronbyt AFL app; contact=apps@heyniblet.com"}
 
 #set default team to the Sydney Swans
 DEFAULT_TEAM = "16"
@@ -130,7 +131,7 @@ def main(config):
     # get standings if we should
     standings = []
     if show_standings:
-        resp = http.get(AFL_STANDINGS_URL, ttl_seconds = 3600)
+        resp = http.get(AFL_STANDINGS_URL, headers = SQUIGGLE_HEADERS, ttl_seconds = 1800)
         if resp.status_code != 200:
             fail("Squiggle request failed with status", resp.status_code)
         stand_data = resp.json().get("standings")
@@ -145,7 +146,7 @@ def main(config):
 
     # call the Squiggle API and retreive list of unfinished games for the year
     games_url = AFL_GAMES_URL.format(todays_date_formatted[0:4], str(team_id))
-    resp = http.get(games_url, ttl_seconds = 3600)
+    resp = http.get(games_url, headers = SQUIGGLE_HEADERS, ttl_seconds = 300)
     if resp.status_code != 200:
         fail("Squiggle request failed with status", resp.status_code)
     game_data = resp.json().get("games")

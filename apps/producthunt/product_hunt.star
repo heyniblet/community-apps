@@ -6,6 +6,7 @@ Author: Daniel Sitnik
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/ph_logo.png", PH_LOGO_ASSET = "file")
 load("images/upvote_icon.png", UPVOTE_ICON_ASSET = "file")
@@ -18,6 +19,8 @@ UPVOTE_ICON = UPVOTE_ICON_ASSET.readall()
 DEFAULT_DISPLAY = "top1"
 
 CACHE_TTL = 1800
+MAX_RESPONSE_BYTES = 262144
+MAX_IMAGE_BYTES = 2097152
 
 def main(config):
     """Main app method.
@@ -46,21 +49,19 @@ def main(config):
     })
 
     # handle api errors
-    if res.status_code != 200:
-        print("API error %d: %s" % (res.status_code, res.body()))
-        return render_api_error(res)
-
-    data = res.json()
+    body = res.body()
+    data = json.decode(body, None) if len(body) <= MAX_RESPONSE_BYTES else None
+    if res.status_code != 200 or type(data) != "dict":
+        return render_api_error(res.status_code, data)
 
     # errors may happen even with 200 status code
     if data.get("errors") != None:
-        return render_api_error(res)
+        return render_api_error(res.status_code, data)
 
-    posts = data.get("data", {}).get("posts", {}).get("nodes", [])
+    posts = valid_posts(data.get("data", {}).get("posts", {}).get("nodes", []))
 
     # check if we have content to display
     if len(posts) == 0:
-        print("No data to display, API response: %s" % res.body())
         return render_empty()
 
     # list of frames showin product details
@@ -136,13 +137,31 @@ def get_image(url):
         blob: The image's binary content.
     """
 
-    res = http.get(url)
+    if not url.startswith("https://ph-files.imgix.net/"):
+        return PH_LOGO
 
-    if res.status_code != 200:
+    res = http.get(url, ttl_seconds = CACHE_TTL)
+    body = res.body()
+
+    if res.status_code != 200 or len(body) > MAX_IMAGE_BYTES:
         # use default image
         return PH_LOGO
 
-    return res.body()
+    return body
+
+def valid_posts(posts):
+    valid = []
+    if type(posts) != "list":
+        return valid
+    for post in posts[:3]:
+        thumbnail = post.get("thumbnail", {}) if type(post) == "dict" else {}
+        if type(post) == "dict" and type(post.get("name")) == "string" and type(post.get("votesCount")) in ("int", "float") and type(thumbnail) == "dict":
+            valid.append({
+                "name": post["name"],
+                "votesCount": post["votesCount"],
+                "thumbnail": {"url": thumbnail.get("url") if type(thumbnail.get("url")) == "string" else ""},
+            })
+    return valid
 
 def render_header():
     """Renders the widgets that form the app's header.
@@ -204,22 +223,23 @@ def render_frame(product_name, product_votes, product_image):
         ),
     )
 
-def render_api_error(http_response):
+def render_api_error(status_code, data):
     """Renders the status code and message when there are API errors.
 
     Args:
-        http_response (response): The http response object.
+        status_code (int): The HTTP status code.
+        data (dict): Parsed response data, if available.
 
     Returns:
         render.Root: Root widget tree to show an error.
     """
 
-    data = http_response.json()
     message = "API Error"
-    code = str(http_response.status_code)
+    code = str(status_code)
 
-    if data.get("errors") != None and len(data["errors"]) > 0:
-        message = data["errors"][0].get("message", message)
+    if type(data) == "dict" and type(data.get("errors")) == "list" and len(data["errors"]) > 0 and type(data["errors"][0]) == "dict":
+        api_message = data["errors"][0].get("message")
+        message = api_message if type(api_message) == "string" else message
 
     return render.Root(
         delay = 40,

@@ -6,6 +6,7 @@ Author: gdcolella
 """
 
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -19,7 +20,7 @@ SAMPLE_TITLE = "Manhattan"
 # TransSee Service
 # StopTag
 # Route
-BASE_URL = "http://transsee.ca/publicJSONFeed?command=predictions&premium={}&a={}&s={}&r={}"
+BASE_URL = "https://www.transsee.ca/publicJSONFeed?command=predictions&premium={}&a={}&s={}&r={}"
 
 # If no configuration is provided, then default to using some subways
 # near DUMBO, Brooklyn.
@@ -48,41 +49,72 @@ sample_response_data = {
     },
 }
 
+def parse_station_group(raw_station):
+    result = []
+    for station in raw_station.split(","):
+        parts = station.strip().split(":")
+        if len(parts) != 3 or not parts[0] or not parts[1] or not parts[2]:
+            return None
+        result.append(parts)
+    return result
+
 def fetch_data(config):
     arrival_times = []
+    premium_key = config.str("premium")
 
-    raw_station = config.get("station1") or sample_config_line1
-    parsed = [s.split(":") for s in raw_station.split(",")]
+    # The bundled example remains network-free until a premium ID is supplied.
+    raw_station = (config.get("station1") or sample_config_line1) if premium_key else sample_config_line1
+    parsed = parse_station_group(raw_station)
+    if parsed == None:
+        return [], "Invalid Station1 Config"
     stations = [parsed]
 
     if not config.bool("disableStation2"):
-        raw_station2 = config.get("station2") or sample_config_line2
-        stations.append([s.split(":") for s in raw_station2.split(",")])
+        raw_station2 = (config.get("station2") or sample_config_line2) if premium_key else sample_config_line2
+        parsed2 = parse_station_group(raw_station2)
+        if parsed2 == None:
+            return [], "Invalid Station2 Config"
+        stations.append(parsed2)
 
     for combined_station in stations:
         station_name = None
         station_arrivals = []
         for service, route, station_code in combined_station:
-            premiumKey = config.str("premium")
             data = None
 
-            if premiumKey == None:
-                data = sample_response_data[route + ":" + station_code]
+            if not premium_key:
+                data = sample_response_data.get(route + ":" + station_code)
             else:
-                fetched = http.get(BASE_URL.format(premiumKey, service, station_code, route))
+                fetched = http.get(BASE_URL.format(
+                    humanize.url_encode(premium_key),
+                    humanize.url_encode(service),
+                    humanize.url_encode(station_code),
+                    humanize.url_encode(route),
+                ))
                 if fetched.status_code != 200:
-                    fail("Failed to get arrival data %d" % fetched.status_code)
+                    return [], "TransSee error %d" % fetched.status_code
                 data = fetched.json()
 
             # This can happen if there are no scheduled trains.
-            if "direction" not in data["predictions"][0]:
+            predictions = (data or {}).get("predictions") or []
+            if len(predictions) == 0:
+                continue
+            prediction = predictions[0]
+            directions = prediction.get("direction") or []
+            if len(directions) == 0:
                 continue
 
-            color = "#" + data["predictions"][0]["color"]
-            station_name = data["predictions"][0]["stopTitle"]
-            station_arrivals.append((route, color, [int(p["minutes"]) for p in data["predictions"][0]["direction"][0]["prediction"]]))
-        arrival_times.append((station_name, station_arrivals))
-    return arrival_times
+            arrivals = []
+            for item in directions[0].get("prediction") or []:
+                minutes = str(item.get("minutes") or "")
+                if minutes.isdigit():
+                    arrivals.append(int(minutes))
+
+            color = "#" + (prediction.get("color") or "ffffff")
+            station_name = prediction.get("stopTitle") or "Unknown stop"
+            station_arrivals.append((route, color, arrivals))
+        arrival_times.append((station_name or "No arrivals", station_arrivals))
+    return arrival_times, None
 
 # Stacked renderer
 def stack_subway(letter, color, arrival):
@@ -107,7 +139,9 @@ def overlay_subway(letter, color, arrival):
     )
 
 def main(config):
-    arrival_data = fetch_data(config)
+    arrival_data, error = fetch_data(config)
+    if error:
+        return render.Root(render.Marquee(render.Text(error, color = "#ff0000"), width = 64))
 
     stop_arrivals = []
     for stop, lines in arrival_data:
@@ -171,6 +205,7 @@ def get_schema():
                 name = "TransSee Premium ID",
                 desc = "ID for TransSee Premium. Used to call their API on your behalf.",
                 icon = "user",
+                secret = True,
             ),
             schema.Text(
                 id = "title",

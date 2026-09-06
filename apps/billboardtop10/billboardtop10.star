@@ -19,6 +19,7 @@ DEFAULT_COLORS = ["#FFF", "#f41b1c", "#ffe400", "#00b5f8"]
 
 #cache Time 3 Days x 24 hours x 60 minutes x 60 seconds = 259200 seconds
 CACHE_TTL_SECONDS = 259200
+MAX_RESPONSE_BYTES = 512 * 1024
 SCREEN_WIDTH = canvas.width()
 ICON_WIDTH = 7
 
@@ -39,6 +40,8 @@ def main(config):
         font_type = "terminus-16"
 
     selected_list = config.get("list", list_options[0].value)
+    if selected_list not in [option.value for option in list_options]:
+        selected_list = list_options[0].value
 
     api_key = config.get("api_key")
 
@@ -57,10 +60,10 @@ def main(config):
     else:
         top10_data = json.decode(BILLBOARD_SAMPLE_DATA)
 
-    display_count = int(config.get("count", 10))
+    display_count = 5 if config.get("count") == "5" else 10
 
     row1 = "{} - Top {}".format(getListDisplayFromListValue(selected_list), display_count)
-    row2 = getDisplayInfo(top10_data["content"]["1"])
+    row2 = getDisplayInfo(top10_data["content"].get("1"))
 
     if (display_count == 10):
         row3 = getDisplayInfoMulti(top10_data["content"], 2, 5)
@@ -129,12 +132,13 @@ def get_top10_information(top10_alive_key, list):
             "X-RapidAPI-Host": "billboard-api2.p.rapidapi.com",
             "X-RapidAPI-Key": top10_alive_key,
         },
-        ttl_seconds = CACHE_TTL_SECONDS,
     )
 
     if res.status_code == 200:
-        data = res.json()
-        cache.set("billboardtop10-{}".format(list), json.encode(data), ttl_seconds = CACHE_TTL_SECONDS * 2)
+        body = res.body()
+        data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+        if data:
+            cache.set("billboardtop10-{}".format(list), json.encode(data), ttl_seconds = CACHE_TTL_SECONDS * 2)
     else:
         data = cache.get("billboardtop10-{}".format(list))
         if data:
@@ -142,7 +146,7 @@ def get_top10_information(top10_alive_key, list):
         else:
             data = None
 
-    if not data or "content" not in data:
+    if type(data) != "dict" or type(data.get("content")) != "dict":
         return None
 
     if "error" in data:
@@ -167,6 +171,8 @@ def getListDisplayFromListValue(listValue):
     return ""
 
 def getDisplayInfo(item):
+    if type(item) != "dict":
+        return "Chart data unavailable"
     current = int(item["rank"])
     lastweek = item["last week"]
     if lastweek == "None":
@@ -174,7 +180,7 @@ def getDisplayInfo(item):
     else:
         lastweek = int(lastweek)
 
-    display = "{} by {} #{}{} {} weeks on charts".format(item["title"], item["artist"], item["rank"], getMovementIndicator(current, lastweek), item["weeks on chart"])
+    display = "{} by {} #{}{} {} weeks on charts".format(str(item.get("title", "Unknown"))[:120], str(item.get("artist", "Unknown"))[:120], item["rank"], getMovementIndicator(current, lastweek), item.get("weeks on chart", "?"))
     return display
 
 def getDisplayInfoMulti(items, start, end):
@@ -182,15 +188,17 @@ def getDisplayInfoMulti(items, start, end):
     divider = " * "
     for i in range(start - 1, end):
         key = str(i + 1)
-        item = items[key]
+        item = items.get(key)
+        if type(item) != "dict":
+            continue
         current = int(item["rank"])
         lw = item.get("last week", "0")
         lastweek = 0 if lw in ["", "None", None] else int(lw)
         if i + 1 == end:
             divider = ""
         display += "{} by {} is #{}{}{}".format(
-            item["title"],
-            item["artist"],
+            str(item.get("title", "Unknown"))[:120],
+            str(item.get("artist", "Unknown"))[:120],
             item["rank"],
             getMovementIndicator(current, lastweek),
             divider,

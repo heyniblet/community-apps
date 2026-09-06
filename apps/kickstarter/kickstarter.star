@@ -83,15 +83,8 @@ def get_project_data(slug):
             "accept": "application/json",
             "content-type": "application/json",
         },
-        ttl_seconds = 300,  # Default TTL, or match previous behavior if implicit
+        ttl_seconds = 300,
     )
-    # The previous code didn't set a specific TTL in cache.set?
-    # Wait, checking original code...
-    # cache.set(cache_key, json.encode(project)) -- No ttl_seconds specified! Default is usually large or infinite?
-    # Tidbyt default cache TTL is usually 60s if not specified? Or permanent?
-    # Docs say "Defaults to 60 seconds".
-    # So I will use 60 seconds to match default behavior or slightly longer.
-    # Let's use 600 (10 mins) as it seems reasonable for Kickstarter.
 
     if res.status_code != 200:
         fail("kickstarter request to %s failed with status code: %d - %s" %

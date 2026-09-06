@@ -5,6 +5,7 @@ Description: Show the next bin collection colour (recycle vs garbage) and date.
 Author: Tubo Shi
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/red_bin.png", RED_BIN_ASSET = "file")
 load("images/yellow_bin.png", YELLOW_BIN_ASSET = "file")
@@ -14,14 +15,24 @@ load("schema.star", "schema")
 RED_BIN = RED_BIN_ASSET.readall()
 YELLOW_BIN = YELLOW_BIN_ASSET.readall()
 
-CCC_BIN_URL = "https://ccc.govt.nz/services/rubbish-and-recycling/collections/getProperty?ID=%s"
+CCC_BIN_URL = "https://ccc.govt.nz/services/rubbish-and-recycling/collections/getProperty"
+MAX_RESPONSE_BYTES = 256 * 1024
+
+def safe_address_code(value):
+    value = str(value or "")
+    if not value or len(value) > 80:
+        return ""
+    for char in value.elems():
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return ""
+    return value
 
 def future_collections(collections):
     # returns a list of (date, material) tuple from the future
     return [
         (collection["next_planned_date"], collection["material"])
         for collection in collections
-        if (collection["out_of_date"] == "False")
+        if type(collection) == "dict" and (collection.get("out_of_date") == "False" or collection.get("out_of_date") == False) and collection.get("next_planned_date") and collection.get("material")
     ]
 
 def next_collection(collections):
@@ -46,7 +57,7 @@ def render_main(date, material):
         image = RED_BIN
     else:
         print("Wrong bin descriptor")
-        return render_error("Invalid API response")
+        return render.Text("Invalid API response")
 
     return render.Box(
         color = bg_color,
@@ -65,20 +76,27 @@ def render_error(message):
     ))
 
 def main(config):
-    addr_code = config.str("address_code")
+    addr_code = safe_address_code(config.str("address_code"))
 
     if not addr_code:
         print("Address Code not provided")
         return render_error("Address not provided ...")
 
-    resp = http.get(CCC_BIN_URL % addr_code, ttl_seconds = 43200)  # cache for 12 hours
+    resp = http.get(CCC_BIN_URL, params = {"ID": addr_code}, ttl_seconds = 43200)  # cache for 12 hours
+    body = resp.body()
 
-    if resp.status_code != 200:
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         print("API call failed")
         return render_error("API not available")
 
-    r = resp.json()
-    nc = next_collection(r["bins"]["collections"])
+    data = json.decode(body, None)
+    bins = data.get("bins") if type(data) == "dict" else None
+    collections = bins.get("collections") if type(bins) == "dict" else None
+    if type(collections) != "list":
+        return render_error("Invalid API response")
+    nc = next_collection(collections[:100])
+    if not nc:
+        return render_error("No collection found")
 
     return render.Root(render_main(*nc))
 

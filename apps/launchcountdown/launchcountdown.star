@@ -91,16 +91,21 @@ def get_rocket_launch_json():
         rocket_launch_data = None
 
     if (rocket_launch_data == None):
-        rocket_launch_http = http.get(ROCKET_LAUNCH_URL)
+        rocket_launch_http = http.get(
+            ROCKET_LAUNCH_URL,
+            ttl_seconds = MINIMUM_CACHE_TIME_IN_SECONDS,
+        )
 
         if rocket_launch_http.status_code != 200:
-            fail("RocketLaunch.live feed failed: %d", rocket_launch_http.status_code)
+            fail("RocketLaunch.live feed failed: %d" % rocket_launch_http.status_code)
         else:
             rocket_launch_data = rocket_launch_http.json()
+            if type(rocket_launch_data) != "dict" or type(rocket_launch_data.get("result")) != "list":
+                fail("RocketLaunch.live returned an invalid response")
 
-            if (rocket_launch_data != None):
+            cache_time_seconds = MINIMUM_CACHE_TIME_IN_SECONDS
+            if len(rocket_launch_data["result"]) > 0:
                 window_open_text = rocket_launch_data["result"][0]["win_open"]
-                cache_time_seconds = MINIMUM_CACHE_TIME_IN_SECONDS
                 if window_open_text != None:
                     #Current Json doesn't include seconds and throws error when parsing
                     if (len(window_open_text) == 17):
@@ -124,8 +129,7 @@ def get_rocket_launch_json():
 
                 cache_time_seconds = max(MINIMUM_CACHE_TIME_IN_SECONDS, min(MAXIMUM_CACHE_TIME_IN_SECONDS, cache_time_seconds))
 
-                cache.set(ROCKET_LAUNCH_CACHE_NAME, json.encode(rocket_launch_data), ttl_seconds = cache_time_seconds)
-                # Filter out any providers in ignoredProviders
+            cache.set(ROCKET_LAUNCH_CACHE_NAME, json.encode(rocket_launch_data), ttl_seconds = cache_time_seconds)
 
     return (rocket_launch_data)
 
@@ -418,7 +422,7 @@ def main(config):
                     ],
                 ),
                 render.Marquee(width = canvas.width(), child = render.Text(row3, color = "#fff")),
-                render.Marquee(width = canvas.width(), child = render.Text(row4, color = "#ff0")),
+                render.Marquee(width = canvas.width(), child = render.Text(row4 + " · Data: RocketLaunch.Live", color = "#ff0")),
             ],
         ),
     )

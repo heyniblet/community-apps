@@ -13,9 +13,9 @@ load("render.star", "render")
 load("time.star", "time")
 load("xpath.star", "xpath")
 
-RSS_URL = "https://rssfeed.azure.status.microsoft/en-au/status/feed/"
+RSS_URL = "https://rssfeed.azure.status.microsoft/en-us/status/feed/"
 DEFAULT_TIMEZONE = "Australia/Adelaide"
-CACHE_TIMEOUT = 1800  # 30 mins
+CACHE_TIMEOUT = 600  # 10 mins
 
 def main():
     timezone = time.tz()

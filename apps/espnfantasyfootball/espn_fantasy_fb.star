@@ -5,46 +5,49 @@ Description: Connects to your ESPN fantasy football league and randomly displays
 Author: jack_markle
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
+load("time.star", "time")
 
-FANTASY_BASE_ENDPOINT = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/"
-FANTASY_SPORTS = {
-    "nfl": "ffl",
-}
-
-# Defaults for schema
+FANTASY_BASE_ENDPOINT = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{}/segments/0/leagues/{}"
 DEFAULT_LEAGUE_ID = "59435668"
-DEFAULT_YEAR = "2024"
-DEFAULT_ESPN_S2 = "AEBNW6lF76hmygYwDoVCeLE0eiLYeQk0CkodwxI4bkai3oUFqXytKGYSz6tK24XYAl0pzWWA81wta%2B6qSzSsrHah1%2Fw7Z4No1Ab6xNIrtJAn58VuzDXgpfD7kYFHTFvURXcZ6%2BYqaWkfnRWK9Resmsi%2FpKrNEO7mAh3s%2BvssEoBp4ZISJhzugizeeKFhm4QfPtopPYgp%2BTrMJBbNra6SVOjPrHOAvQTc4JCxL8oyUfMINUS2EHCykNO8CayEaSHVMzkt6M3w%2B%2BDd8NxvuDqRsmYh%2F%2F%2FmpQgx1429twDdK1cvrg%3D%3D"
-DEFAULT_SWID = "{ED2E7200-9E5C-43DE-AE72-009E5C23DE71}"
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_TEAMS = 100
+MAX_MATCHUPS = 50
 
 def main(config):
-    # Get user config values
-    league_id = config.str("fantasy_league_id", DEFAULT_LEAGUE_ID)
-    year = config.get("year", DEFAULT_YEAR)
-    espn_s2 = config.str("schema_espn_s2", DEFAULT_ESPN_S2)
-    swid = config.get("schema_swid", DEFAULT_SWID)
+    league_id = safe_digits(config.str("fantasy_league_id", DEFAULT_LEAGUE_ID), DEFAULT_LEAGUE_ID, 20)
+    current_year = str(time.now().year)
+    year = safe_year(config.get("year", current_year), current_year)
+    espn_s2 = safe_cookie(config.str("schema_espn_s2", ""))
+    swid = safe_cookie(config.str("schema_swid", ""))
+    headers = {}
+    if espn_s2 and swid:
+        headers["Cookie"] = "espn_s2={}; SWID={}".format(espn_s2, swid)
 
-    # Initialize base league data with values from user
-    LEAGUE_DATA = init_base_league(league_id, int(year), "nfl", espn_s2, swid)  #add args)
+    endpoint = FANTASY_BASE_ENDPOINT.format(year, league_id)
+    league = fetch_json(endpoint + "?view=mTeam&view=mSettings&view=mStandings", headers)
+    status = league.get("status") if type(league) == "dict" else None
+    if type(status) != "dict":
+        return error_root("League unavailable")
+    scoring_period = league.get("scoringPeriodId")
+    final_period = status.get("finalScoringPeriod")
+    if type(scoring_period) not in ["int", "float"] or type(final_period) not in ["int", "float"]:
+        return error_root("Season unavailable")
+    scoring_period = max(1, min(int(scoring_period), int(final_period)))
+    matchup_period = status.get("currentMatchupPeriod")
+    matchup_period = max(1, min(100, int(matchup_period))) if type(matchup_period) in ["int", "float"] else scoring_period
 
-    # Initialize requests data
-    LEAGUE_DATA = init_requests_data(LEAGUE_DATA)
-
-    # Initialize specific league data
-    LEAGUE_DATA = league_get_request(LEAGUE_DATA, "")
-
-    # Get more data specific to retrieving box scores
-    LEAGUE_DATA = json_to_league_data(LEAGUE_DATA, LEAGUE_DATA["league_request_data"])
-
-    # Get actual box score data to use in render
-    BOX_SCORE_DATA = box_scores(LEAGUE_DATA, LEAGUE_DATA["current_week"])
-
-    # Choose a random matchup
-    matchup_string = "matchup_" + random_matchup(BOX_SCORE_DATA)
+    score_headers = dict(headers)
+    score_headers["x-fantasy-filter"] = json.encode({"schedule": {"filterMatchupPeriodIds": {"value": [matchup_period]}}})
+    scores = fetch_json(endpoint + "?view=mMatchupScore&view=mScoreboard&scoringPeriodId={}".format(scoring_period), score_headers)
+    matchups = normalized_matchups(scores)
+    if not matchups:
+        return error_root("No matchups found")
+    matchup = matchups[random.number(0, len(matchups) - 1)]
 
     return render.Root(
         child = render.Row(
@@ -52,105 +55,101 @@ def main(config):
             main_align = "space_between",
             cross_align = "end",
             children = [
-                # Left side - Home team
+                team_column(matchup["home_team"], "#163f75"),
+                render.Box(width = 2, height = 32, color = "#fff"),
+                team_column(matchup["away_team"], "#7a241f"),
+            ],
+        ),
+    )
+
+def fetch_json(url, headers):
+    response = http.get(url = url, headers = headers)
+    body = response.body()
+    return json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+
+def normalized_matchups(payload):
+    if type(payload) != "dict":
+        return []
+    teams = payload.get("teams")
+    schedule = payload.get("schedule")
+    if type(teams) != "list" or type(schedule) != "list":
+        return []
+    teams_by_id = {}
+    for team in teams[:MAX_TEAMS]:
+        team_id = team.get("id") if type(team) == "dict" else None
+        if type(team_id) in ["int", "float", "string"]:
+            teams_by_id[str(team_id)] = team
+
+    matchups = []
+    for matchup in schedule[:MAX_MATCHUPS]:
+        if type(matchup) != "dict" or type(matchup.get("home")) != "dict" or type(matchup.get("away")) != "dict":
+            continue
+        home = normalized_team(matchup["home"], teams_by_id)
+        away = normalized_team(matchup["away"], teams_by_id)
+        if home and away:
+            matchups.append({"home_team": home, "away_team": away})
+    return matchups
+
+def normalized_team(side, teams_by_id):
+    team = teams_by_id.get(str(side.get("teamId")))
+    if type(team) != "dict":
+        return None
+    name = str(team.get("name") or "Team")[:80]
+    abbreviation = str(team.get("abbrev") or name[:3]).upper()[:4]
+    score = side.get("totalPointsLive")
+    if type(score) not in ["int", "float"]:
+        score = side.get("totalPoints")
+    score = max(0, min(9999, score)) if type(score) in ["int", "float"] else 0
+    return {"team_name": name, "abbreviation": abbreviation, "team_score": score}
+
+def team_column(team, color):
+    return render.Box(
+        width = 30,
+        height = 32,
+        child = render.Column(
+            expanded = True,
+            main_align = "start",
+            cross_align = "center",
+            children = [
                 render.Box(
                     width = 30,
-                    height = 32,
-                    child = render.Column(
-                        expanded = True,
-                        main_align = "start",
-                        cross_align = "center",
-                        children = [
-                            # Team Name box
-                            render.Box(
-                                width = 30,
-                                height = 8,
-                                child = render.Marquee(
-                                    width = 30,
-                                    height = 8,
-                                    child = render.Text(BOX_SCORE_DATA[matchup_string]["home_team"]["team_name"]),
-                                    # offset_start = 5,
-                                    # offset_end = 32,
-                                ),
-                            ),
-                            # Logo Box
-                            render.Box(
-                                width = 30,
-                                height = 16,
-                                child = render.Image(
-                                    src = BOX_SCORE_DATA[matchup_string]["home_team"]["decoded_logo"],
-                                    width = 21,
-                                    height = 16,
-                                ),
-                            ),
-                            # Score box
-                            render.Box(
-                                width = 30,
-                                height = 8,
-                                child = render.Text(
-                                    content = str(BOX_SCORE_DATA[matchup_string]["home_team"]["team_score"]),  # Text label to display
-                                    font = "tb-8",  # Font style
-                                    height = 8,
-                                    offset = 0,
-                                ),
-                            ),
-                        ],
-                    ),
+                    height = 8,
+                    child = render.Marquee(width = 30, height = 8, child = render.Text(team["team_name"])),
                 ),
-                # Middle Divider
-                render.Box(
-                    width = 2,
-                    height = 32,
-                    color = "#fff",
-                ),
-                # Right side - Away team
                 render.Box(
                     width = 30,
-                    height = 32,
-                    child = render.Column(
-                        expanded = True,
-                        main_align = "start",
-                        cross_align = "center",
-                        children = [
-                            # Team Name box
-                            render.Box(
-                                width = 30,
-                                height = 8,
-                                child = render.Marquee(
-                                    width = 30,
-                                    height = 8,
-                                    child = render.Text(BOX_SCORE_DATA[matchup_string]["away_team"]["team_name"]),
-                                    # offset_start = 5,
-                                    # offset_end = 32,
-                                ),
-                            ),
-                            # Logo Box
-                            render.Box(
-                                width = 30,
-                                height = 16,
-                                child = render.Image(
-                                    src = BOX_SCORE_DATA[matchup_string]["away_team"]["decoded_logo"],  # Replace with the URL of the image you want to display
-                                    width = 21,
-                                    height = 16,
-                                ),
-                            ),
-                            # Score box
-                            render.Box(
-                                width = 30,
-                                height = 8,
-                                child = render.Text(
-                                    content = str(BOX_SCORE_DATA[matchup_string]["away_team"]["team_score"]),  # Text label to display
-                                    font = "tb-8",  # Font style
-                                    height = 8,
-                                    offset = 0,
-                                ),
-                            ),
-                        ],
-                    ),
+                    height = 16,
+                    color = color,
+                    child = render.Text(team["abbreviation"], font = "tb-8"),
+                ),
+                render.Box(
+                    width = 30,
+                    height = 8,
+                    child = render.Text(content = score_text(team["team_score"]), font = "tb-8", height = 8),
                 ),
             ],
         ),
     )
+
+def score_text(score):
+    rounded = int(score * 10 + 0.5) / 10.0
+    return str(int(rounded)) if rounded == int(rounded) else str(rounded)
+
+def safe_digits(value, fallback, max_length):
+    value = str(value or "").strip()
+    return value if value and len(value) <= max_length and value.isdigit() else fallback
+
+def safe_year(value, fallback):
+    value = safe_digits(value, fallback, 4)
+    year = int(value)
+    return value if year >= 2000 and year <= 2100 else fallback
+
+def safe_cookie(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 4096 and "\r" not in value and "\n" not in value and ";" not in value else ""
+
+def error_root(message):
+    return render.Root(child = render.Box(render.WrappedText(message, font = "tom-thumb")))
 
 def get_schema():
     return schema.Schema(
@@ -159,192 +158,28 @@ def get_schema():
             schema.Text(
                 id = "fantasy_league_id",
                 name = "ESPN Fantasy league ID",
-                desc = "To find your league ID, open the ESPN Fantasy App, navigate to your league, tap on the 'LEAGUE' tab, then tap 'League Info'. You should then see your League ID listed under basic settings.",
+                desc = "Find the league ID under League Info in the ESPN Fantasy app.",
                 icon = "user",
             ),
             schema.Text(
                 id = "year",
                 name = "Year of League",
-                desc = "The year you want display, usually the current year.",
-                icon = "user",
+                desc = "Season year; defaults to the current year.",
+                icon = "calendar",
             ),
             schema.Text(
                 id = "schema_espn_s2",
                 name = "Cookie: espn_s2",
-                desc = "[NOT NEEDED FOR PUBLIC LEAGUES; MUST BE FOUND FROM COMPUTER BROWSER] To find your espn_s2 cookie value, log in to https://fantasy.espn.com/football. Once you're at your team's home page, right click anywhere on the page and click 'Inspect'. Once the inspector menu appears, in the top bar of the menu, select 'Application'. In the 'Application' page, on the right bar under 'Cookies', click https://fantasy.espn.com. The espn_s2 value should then displayed in the cookie list. Email your espn_s2 to yourself so you are able to copy it from your mobile device.",
-                icon = "user",
+                desc = "Optional for public leagues. Private leagues require your ESPN espn_s2 web-session cookie.",
+                icon = "key",
                 secret = True,
             ),
             schema.Text(
                 id = "schema_swid",
                 name = "Cookie: swid",
-                desc = "[NOT NEEDED FOR PUBLIC LEAGUES; MUST BE FOUND FROM COMPUTER BROWSER] To find your swid cookie value, log in to https://fantasy.espn.com/football. Once you're at your team's home page, right click anywhere on the page and click 'Inspect'. Once the inspector menu appears, in the top bar of the menu, select 'Application'. In the 'Application' page, on the right bar under 'Cookies', click https://fantasy.espn.com. The swid value should then displayed in the cookie list under the 'espnAuth' value. It should be a string of alphanumerics similar to: '{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}'. Email your swid to yourself so you are able to copy it from your mobile device.",
-                icon = "user",
+                desc = "Optional for public leagues. Private leagues require your ESPN SWID web-session cookie.",
+                icon = "key",
                 secret = True,
             ),
         ],
     )
-
-# Gets a random matchup to display
-def random_matchup(box_data):
-    i = len(box_data)
-    num = random.number(1, i)
-    return str(num)
-
-# Initialize a dict for holding all league data
-def init_base_league(league_id, year, sport, espn_s2, swid):
-    LEAGUE_DATA = {
-        "league_id": None,
-        "year": None,
-        "sport": None,
-        "espn_s2": None,
-        "swid": None,
-        "cookies": None,
-    }
-    LEAGUE_DATA["league_id"] = league_id
-    LEAGUE_DATA["year"] = year
-    LEAGUE_DATA["sport"] = sport
-    if espn_s2 and swid:
-        s2_cookie = "espn_s2=" + espn_s2 + ";"
-        swid_cookie = " SWID=" + swid
-        cookie_combined = s2_cookie + swid_cookie
-        LEAGUE_DATA["espn_s2"] = espn_s2
-        LEAGUE_DATA["swid"] = swid
-        LEAGUE_DATA["cookies"] = cookie_combined
-
-    return LEAGUE_DATA
-
-# Make the HTTP request to get more specific league information
-def league_get_request(league_data, extend):
-    # Set HTTP query values
-    headers = {}
-    cookies = league_data["cookies"]
-    endpoint = league_data["LEAGUE_ENDPOINT"] + extend
-    url = endpoint + "?view=mTeam&view=mRoster&view=mMatchup&view=mSettings&view=mStandings"
-    headers["Cookie"] = str(cookies)
-
-    # Make the http request
-    response = http.get(url = url, headers = headers, ttl_seconds = 3600)  # cache for 1 hour
-
-    if response.status_code != 200:
-        fail("GET %s failed with status %d: %s", endpoint, response.status_code, response.body())
-
-    league_data["league_request_data"] = response.json()
-    return league_data
-
-# Grab important info from the request data
-def json_to_league_data(league_data, json):
-    league_data["currentMatchupPeriod"] = json["status"]["currentMatchupPeriod"]
-    league_data["scoringPeriodId"] = json["scoringPeriodId"]
-    league_data["firstScoringPeriod"] = json["status"]["firstScoringPeriod"]
-    league_data["finalScoringPeriod"] = json["status"]["finalScoringPeriod"]
-    league_data["previousSeasons"] = [
-        year
-        for year in json["status"]["previousSeasons"]
-        if year < league_data["year"]
-    ]
-    league_data["current_week"] = league_data["scoringPeriodId"] if league_data["scoringPeriodId"] <= json["status"]["finalScoringPeriod"] else json["status"]["finalScoringPeriod"]
-    league_data["settings"] = {}
-    league_data = init_settings(league_data, json["settings"])
-    league_data["members"] = json["members"]
-    return league_data
-
-# Set basic endpoint data
-def init_requests_data(league_data):
-    ## Init data
-    league_data["ENDPOINT"] = FANTASY_BASE_ENDPOINT + FANTASY_SPORTS["nfl"] + "/seasons/" + str(league_data["year"])
-    league_data["LEAGUE_ENDPOINT"] = FANTASY_BASE_ENDPOINT + FANTASY_SPORTS["nfl"] + "/seasons/" + str(league_data["year"]) + "/segments/0/leagues/" + str(league_data["league_id"])
-    return league_data
-
-# Initialize basic league settings
-def init_settings(league_data, data):
-    league_data["settings"]["reg_season_count"] = data["scheduleSettings"]["matchupPeriodCount"]
-    league_data["settings"]["matchup_periods"] = data["scheduleSettings"]["matchupPeriods"]
-    league_data["settings"]["name"] = data["name"]
-
-    # There's a lot more info that could go here, limiting it for use case.
-    return league_data
-
-# Grabs the box scores of the current fantasy week.
-def box_scores(league_data, week):
-    # Get matchup information
-    matchup_period = league_data["currentMatchupPeriod"]
-    scoring_period = league_data["current_week"]
-    if week and week <= league_data["current_week"]:
-        scoring_period = week
-        for matchup_id in league_data["settings"]["matchup_periods"]:
-            if week in league_data["settings"]["matchup_periods"][matchup_id]:
-                matchup_period = matchup_id
-            break
-
-    # Set HTTP request values
-    filters = '{"schedule":{"filterMatchupPeriodIds":{"value":[' + str(matchup_period) + "]}}}"
-    headers = {"x-fantasy-filter": filters}
-    headers["Cookie"] = str(league_data["cookies"])
-    extend = ""
-    endpoint = league_data["LEAGUE_ENDPOINT"] + extend
-    url = endpoint + "?view=mMatchupScore&view=mScoreboard&scoringPeriodId=" + str(int(scoring_period)) + ""
-
-    # Make request
-    data = http.get(url = url, headers = headers, ttl_seconds = 3600)  # cache for 1 hour
-    if data.status_code != 200:
-        fail("GET %s failed with status %d: %s", endpoint, data.status_code, data.body())
-
-    # Grab the info
-    json_data = data.json()
-    league_data["schedule"] = json_data["schedule"]
-    box_score_data = {}
-    i = 0
-    for matchup in league_data["schedule"]:
-        i = i + 1
-        home_team = get_team_data(matchup, "home", json_data)
-        away_team = get_team_data(matchup, "away", json_data)
-        box_score_data["matchup_" + str(i)] = {
-            "home_team": home_team,
-            "away_team": away_team,
-        }
-
-    return box_score_data
-
-# Gets team data like name, points, id.
-def get_team_data(matchup, team, json_data):
-    if team not in matchup:
-        return (0, 0, -1, [])
-
-    team_id = matchup[team]["teamId"]
-    team_projected = -1
-    if "totalPointsLive" in matchup[team]:
-        team_score = matchup[team]["totalPointsLive"]
-        team_projected = matchup[team]["totalProjectedPointsLive"]
-    else:
-        team_score = matchup[team]["totalPoints"]
-
-    # Get team name from team id
-    team_name = ""
-    team_logo = ""
-    for team in json_data["teams"]:
-        if team_id == team["id"]:
-            team_name = team["name"]
-            team_logo = team["logo"]
-        else:
-            continue
-
-    # Convert logo from url
-    decoded_logo = convert_logo(team_logo)
-
-    team_values = {
-        "team_id": team_id,
-        "team_name": team_name,
-        "team_score": team_score,
-        "team_proj_score": team_projected,
-        "decoded_logo": decoded_logo,
-    }
-    return team_values
-
-def convert_logo(logo_url):
-    response = http.get(url = logo_url)
-
-    if response.status_code != 200:
-        fail("Failed to load image")
-
-    return response.body()

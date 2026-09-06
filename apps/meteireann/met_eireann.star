@@ -166,7 +166,11 @@ def daily_forecast(time_nodes, location):
 
 def fetch_forecast(location):
     url = get_forecast_url(location)
-    rep = http.get(url, ttl_seconds = 900)
+    rep = http.get(
+        url,
+        headers = {"User-Agent": "tronbyt-met-eireann/1.0 (https://github.com/tronbyt/apps)"},
+        ttl_seconds = 900,
+    )
     if rep.status_code != 200:
         return [], [], "Error fetching forecast: " + str(rep.status_code)
 
@@ -544,7 +548,7 @@ ICONS = {
     "Sun": ICON_SUN_ASSET.readall(),
     "Thunder": ICON_THUNDER_ASSET.readall(),
 }
-MET_EIREANN_URL = "http://openaccess.pf.api.met.ie/metno-wdb2ts/locationforecast?lat={lat};long={long}"
+MET_EIREANN_URL = "https://api.met.no/weatherapi/locationforecast/2.0/classic?lat={lat}&lon={long}"
 THUMBNAILS = {
     "Cloud": THUMB_CLOUD_ASSET.readall(),
     "Drizzle": THUMB_DRIZZLE_ASSET.readall(),

@@ -5,54 +5,36 @@ Description: Results for the most recent draw of the UK national lottery's Set F
 Author: dinosaursrarr
 """
 
-load("cache.star", "cache")
-load("encoding/csv.star", "csv")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
+load("xpath.star", "xpath")
 
-RESULTS_URL = "https://www.national-lottery.co.uk/results/set-for-life/draw-history/csv"
+RESULTS_URL = "https://www.national-lottery.co.uk/results/set-for-life/draw-history/xml"
 TIMEZONE = "Europe/London"
+MAX_RESPONSE_BYTES = 64 * 1024
 
 WHITE = "#ffffff"
 BLACK = "#000000"
 TEAL = "#44c1d0"
 MUSTARD = "#ffd400"
 
-def parse_time(time_str):
-    return time.parse_time(time_str, "02-Jan-2006", TIMEZONE)
-
-def seconds_until_next_draw(latest_result):
-    # Draws happen at 8pm on Monday and Thursday
-    last_draw = parse_time(latest_result[0])
-    last_draw_weekday = humanize.day_of_week(last_draw)
-    if last_draw_weekday == 1:  # Monday
-        next_draw_days = 3
-    elif last_draw_weekday == 4:  # Thursday
-        next_draw_days = 4
-    else:
-        return time.hour // time.second
-    next_draw = last_draw + (((next_draw_days * 24) + 19) * time.hour) + (45 * time.minute)
-    return (next_draw - time.now()) // time.second
-
 def fetch_latest_result():
-    cached = cache.get(RESULTS_URL)
-    if cached:
-        return csv.read_all(cached)[1]
-    resp = http.get(RESULTS_URL)
-    if resp.status_code != 200:
+    resp = http.get(RESULTS_URL, ttl_seconds = 3600)
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return None
-    results = csv.read_all(resp.body())
-
-    cache.set(RESULTS_URL, resp.body(), ttl_seconds = seconds_until_next_draw(results[1]))
-    return results[1]
-
-def parse_result(result):
-    draw_date = parse_time(result[0])
-    balls = [int(b) for b in result[1:6]]
-    life_ball = int(result[6])
+    result = xpath.loads(body)
+    draw_date = result.query("//draw-date")
+    balls = [result.query("//ball[%d]" % index) for index in range(1, 6)]
+    life_ball = result.query("//bonus-ball")
+    if type(draw_date) != "string" or len(draw_date) != 10 or not draw_date.replace("-", "").isdigit() or not all([ball and str(ball).isdigit() for ball in balls]) or not life_ball or not str(life_ball).isdigit():
+        return None
+    draw_date = time.parse_time(draw_date, "2006-01-02", TIMEZONE)
+    balls = [int(ball) for ball in balls]
+    life_ball = int(life_ball)
     return draw_date, balls, life_ball
 
 def render_ball(number, ball_colour, text_colour):
@@ -67,10 +49,10 @@ def render_ball(number, ball_colour, text_colour):
     )
 
 def main():
-    latest_result = fetch_latest_result()
-    if not latest_result:
+    result = fetch_latest_result()
+    if not result:
         return render.Root(render.Text("Cannot load results"))
-    draw_date, balls, life_ball = parse_result(latest_result)
+    draw_date, balls, life_ball = result
 
     return render.Root(
         child = render.Column(

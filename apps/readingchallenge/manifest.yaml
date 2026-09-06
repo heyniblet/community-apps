@@ -6,7 +6,7 @@ desc: Displays progress towards your Goodreads yearly goal, navigate to your goo
 author: panderson54
 fileName: reading_challenge.star
 packageName: readingchallenge
-recommendedInterval: 5
+recommendedInterval: 60
 category: lifestyle
 tags:
   - education

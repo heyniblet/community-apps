@@ -11,7 +11,6 @@ load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 
-PLAYDATE_BASE_URL = "https://play.date"
 SALES_URL = "https://play.date/games/tags/on-sale/"
 
 PLAYDATE_YELLOW = "#FFC500"
@@ -21,60 +20,65 @@ def get_text_size_for_price(txt):
     return len(txt[1:]) * 4
 
 def get_games_on_sale():
-    sales_page = http.get(SALES_URL, ttl_seconds = TTL_TIME).body()
+    response = http.get(SALES_URL, ttl_seconds = TTL_TIME)
+    if response.status_code != 200:
+        print("Playdate sale list failed with status %d" % response.status_code)
+        return []
+    sales_page = response.body()
+    if len(sales_page) > 524288:
+        print("Playdate sale list was too large")
+        return []
     games = []
 
-    games_list = bsoup.parseHtml(sales_page).find("ul", {"class": "gameCards"}).find_all("li")
-    for game_item in games_list:
-        game = {}
-        url = game_item.find("a").attrs()["href"]
-        name = game_item.find("h2", {"class": "gameTitle"}).find("a").get_text().strip()
-        retail_price = game_item.find("span", {"class": "prices"}).find("s").get_text().strip()
-        sale_price = game_item.find("span", {"class": "prices"}).find("span", {"class": "discountedPrice"}).get_text().strip()
+    games_node = bsoup.parseHtml(sales_page).find("ul", {"class": "gameCards"})
+    for game_item in games_node.find_all("li")[:100] if games_node != None else []:
+        link = game_item.find("a")
+        title = game_item.find("h2", {"class": "gameTitle"})
+        title_link = title.find("a") if title != None else None
+        image = game_item.find("div", {"class": "gameCardImage"})
+        prices = game_item.find("span", {"class": "prices"})
+        retail = prices.find("s") if prices != None else None
+        sale = prices.find("span", {"class": "discountedPrice"}) if prices != None else None
+        url = link.attrs().get("href", "") if link != None else ""
+        style = image.attrs().get("style", "") if image != None else ""
+        marker = "url('"
+        image_url = style[style.find(marker) + len(marker):].rstrip("')") if marker in style else ""
+        if not url.startswith("/games/") or not image_url.startswith("https://play.date/media/") or title_link == None or retail == None or sale == None:
+            continue
+        name = title_link.get_text().strip()
+        retail_price = retail.get_text().strip()
+        sale_price = sale.get_text().strip()
+        if not name or not sale_price:
+            continue
 
-        game["url"] = PLAYDATE_BASE_URL + url
-        game["name"] = name
-        game["retail_price"] = retail_price
-        game["sale_price"] = sale_price
-
-        games.append(game)
+        games.append({
+            "image": image_url,
+            "name": name[:120],
+            "retail_price": retail_price[:20],
+            "sale_price": sale_price[:20],
+        })
 
     return games
 
-def get_game_screenshots(game_url):
-    game_page = http.get(game_url, ttl_seconds = TTL_TIME).body()
-    screenshot_list_items = bsoup.parseHtml(game_page).find_all("li", {"class": "screenshot"})
-    screenshot_tags = []
-    for screenshot in screenshot_list_items:
-        screenshot_tags.append(screenshot.find("img"))
-    screenshots = []
-    image_urls = []
-
-    for img in screenshot_tags:
-        image_urls.append(img.attrs()["src"])
-    only_gifs = [img for img in image_urls if img.endswith(".gif")]
-    if len(only_gifs) > 0:
-        image_urls = only_gifs
-    for screenshot in image_urls:
-        screenshots.append(screenshot)
-
-    return screenshots
-
-def get_gif_data(url):
-    gif_body = http.get(url, ttl_seconds = TTL_TIME).body()
-    return gif_body
+def get_image_data(url):
+    response = http.get(url, ttl_seconds = TTL_TIME)
+    body = response.body()
+    if response.status_code != 200 or len(body) > 4194304:
+        print("Playdate screenshot failed with status %d" % response.status_code)
+        return None
+    return body
 
 def main(config):
     show_retail_price = config.bool("show_retail")
     games_on_sale = get_games_on_sale()
 
     if len(games_on_sale) == 0:
-        return None
+        return render_message("No Playdate sales")
 
     selected_game = games_on_sale[random.number(0, len(games_on_sale) - 1)]
-    screenshots = get_game_screenshots(selected_game["url"])
-    selected_screenshot = screenshots[random.number(0, len(screenshots) - 1)]
-    gif_data = get_gif_data(selected_screenshot)
+    gif_data = get_image_data(selected_game["image"])
+    if not gif_data:
+        return render_message(selected_game["name"])
 
     stickers = []
     size_of_sticker = 6 + get_text_size_for_price(selected_game["sale_price"])
@@ -83,10 +87,7 @@ def main(config):
         stickers.append(render.Text(content = selected_game["retail_price"], color = PLAYDATE_YELLOW))
     stickers.append(render.Text(content = selected_game["sale_price"], color = "#ff0000"))
 
-    sticker = render.Row(
-        children = stickers,
-    )
-
+    sticker = render.Row(children = stickers)
     return render.Root(
         delay = 20,
         child = render.Stack(
@@ -109,6 +110,15 @@ def main(config):
                     child = sticker,
                 ),
             ],
+        ),
+    )
+
+def render_message(text):
+    return render.Root(
+        child = render.WrappedText(
+            content = text[:120],
+            font = "tom-thumb",
+            color = PLAYDATE_YELLOW,
         ),
     )
 

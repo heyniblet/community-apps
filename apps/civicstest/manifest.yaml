@@ -6,6 +6,11 @@ desc: Displays a random question and answer from the 128 USCIS civics test quest
 author: hachibu
 fileName: civicstest.star
 packageName: civicstest
+recommendedInterval: 240
+category: education
 published: '2026-06-30T19:20:56Z'
 updated: '2026-06-30T19:27:20Z'
-tags: []
+tags:
+  - civics
+  - education
+  - daily

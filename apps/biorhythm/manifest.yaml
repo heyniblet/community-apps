@@ -6,7 +6,7 @@ desc: Display biorhythm plots based on your birthday.
 author: J. Keybl
 fileName: biorhythm.star
 packageName: biorhythm
-recommendedInterval: 5
+recommendedInterval: 240
 category: health
 tags:
   - lifestyle

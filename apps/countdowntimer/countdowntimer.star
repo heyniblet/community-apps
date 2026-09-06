@@ -1,11 +1,45 @@
+load("encoding/json.star", "json")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
+DEFAULT_TIMEZONE = "UTC"
+
+def get_timezone(config):
+    # Location values contain an IANA timezone. Never use the renderer host's
+    # local offset: IANA rules keep wall-clock deadlines correct across DST.
+    raw_location = config.get("location")
+    if not raw_location:
+        return DEFAULT_TIMEZONE
+    location = json.decode(raw_location)
+    return location.get("timezone", DEFAULT_TIMEZONE)
+
+def parse_deadline(deadline_str, timezone):
+    # datetime-local controls send a wall-clock value without an offset. Treat
+    # that value in the user's selected IANA timezone. API clients may instead
+    # send RFC3339 with Z/an offset; that already represents an exact instant.
+    has_offset = deadline_str.endswith("Z") or (
+        len(deadline_str) >= 6 and
+        (deadline_str[-6] == "+" or deadline_str[-6] == "-") and
+        deadline_str[-3] == ":"
+    )
+    if has_offset:
+        suffix_length = 1 if deadline_str.endswith("Z") else 6
+        local_part = deadline_str[:-suffix_length]
+        suffix = deadline_str[-suffix_length:]
+        if len(local_part) == 16:
+            local_part += ":00"
+        return time.parse_time(local_part + suffix).in_location(timezone)
+
+    format = "2006-01-02T15:04" if len(deadline_str) == 16 else "2006-01-02T15:04:05"
+    return time.parse_time(deadline_str, format = format, location = timezone)
+
 def main(config):
+    timezone = get_timezone(config)
+
     # Default to 7 days from now
-    default_deadline = time.now() + time.parse_duration("168h")  # 7 days = 168 hours
-    default_deadline_str = default_deadline.format("2006-01-02T15:04:05Z")
+    default_deadline = time.now().in_location(timezone) + time.parse_duration("168h")  # 7 days = 168 hours
+    default_deadline_str = default_deadline.format("2006-01-02T15:04:05Z07:00")
 
     deadline_str = config.get("deadline", default_deadline_str)
     title = config.get("title", "Countdown")
@@ -21,11 +55,7 @@ def main(config):
     show_dots = config.bool("show_dots", True)
     show_date = config.bool("show_date", True)
 
-    # Parse deadline with timezone
-    if not deadline_str.endswith("Z") and not "+" in deadline_str and not "-" in deadline_str[-6:]:
-        deadline_str = deadline_str + "Z"  # Add UTC timezone if missing
-
-    deadline = time.parse_time(deadline_str)
+    deadline = parse_deadline(deadline_str, timezone)
 
     # Create animation frames for real-time countdown and effects
     frames = []
@@ -36,6 +66,9 @@ def main(config):
 
     return render.Root(
         delay = 500,  # Update every 500ms for smoother animation
+        # Keep the complete 30-second live window so hosts do not loop stale
+        # countdown frames after truncating the animation.
+        show_full_animation = True,
         child = render.Animation(
             children = frames,
         ),
@@ -405,6 +438,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
+            schema.Location(
+                id = "location",
+                name = "Timezone",
+                desc = "Timezone used to interpret and display the deadline",
+                icon = "locationDot",
+            ),
             schema.Text(
                 id = "title",
                 name = "Title",

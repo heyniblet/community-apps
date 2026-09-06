@@ -5,10 +5,10 @@ Description: Display Jordan B. Peterson's Rules for Life from his book.
 Author: Robert Ison
 """
 
+load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-load("random.star", "random")
 
 DISPLAY_OPTIONS = [
     schema.Option(value = "random", display = "Display Random Rule every time"),

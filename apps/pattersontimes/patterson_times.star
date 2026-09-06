@@ -7,41 +7,26 @@ Author: Aiden Mitchell
 
 load("http.star", "http")
 load("images/expo_icon.png", EXPO_ICON_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("time.star", "time")
 
 EXPO_ICON = EXPO_ICON_ASSET.readall()
 
 API_URL = "https://gist.githubusercontent.com/aidenmitchell/95184f9d8a352908afc118b08a537d3f/raw"
+DATA_TTL_SECONDS = 3600
+MAX_RESPONSE_BYTES = 128 * 1024
 
 def fetch_train_data():
-    r = http.get(API_URL)
-    if r.status_code == 200:
-        return r.json()
-    else:
+    r = http.get(API_URL, ttl_seconds = DATA_TTL_SECONDS)
+    body = r.body()
+    if r.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return None
+    payload = r.json()
+    return payload if type(payload) == "dict" else None
 
 def get_local_time():
-    # Get the current UTC time
-    utc_time = time.now()
-
-    # Convert the UTC time into total minutes since midnight
-    utc_minutes_since_midnight = utc_time.hour * 60 + utc_time.minute
-
-    # Offset for PDT (UTC-7 hours)
-    offset_minutes = -7 * 60
-
-    # Calculate local minutes since midnight
-    local_minutes_since_midnight = (utc_minutes_since_midnight + offset_minutes) % (24 * 60)
-
-    # Convert the total minutes back to hours and minutes for the local time
-    local_hour = local_minutes_since_midnight // 60
-    local_minute = local_minutes_since_midnight % 60
-
-    # Construct a new time object for local time
-    local_time = time.time(hour = local_hour, minute = local_minute)
-
-    return local_time
+    return time.now().in_location("America/Vancouver")
 
 def format_time_difference(time_diff):
     """Format the time difference. If it's 0, return 'now'."""
@@ -49,48 +34,46 @@ def format_time_difference(time_diff):
 
 def parse_time_to_minutes(time_str):
     """Convert a time string in the format 'HH:MM:SS' to minutes since midnight."""
+    if type(time_str) != "string" or not re.match(r"^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$", time_str):
+        return None
     hours, minutes, _ = [int(part) for part in time_str.split(":")]
     return hours * 60 + minutes
 
 def time_difference_in_minutes(start, end):
-    """Calculate the time difference in minutes, accounting for times that cross over midnight."""
-    if end >= start:
-        return end - start
-    else:
-        # Account for times that cross over midnight
-        return (24 * 60 - start) + end
+    """Calculate minutes until a departure, wrapping across midnight."""
+    return (end - start) % (24 * 60)
 
-def get_towards_waterfront_times(train_data):
+def get_towards_waterfront_times(train_data, current_time_minutes):
     """Retrieve the two nearest train times towards Waterfront."""
-    current_time_minutes = get_local_time().hour * 60 + get_local_time().minute
-    towards_waterfront_times = sorted([t for t, dest in train_data.items() if dest == "Waterfront" and parse_time_to_minutes(t) > current_time_minutes])
-    two_nearest_towards_waterfront = towards_waterfront_times[:2]
-    towards_waterfront_diff = [time_difference_in_minutes(current_time_minutes, parse_time_to_minutes(t)) for t in two_nearest_towards_waterfront]
+    departures = [parse_time_to_minutes(t) for t, dest in train_data.items() if dest == "Waterfront"]
+    return sorted([time_difference_in_minutes(current_time_minutes, departure) for departure in departures if departure != None])[:2]
 
-    return towards_waterfront_diff
-
-def get_away_from_waterfront_times(train_data):
+def get_away_from_waterfront_times(train_data, current_time_minutes):
     """Retrieve the nearest "away from Waterfront" destination and its two nearest departure times."""
-    current_time_minutes = get_local_time().hour * 60 + get_local_time().minute
-    away_from_waterfront_times = sorted([t for t, dest in train_data.items() if dest != "Waterfront" and parse_time_to_minutes(t) > current_time_minutes])
-    nearest_away_destination = train_data[away_from_waterfront_times[0]]
-    two_nearest_away_times_for_nearest_destination = sorted([t for t, dest in train_data.items() if dest == nearest_away_destination and parse_time_to_minutes(t) > current_time_minutes])[:2]
-    away_from_waterfront_diff = [time_difference_in_minutes(current_time_minutes, parse_time_to_minutes(t)) for t in two_nearest_away_times_for_nearest_destination]
-
-    return nearest_away_destination, away_from_waterfront_diff
+    departures = []
+    for departure_time, destination in train_data.items():
+        departure = parse_time_to_minutes(departure_time)
+        if destination != "Waterfront" and type(destination) == "string" and departure != None:
+            departures.append((time_difference_in_minutes(current_time_minutes, departure), destination))
+    if not departures:
+        return "No service", []
+    nearest_away_destination = sorted(departures)[0][1]
+    return nearest_away_destination, sorted([diff for diff, destination in departures if destination == nearest_away_destination])[:2]
 
 def render_train_times():
     train_data = fetch_train_data()
     if not train_data:
-        return render.Text("Failed to fetch train data.")
+        return render.Root(child = render.Text("Failed to fetch train data."))
 
     # Retrieve times
-    towards_waterfront_diff = get_towards_waterfront_times(train_data)
-    nearest_away_destination, away_from_waterfront_diff = get_away_from_waterfront_times(train_data)
+    local_time = get_local_time()
+    current_time_minutes = local_time.hour * 60 + local_time.minute
+    towards_waterfront_diff = get_towards_waterfront_times(train_data, current_time_minutes)
+    nearest_away_destination, away_from_waterfront_diff = get_away_from_waterfront_times(train_data, current_time_minutes)
 
     # Convert times to relative format
-    waterfront_relative_times = [format_time_difference(diff) for diff in towards_waterfront_diff]
-    kg_pwu_relative_times = [format_time_difference(diff) for diff in away_from_waterfront_diff]
+    waterfront_relative_times = [format_time_difference(diff) for diff in towards_waterfront_diff] or ["No service"]
+    kg_pwu_relative_times = [format_time_difference(diff) for diff in away_from_waterfront_diff] or ["No service"]
 
     return render.Root(
         child = render.Column(

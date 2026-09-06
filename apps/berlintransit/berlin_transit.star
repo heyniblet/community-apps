@@ -9,15 +9,14 @@ load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 #Constants for the VBB API
-VBB_API_BASE_URL = "https://fahrinfo.vbb.de/restproxy/2.32/"
+VBB_API_BASE_URL = "https://fahrinfo.vbb.de/restproxy/2.32"
 DEPARTURE_BOARD_PREFIX = "departureBoard"
-LOCATION_SEARCH_PREFIX = "location.nearbystops"
-VBB_API_ACCESS_ID = ""
 
 #Styling stuff
 ORANGE = "#FFA500"
@@ -66,13 +65,8 @@ BERLIN_TIMEZONE = "Europe/Berlin"
 #Departure Board API Tuning Parameters
 MAX_DEPARTURES = "20"  #maximum number of departures to fetch
 MAX_MINUTES_IN_FUTURE = "59"  #limit to departures in the next hour
-DEPARTURES_TTL_CACHE_LENGTH_SECONDS = 60  #cache the departure board for one minute
 JSON_FORMAT = "JSON"
-
-#Station Lookup API Tuning Parameters
-MAX_DISTANCE_FROM_STATION_METERS = "300"  #radius from the user's location for station lookcup
-MAX_STATIONS_TO_FETCH = "5"  #maximum number of stations to fetch
-STATIONS_TTL_CACHE_LENGTH_SECONDS = 604800  #cache the station lookup for one week
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 #Strings displayed to the end user
 MINUTES_ABBREVIATION = "m"
@@ -85,14 +79,12 @@ def main(config):
         return get_error_message("No configuration provided")
 
     #Parse the station data. The "value" field is a stringified JSON object holding the station-id and station-name
-    station = config.get(CONFIG_STATION)
-    if not station:
-        return get_error_message("No station selected")
-    data = json.decode(json.decode(station)[CONFIG_STATION_VALUE])
-    station_id = data[CONFIG_STATION_ID]
-    station_name = parse_station_name(data[CONFIG_STATION_NAME])
+    station_id, station_name = parse_station_config(config.get(CONFIG_STATION))
     if not station_id:
         return get_error_message("No station selected")
+    api_key = get_VBB_API_access_id(config)
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
+        return get_error_message("VBB API Access ID required")
 
     #Pull product class configurations from the schema
     show_u_bahn = config.bool(CONFIG_SHOW_U_BAHN, True)
@@ -103,12 +95,32 @@ def main(config):
     show_ice = config.bool(CONFIG_SHOW_ICE, True)
 
     #Pull the departure time offset from the schema
-    offset_minutes = int(config.get(CONFIG_DEPARTURE_TIME_OFFSET))
+    offset_value = str(config.get(CONFIG_DEPARTURE_TIME_OFFSET, "0"))
+    offset_minutes = int(offset_value) if offset_value.isdigit() else -1
     if not offset_minutes in CONFIG_DEPARTURE_TIME_OFFSET_VALUES:
         return get_error_message("Invalid departure time offset selected")
 
     departures = get_station_departures(config, station_id, show_u_bahn, show_s_bahn, show_tram, show_bus, show_regional, show_ice, offset_minutes)
     return get_root_element(departures, station_name)
+
+def parse_station_config(raw):
+    if type(raw) != "string" or len(raw) > 2048:
+        return None, "VBB Station"
+    raw = raw.strip()
+    outer = json.decode(raw, None)
+    value = outer.get(CONFIG_STATION_VALUE) if type(outer) == "dict" else raw
+    display = outer.get("display") if type(outer) == "dict" else None
+    inner = json.decode(value, None) if type(value) == "string" else None
+    if type(inner) == "dict":
+        station_id = inner.get(CONFIG_STATION_ID)
+        station_name = inner.get(CONFIG_STATION_NAME) or display or station_id
+    else:
+        station_id = value
+        station_name = display or value
+    station_id = str(station_id or "").strip()
+    if not station_id or len(station_id) > 128 or "\r" in station_id or "\n" in station_id:
+        return None, "VBB Station"
+    return station_id, parse_station_name(str(station_name or "VBB Station")[:120])
 
 #RENDERING FUNCTIONS
 
@@ -283,18 +295,20 @@ def get_station_departures(config, station_id, show_u_bahn, show_s_bahn, show_tr
     if departure_offset_minutes > 0:  #we only need to add the time parameter if we're not looking for immediate departures - it defautls to now
         params["time"] = get_departure_board_request_time(departure_offset_minutes)
 
-    resp = execute_http_get(DEPARTURE_BOARD_PREFIX, params, DEPARTURES_TTL_CACHE_LENGTH_SECONDS)
+    resp = execute_http_get(DEPARTURE_BOARD_PREFIX, params)
     return parse_departures_json(resp)
 
-#Executes an HTTP GET request to the specified VBB API endpoint.  Fails the app if the request fails
+#Executes an HTTP GET request to the specified VBB API endpoint.
 #vbb_api_prefix_params: the prefix for the VBB API endpoint
 #request_params: the parameters to pass to the VBB API
-#ttl_seconds: the time-to-live for the cache
 #Returns the response from the VBB API
-def execute_http_get(vbb_api_prefix_params, request_params, ttl_seconds):
-    http_response = http.get(VBB_API_BASE_URL + "/" + vbb_api_prefix_params, params = request_params, ttl_seconds = ttl_seconds)
-    check_http_status_code(http_response, vbb_api_prefix_params)
-    return http_response
+def execute_http_get(vbb_api_prefix_params, request_params):
+    http_response = http.get(VBB_API_BASE_URL + "/" + vbb_api_prefix_params, params = request_params)
+    if http_response.status_code != 200:
+        return None
+    body = http_response.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    return data if type(data) == "dict" else None
 
 #Gets the time string to pass to the VBB API for the departure board request
 #offset_minutes: the number of minutes to offset the request time by
@@ -365,13 +379,6 @@ def compute_product_bitwise(show_u_bahn, show_s_bahn, show_tram, show_bus, show_
         product += get_power_for_product(PRODUCT_CLASS_ICE)
     return humanize.ftoa(product)  #remove any decimal points that may have been added by the math library
 
-#Fails the app if the HTTP request fails
-#resp: the response object from the HTTP request
-#api_name_invoked: the name of the API that was invoked
-def check_http_status_code(resp, api_name_invoked):
-    if resp.status_code != 200:
-        print(api_name_invoked + " request failed with status _" + str(resp.status_code))
-
 #Computes the power of 2 for a given product
 #product: the product to compute the power for
 #Returns the power of 2 for the product
@@ -383,15 +390,14 @@ def get_power_for_product(product):
 #Parses the JSON response from the VBB departure board API
 #http_response: the JSON response from the VBB departure board API
 #Returns a list of dictionaries, each representing a departure. See parse_departure for the structure of each dictionary
-def parse_departures_json(http_response):
+def parse_departures_json(data):
     departures_data = []  #parse out all departures, return them in a list
-
-    #no departures found. Check this separately because resp.json()["Deoarture"] will throw an error if there are no departures
-    if http_response.body().find("Departure") == -1:
+    departures = data.get("Departure", []) if type(data) == "dict" else []
+    if type(departures) != "list":
         return []
 
-    for departures in http_response.json()["Departure"]:
-        parsed_departure = parse_departure(departures)
+    for departure in departures[:int(MAX_DEPARTURES)]:
+        parsed_departure = parse_departure(departure)
         if parsed_departure:  #don't add None departures
             departures_data.append(parsed_departure)
 
@@ -406,6 +412,8 @@ def parse_departures_json(http_response):
 #- DEPARTURE_DATA_LINE: the line number of the train
 #- DEPARTURE_DATA_LINE_COLOR: the color of the line number text
 def parse_departure(departure_json):
+    if type(departure_json) != "dict":
+        return None
     time_until_departure = get_minutes_until_departure(departure_json)
     if not check_time_until_departure_valid_for_board(time_until_departure):  #don't show invalid departures
         return None
@@ -433,19 +441,26 @@ def check_time_until_departure_valid_for_board(time_until_departure):
 #product_at_stop: the JSON object representing the product at the stop
 #Returns the line number or ICE train name
 def parse_line(product_at_stop):
+    if type(product_at_stop) != "dict":
+        return "?"
     line = product_at_stop.get("line")
     if line:
-        return line
-    name = product_at_stop.get("name")
-
-    return "I" + name.split(" ")[1]  #ICE trains don't have line numbers, so we'll use the second word in the name instead
+        return str(line)[:8]
+    name = str(product_at_stop.get("name", ""))
+    parts = name.split(" ")
+    return ("I" + parts[1])[:8] if len(parts) > 1 else "?"
 
 #Some products have a white foreground color and a colored background color. In this case, we want to use the background color as the line color
 #product_at_stop: the JSON object representing the product at the stop
 #Returns the color of the line number text
 def parse_color(product_at_stop):
-    foreground_color = product_at_stop.get("icon").get("foregroundColor").get("hex")
-    background_color = product_at_stop.get("icon").get("backgroundColor").get("hex")
+    icon = product_at_stop.get("icon", {}) if type(product_at_stop) == "dict" else {}
+    foreground = icon.get("foregroundColor", {}) if type(icon) == "dict" else {}
+    background = icon.get("backgroundColor", {}) if type(icon) == "dict" else {}
+    foreground_color = foreground.get("hex") if type(foreground) == "dict" else None
+    background_color = background.get("hex") if type(background) == "dict" else None
+    foreground_color = foreground_color if valid_color(foreground_color) else WHITE
+    background_color = background_color if valid_color(background_color) else WHITE
     if foreground_color == WHITE and not background_color == WHITE:
         return background_color
     elif background_color == WHITE and not foreground_color == WHITE:
@@ -453,14 +468,19 @@ def parse_color(product_at_stop):
     else:
         return WHITE
 
+def valid_color(value):
+    return type(value) == "string" and re.match(r"^#[0-9A-Fa-f]{6}$", value) != None
+
 #Cleans up common prefixes in station names that aren't helpful for our purposes
 #direction: the string representing the direction of the train
 #Returns the cleaned up direction string
 def parse_direction(direction):
-    direction_array = direction.split(" ")
+    direction_array = str(direction or "").split(" ")
+    if not direction_array or not direction_array[0]:
+        return "?"
     direction_result = ""
     if is_common_prefix(direction_array[0]):
-        direction_result = direction_array[1]
+        direction_result = direction_array[1] if len(direction_array) > 1 else direction_array[0]
     else:
         direction_result = direction_array[0]
 
@@ -480,7 +500,7 @@ def get_time_color(time_until_departure):
 def get_minutes_until_departure(departure_json):
     departure_time = departure_json.get("rtTime")
     departure_date = departure_json.get("rtDate")
-    if not departure_time or not departure_time:  #some products don't have rt data (notabaly, RE trains). Fall back to scheduled time/date instead
+    if not departure_time or not departure_date:  #some products don't have rt data (notabaly, RE trains). Fall back to scheduled time/date instead
         departure_time = departure_json.get("time")
         departure_date = departure_json.get("date")
     return parse_minutes_to_departure(departure_date, departure_time)
@@ -493,7 +513,7 @@ def get_minutes_until_departure(departure_json):
 #departure_time: the time of the departure in the format "HH:MM:SS"
 #Returns the number of minutes until the departure, or None if incomplete data was provided or the time is in the past
 def parse_minutes_to_departure(departure_date, departure_time):
-    if not departure_date or not departure_time:
+    if type(departure_date) != "string" or type(departure_time) != "string" or re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", departure_date) == None or re.match(r"^[0-9]{2}:[0-9]{2}:[0-9]{2}$", departure_time) == None:
         return None
 
     date_split = departure_date.split("-")  #see comment on format above
@@ -520,12 +540,11 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Text(
                 id = CONFIG_STATION,
-                name = "Train Station",
-                desc = "A list of train stations based on a location.",
+                name = "VBB Station ID",
+                desc = "VBB stop ID from the official journey planner. Existing nearby-station selections continue to work.",
                 icon = "train",
-                handler = get_stations,
             ),
             schema.Text(
                 id = "api_key",
@@ -593,49 +612,3 @@ def get_departure_time_offset_options():
     for minutes in CONFIG_DEPARTURE_TIME_OFFSET_VALUES:
         options.append(schema.Option(display = str(minutes), value = str(minutes)))
     return options
-
-#Given a location as provided by the LocationBased schema, returns a list of stations near that location for selection by the user
-#location: a JSON object representing a location, as provided by the LocationBased schema
-#Returns a list of schema.Option objects representing the stations near the location
-def get_stations(location, config):
-    found_stations = []
-
-    stations_json = fetch_stations(json.decode(location), config)
-    if not stations_json:
-        return found_stations
-
-    for station in stations_json["stopLocationOrCoordLocation"]:
-        inner_station = station.get("StopLocation")
-        station_id = inner_station.get("id")
-        if not station_id:  #the ID is critical for later operations. If we don't have one, throw this stop out
-            continue
-        station_name = inner_station.get("name")
-        if not station_name:  #How will a user know what station they're selecting if it doesn't have a name?
-            continue
-        option = schema.Option(
-            display = inner_station.get("name"),
-            value = json.encode({CONFIG_STATION_ID: station_id, CONFIG_STATION_NAME: station_name}),
-        )
-        found_stations.append(option)
-    return found_stations
-
-#Fetches the stations near a location from the VBB API
-#location: a JSON object representing a location, as provided by the LocationBased schema
-#Returns the JSON response from the VBB API
-def fetch_stations(location, config):
-    truncated_lat = math.round(1000.0 * float(location["lat"])) / 1000.0  # Truncate to 3dp for better caching and to protect user privacy
-    truncated_lng = math.round(1000.0 * float(location["lng"])) / 1000.0  # Means to the nearest ~110 metres.
-    params = {
-        "accessId": get_VBB_API_access_id(config),
-        "originCoordLat": str(truncated_lat),
-        "originCoordLong": str(truncated_lng),
-        "r": MAX_DISTANCE_FROM_STATION_METERS,  #radius from the user's location for station lookup
-        "type": "S",  #limits this to just stations
-        "maxNo": MAX_STATIONS_TO_FETCH,  #limits the number of stations returned
-        "format": JSON_FORMAT,
-    }
-    resp = execute_http_get(LOCATION_SEARCH_PREFIX, params, STATIONS_TTL_CACHE_LENGTH_SECONDS)
-    if not resp.json().get("stopLocationOrCoordLocation"):
-        return None
-
-    return resp.json()

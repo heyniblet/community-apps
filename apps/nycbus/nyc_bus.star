@@ -7,16 +7,14 @@ Author: samandmoore
 
 load("encoding/json.star", "json")
 load("http.star", "http")
-load("math.star", "math")
 load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 EXAMPLE_STOP_CODE = "550685"
-BUSTIME_STOP_TIMES_URL = "http://bustime.mta.info/api/siri/stop-monitoring.json"
-BUSTIME_STOP_INFO_URL = "http://bustime.mta.info/api/where/stop/%s.json"
-BUSTIME_STOPS_FOR_LOCATION_URL = "http://bustime.mta.info/api/where/stops-for-location.json"
+BUSTIME_STOP_TIMES_URL = "https://bustime.mta.info/api/siri/stop-monitoring.json"
+BUSTIME_STOP_INFO_URL = "https://bustime.mta.info/api/where/stop/%s.json"
 PREVIEW_DATA = [{"line_color": "FAA61A", "line_name": "Q100", "destination_name": "LIMITED LI CITY QUEENS PLZ", "eta_text": "15 min"}, {"line_color": "00AEEF", "line_name": "Q69", "destination_name": "LI CITY QUEENS PLZ via DITMARS BL via 21 ST", "eta_text": "45 min"}]
 
 def get_schema():
@@ -26,58 +24,24 @@ def get_schema():
             schema.Text(
                 id = "api_key",
                 name = "MTA BusTime API Key",
-                desc = "Your MTA BusTime API key. See http://bustime.mta.info/wiki/Developers/Index for details.",
+                desc = "Your MTA BusTime API key. See https://bustime.mta.info/wiki/Developers/Index for details.",
                 icon = "key",
                 secret = True,
             ),
-            schema.LocationBased(
+            schema.Text(
                 id = "stop_code",
                 name = "Bus Stop",
-                desc = "A list of bus stops based on a location.",
+                desc = "MTA BusTime stop code, for example 550685.",
                 icon = "bus",
-                handler = get_stops,
+                default = EXAMPLE_STOP_CODE,
             ),
         ],
     )
 
-def get_stops(location, config):
-    api_key = config.get("api_key")
-    loc = json.decode(location)
-
-    res = http.get(
-        BUSTIME_STOPS_FOR_LOCATION_URL,
-        params = {
-            "key": api_key,
-            "lat": loc["lat"],
-            "latSpan": "0.001",
-            "lon": loc["lng"],
-            "longSpan": "0.001",
-        },
-    )
-    if res.status_code != 200:
-        fail("MTA BusTime request failed with status %d", res.status_code)
-
-    data = res.json()["data"]["stops"]
-    stops = [
-        schema.Option(display = "%s - %s" % (stop["name"], stop["direction"]), value = stop["code"])
-        for stop in sorted(
-            data,
-            key = lambda x: math.sqrt(
-                math.pow(x["lat"] - float(loc["lat"]), 2) + math.pow(x["lon"] - float(loc["lng"]), 2),
-            ),
-        )
-    ]
-
-    return stops
-
 def main(config):
-    api_key = config.get("api_key")
+    api_key = config.str("api_key", "")
     widgetMode = config.bool("$widget")
-    stop_code = config.get("stop_code")
-    if stop_code == None:
-        stop_code = EXAMPLE_STOP_CODE
-    else:
-        stop_code = json.decode(stop_code)["value"]
+    stop_code = parse_stop_code(config.str("stop_code", EXAMPLE_STOP_CODE))
 
     if api_key:
         journeys = get_journeys(api_key, stop_code)
@@ -124,6 +88,16 @@ def main(config):
             ],
         ),
     )
+
+def parse_stop_code(value):
+    value = value.strip()
+    if value.startswith("{"):
+        decoded = json.decode(value)
+        value = decoded.get("value", "") if type(decoded) == "dict" else ""
+    value = value.strip() if type(value) == "string" else ""
+    if not value or len(value) > 32 or not all([char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in value.codepoints()]):
+        return EXAMPLE_STOP_CODE
+    return value
 
 def build_row(journey, widgetMode = False):
     # Only match names of bus lines that we know won't fit
@@ -210,36 +184,46 @@ def get_journeys(api_key, stop_code):
             "key": api_key,
             "MonitoringRef": stop_code,
         },
+        ttl_seconds = 30,
     )
     if rep.status_code != 200:
-        fail("MTA BusTime request failed with status %d", rep.status_code)
+        return []
 
-    json = rep.json()
-    deliveries = json["Siri"]["ServiceDelivery"]["StopMonitoringDelivery"]
-    if len(deliveries) > 0:
-        delivery = deliveries[0]
-    else:
-        print("No delivery found in response from API!")
-        print(deliveries)
-        delivery = None
-
-    if delivery != None and "MonitoredStopVisit" in delivery:
-        journeys = delivery["MonitoredStopVisit"]
-    else:
-        print("Delivery response invalid from API!")
-        print(delivery)
-        journeys = []
-
-    return [build_journey(journey["MonitoredVehicleJourney"], api_key) for journey in journeys[:2]]
+    body = rep.body()
+    if not body or len(body) > 1048576:
+        return []
+    payload = json.decode(body)
+    siri = payload.get("Siri", {}) if type(payload) == "dict" else {}
+    service = siri.get("ServiceDelivery", {}) if type(siri) == "dict" else {}
+    deliveries = service.get("StopMonitoringDelivery", []) if type(service) == "dict" else []
+    delivery = deliveries[0] if type(deliveries) == "list" and deliveries and type(deliveries[0]) == "dict" else {}
+    visits = delivery.get("MonitoredStopVisit", []) if type(delivery) == "dict" else []
+    visits = visits if type(visits) == "list" else []
+    result = []
+    for visit in visits[:2]:
+        raw = visit.get("MonitoredVehicleJourney", {}) if type(visit) == "dict" else {}
+        journey = build_journey(raw, api_key)
+        if journey:
+            result.append(journey)
+    return result
 
 def build_journey(raw_journey, api_key):
-    line_ref = raw_journey["LineRef"]
-    stop_id = raw_journey["MonitoredCall"]["StopPointRef"]
+    if type(raw_journey) != "dict":
+        return None
+    call = raw_journey.get("MonitoredCall", {})
+    line_ref = raw_journey.get("LineRef", "")
+    stop_id = call.get("StopPointRef", "") if type(call) == "dict" else ""
+    if not line_ref or not stop_id:
+        return None
     line_info = get_line_info(stop_id, line_ref, api_key)
     line_color = line_info["color"]
-    line_name = raw_journey["PublishedLineName"][0]
-    destination_name = raw_journey["DestinationName"][0]
-    eta = raw_journey["MonitoredCall"]["ExpectedArrivalTime"]
+    line_names = raw_journey.get("PublishedLineName", [])
+    destination_names = raw_journey.get("DestinationName", [])
+    eta = call.get("ExpectedArrivalTime", "")
+    if type(line_names) != "list" or not line_names or type(destination_names) != "list" or not destination_names or not eta:
+        return None
+    line_name = str(line_names[0])[:20]
+    destination_name = str(destination_names[0])[:120]
     now = time.now().in_location("America/New_York")
     eta_time = time.parse_time(eta)
     diff = eta_time - now
@@ -261,12 +245,14 @@ def get_line_info(stop_id, line_ref, api_key):
         ttl_seconds = 3600,
     )
     if res.status_code != 200:
-        fail("MTA BusTime request failed with status %d", res.status_code)
+        return {"color": "666666"}
 
-    routes = res.json()["data"]["routes"]
-    route = [x for x in routes if x["id"] == line_ref][0]
-    result = {
-        "color": route["color"],
-    }
-
-    return result
+    body = res.body()
+    if not body or len(body) > 1048576:
+        return {"color": "666666"}
+    payload = json.decode(body)
+    data = payload.get("data", {}) if type(payload) == "dict" else {}
+    routes = data.get("routes", []) if type(data) == "dict" else []
+    matching = [route for route in routes if type(route) == "dict" and route.get("id") == line_ref]
+    color = matching[0].get("color", "666666") if matching else "666666"
+    return {"color": color if type(color) == "string" else "666666"}

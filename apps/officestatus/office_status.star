@@ -7,7 +7,6 @@ Author: Brian Bell
 
 load("animation.star", "animation")
 load("cache.star", "cache")
-load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
@@ -43,9 +42,22 @@ DEFAULT_CUSTOM_STATUS_START_TIME = "2006-01-02T15:04:05.000Z"
 DEFAULT_CUSTOM_STATUS_END_TIME = "2006-01-02T15:04:05.000Z"
 DEFAULT_CUSTOM_STATUS = "Focusing"
 DEFAULT_CUSTOM_STATUS_COLOR = "#FFFF00"
-DEFAULT_CUSTOM_STATUS_ICON = ICON_CHECK_ASSET.readall()
+DEFAULT_CUSTOM_STATUS_ICON = "check"
 DEFAULT_CUSTOM_STATUS_MESSAGE = "Until later"
 TTL_SECONDS = 30
+
+CUSTOM_STATUS_ICONS = {
+    "check": ICON_CHECK_ASSET.readall(),
+    "clock": ICON_CLOCK_ASSET.readall(),
+    "do_not_enter": ICON_DO_NOT_ENTER_ASSET.readall(),
+    "exclamation": ICON_EXCLAMATION_ASSET.readall(),
+    "heart": ICON_HEART_ASSET.readall(),
+    "house": ICON_HOUSE_ASSET.readall(),
+    "lightning": ICON_LIGHTNING_ASSET.readall(),
+    "music": ICON_MUSIC_ASSET.readall(),
+    "plane": ICON_PLANE_ASSET.readall(),
+    "question": ICON_QUESTION_ASSET.readall(),
+}
 
 # Values for local server
 DEVELOPER_MSFT_CLIENT_ID = "REPLACE_ON_LOCAL"
@@ -146,7 +158,7 @@ def main(config):
     custom_status_end_time = time.parse_time(config.get("custom_status_end_time", DEFAULT_CUSTOM_STATUS_END_TIME))
     custom_status = config.get("custom_status", DEFAULT_CUSTOM_STATUS)
     custom_status_color = config.get("custom_status_color", DEFAULT_CUSTOM_STATUS_COLOR)
-    custom_status_icon = config.get("custom_status_icon")
+    custom_status_icon = config.get("custom_status_icon", DEFAULT_CUSTOM_STATUS_ICON)
     custom_status_message = config.get("custom_status_message", DEFAULT_CUSTOM_STATUS_MESSAGE)
 
     if (
@@ -162,7 +174,7 @@ def main(config):
     ):
         status = custom_status
         color = custom_status_color
-        icon = base64.decode(custom_status_icon) if custom_status_icon != None else DEFAULT_CUSTOM_STATUS_ICON
+        icon = CUSTOM_STATUS_ICONS.get(custom_status_icon, CUSTOM_STATUS_ICONS[DEFAULT_CUSTOM_STATUS_ICON])
         schedule = custom_status_message
     else:
         # Retrieve MSFT API access token, returns None if user is not logged in
@@ -915,43 +927,43 @@ def get_schema():
     icon_options = [
         schema.Option(
             display = "Check",
-            value = ICON_CHECK_ASSET.readall(),
+            value = "check",
         ),
         schema.Option(
             display = "Clock",
-            value = ICON_CLOCK_ASSET.readall(),
+            value = "clock",
         ),
         schema.Option(
             display = "Do Not Enter",
-            value = ICON_DO_NOT_ENTER_ASSET.readall(),
+            value = "do_not_enter",
         ),
         schema.Option(
             display = "Exclamation",
-            value = ICON_EXCLAMATION_ASSET.readall(),
+            value = "exclamation",
         ),
         schema.Option(
             display = "Heart",
-            value = ICON_HEART_ASSET.readall(),
+            value = "heart",
         ),
         schema.Option(
             display = "House",
-            value = ICON_HOUSE_ASSET.readall(),
+            value = "house",
         ),
         schema.Option(
             display = "Lightning",
-            value = ICON_LIGHTNING_ASSET.readall(),
+            value = "lightning",
         ),
         schema.Option(
             display = "Music",
-            value = ICON_MUSIC_ASSET.readall(),
+            value = "music",
         ),
         schema.Option(
             display = "Plane",
-            value = ICON_PLANE_ASSET.readall(),
+            value = "plane",
         ),
         schema.Option(
             display = "Question",
-            value = ICON_QUESTION_ASSET.readall(),
+            value = "question",
         ),
     ]
 

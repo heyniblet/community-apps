@@ -107,6 +107,9 @@ def get_schema():
         schema.Option(display = "Fast", value = "2000"),
         schema.Option(display = "Faster (Default)", value = "1000"),
     ]
+    league_fields = []
+    for sport in SPORTS_LIST:
+        league_fields.extend(more_options(sport))
 
     return schema.Schema(
         version = "1",
@@ -118,11 +121,6 @@ def get_schema():
                 icon = "medal",
                 options = sports,
                 default = "Baseball",
-            ),
-            schema.Generated(
-                id = "generated",  #other options are all in here because the generated fields go at the end always
-                source = "sport",
-                handler = more_options,
             ),
             schema.Toggle(
                 id = "gameday",
@@ -202,7 +200,7 @@ def get_schema():
                 icon = "highlighter",
                 default = "None",
             ),
-        ],
+        ] + league_fields,
     )
 
 def more_options(sport):

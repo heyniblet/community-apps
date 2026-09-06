@@ -9,6 +9,7 @@ First edition!
 """
 
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("time.star", "time")
 load("xpath.star", "xpath")
@@ -19,10 +20,14 @@ CACHE_TIMEOUT = 15 * 60  # 15 mins
 def main():
     timezone = time.tz()
     feed = get_cachable_data(RSS_URL, CACHE_TIMEOUT)
+    if feed == None:
+        return error_frame()
     rss = xpath.loads(feed)
     channel = rss.query_node("//rss/channel")
     title = "M365 Status"
     lastupdate = channel.query("/lastBuildDate")
+    if type(lastupdate) != "string" or not re.match(r"^[A-Z][a-z]{2}, [0-9]{2} [A-Z][a-z]{2} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} Z$", lastupdate):
+        return error_frame()
     itemcolor = "#59d657"
 
     # time formatting
@@ -31,6 +36,9 @@ def main():
     Date = MyTime.format("Jan 2")
 
     item = channel.query("/item/status")
+    if type(item) != "string" or not item:
+        return error_frame()
+    item = item[:80]
 
     status_map = {
         "ServiceInterruption": {"color": "#f00", "text": "Service Interruption"},
@@ -93,8 +101,9 @@ def main():
 
 def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
+    body = res.body()
+    required = ["<channel>", "<lastBuildDate>", "<status>"]
+    return body if res.status_code == 200 and body and len(body) <= 64 * 1024 and all([part in body for part in required]) else None
 
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
+def error_frame():
+    return render.Root(child = render.WrappedText(content = "M365 status unavailable", width = 64, color = "#f00"))

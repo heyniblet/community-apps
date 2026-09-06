@@ -5,6 +5,7 @@ Description: Displays the total debt by the United States of America in dollars.
 Author: PMK (@pmk)
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/background_image.gif", BACKGROUND_IMAGE_ASSET = "file")
@@ -24,9 +25,9 @@ NUMBER_SUFFIX = ["trillion", "billion", "million", "thousand", "dollar debt"]
 def get_data(ttl_seconds = 60 * 60 * 6):
     url = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/debt_to_penny?sort=-record_date&format=json&page%5Bnumber%5D=1&page%5Bsize%5D=2"
     response = http.get(url = url, ttl_seconds = ttl_seconds)
-    if response.status_code != 200:
-        fail("Treasury.gov request failed with status %d", response.status_code)
-    return response.json()
+    body = response.body()
+    data = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 256 * 1024 else {}
+    return data if type(data) == "dict" else {}
 
 def convert_to_chunks_by_thousands_separator(big_float_number):
     return humanize.comma(int(float(big_float_number))).split(",")
@@ -103,7 +104,9 @@ def main(config):
     is_animating = config.bool("is_animating", DEFAULT_IS_ANIMATING)
     has_background_image = config.bool("has_background_image", DEFAULT_HAS_BACKGROUND_IMAGE)
 
-    raw_data = get_data()["data"]
+    raw_data = get_data().get("data", [])
+    if type(raw_data) != "list" or len(raw_data) < 2:
+        return render.Root(child = render.WrappedText("Treasury data unavailable", align = "center"))
 
     conditional_background_image_elements = []
     if has_background_image:

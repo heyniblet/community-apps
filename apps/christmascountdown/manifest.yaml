@@ -6,7 +6,7 @@ desc: Displays an animated tree and Merry Christmas and (optionally) the number 
 author: Michael Creamer
 fileName: christmascountdown.star
 packageName: christmascountdown
-recommendedInterval: 60
+recommendedInterval: 240
 supports2x: true
 minPixletVersion: v0.49.0
 category: utilities

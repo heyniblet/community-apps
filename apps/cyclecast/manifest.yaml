@@ -4,7 +4,7 @@ name: CycleCast
 summary: Weather Data for Cyclists
 desc: Displays weather data important for cyclists.
 author: Robert Ison
-recommendedInterval: 5
+recommendedInterval: 15
 category: utilities
 tags:
   - weather

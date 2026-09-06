@@ -6,6 +6,7 @@ Author: kaffolder7
 """
 
 load("cache.star", "cache")
+load("hash.star", "hash")
 load("http.star", "http")
 load("images/lastfm_icon.png", LAST_FM_ICON_1X = "file")
 load("images/lastfm_icon@2x.png", LAST_FM_ICON_2X = "file")
@@ -66,13 +67,8 @@ def _root(child):
         ),
     )
 
-def _api_key_tag(api_key):
-    key = _as_text(api_key)
-    if key == "":
-        return "nokey"
-    if len(key) <= 4:
-        return "len%d-%s" % (len(key), key)
-    return "len%d-%s-%s" % (len(key), key[:2], key[len(key) - 2:])
+def _cache_scope(username, api_key):
+    return hash.sha256("%s|%s" % (_as_text(username), _as_text(api_key)))
 
 def _scoped_cache_key(scope, name):
     return "%s-%s" % (name, scope)
@@ -111,7 +107,7 @@ def _download_cover_art(cover_art_url):
     if _is_default_last_fm_image(cover_art_url):
         return ""
 
-    if not cover_art_url.startswith("https://"):
+    if not cover_art_url.startswith("https://lastfm-img2.akamaized.net/") and not cover_art_url.startswith("https://lastfm.freetls.fastly.net/"):
         return ""
     response = http.get(cover_art_url)
     if response.status_code != 200:
@@ -654,7 +650,7 @@ def not_playing(config, songtitle, artistname, albumname):
 def main(config):
     username = _as_text(config.get("username"))
     api_key = _as_text(config.get("dev_api_key"))
-    cache_scope = "%s|%s" % (username, _api_key_tag(api_key))
+    cache_scope = _cache_scope(username, api_key)
     show_clock = config.bool("showClock", True)
     clock_text = time.now().format("3:04") if show_clock else ""
 

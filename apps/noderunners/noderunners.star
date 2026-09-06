@@ -16,7 +16,10 @@ def get_current_song(ttl_seconds = 30):
     url = "https://jukebox.lighting/jukebox/status.json?chat_id=-1001672416970"
     response = http.get(url = url, ttl_seconds = ttl_seconds)
     if response.status_code == 200:
-        return response.json()["title"]
+        payload = response.json()
+        title = payload.get("title") if type(payload) == "dict" else None
+        if type(title) == "string" and title.strip():
+            return title.strip()[:160]
     return "OFFLINE"
 
 def metronome():

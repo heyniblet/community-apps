@@ -720,10 +720,12 @@ def get_schema():
                 default = DEFAULT_ROUTE,
                 options = get_routes(),
             ),
-            schema.Generated(
+            schema.Text(
                 id = "stop",
-                source = "route",
-                handler = select_stop,
+                name = "Stop ID",
+                desc = "SEPTA stop ID for the selected route.",
+                icon = "bus",
+                default = DEFAULT_STOP,
             ),
         ],
     )

@@ -3,29 +3,35 @@ CUMTD Bus Arrivals - Tidbyt App
 Enter your address to see buses at nearby stops.
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 API_BASE = "https://developer.mtd.org/api/v2.2/json"
-GEOCODE_URL = "https://nominatim.openstreetmap.org/search"
 MTD_BLUE = "#1E88E5"
 
 def main(config):
     api_key = config.str("api_key")
-    address = config.str("address", "")
+    location = config.str("address", "")
     routes_str = config.str("routes", "")
 
-    if not api_key:
+    if not api_key or len(api_key) > 256:
         return render_error("Set API key")
 
-    if not address:
-        return render_error("Enter address")
+    if not location or len(location) > 2048 or not location.startswith("{"):
+        return render_error("Choose location")
 
-    # Get nearby stops from address
-    stops = get_stops_from_address(api_key, address)
+    loc = json.decode(location)
+    if type(loc) != "dict" or "lat" not in loc or "lng" not in loc:
+        return render_error("Choose location")
+
+    lat = float(loc["lat"])
+    lon = float(loc["lng"])
+    if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+        return render_error("Invalid location")
+
+    stops = get_stops_from_location(api_key, lat, lon)
 
     if not stops:
         return render_error("No stops found")
@@ -33,7 +39,7 @@ def main(config):
     # Parse route filter
     route_filter = []
     if routes_str:
-        route_filter = [r.strip().upper() for r in routes_str.split(",")]
+        route_filter = [r.strip().upper()[:12] for r in routes_str.split(",")[:20] if r.strip()]
 
     # Fetch departures for all stops (stops are ordered by distance, closest first)
     # Only keep the first occurrence of each route+direction (from closest stop)
@@ -57,7 +63,7 @@ def main(config):
             expanded = True,
             main_align = "start",
             children = [
-                render_header(address),
+                render_header(str(loc.get("description", "Selected location"))[:100]),
                 render_bus_list(all_departures[:5]),
             ],
         ),
@@ -75,70 +81,29 @@ def render_error(msg):
         ),
     )
 
-def get_stops_from_address(api_key, address):
-    """Geocode address and find nearby CUMTD stops."""
-    cache_key = "geo_%s" % address.replace(" ", "_").replace(",", "")[:30]
-    cached = cache.get(cache_key)
-    if cached:
-        return json.decode(cached)
-
-    # URL encode the address - only add location hint if not already present
-    addr_lower = address.lower()
-    if "champaign" in addr_lower or "urbana" in addr_lower or "il" in addr_lower:
-        encoded_addr = url_encode(address)
-    else:
-        encoded_addr = url_encode(address + ", Champaign, IL")
-
-    geo_url = "%s?q=%s&format=json&limit=1" % (GEOCODE_URL, encoded_addr)
-    geo_resp = http.get(
-        geo_url,
-        headers = {"User-Agent": "TidbytCUMTDApp/1.0"},
-        ttl_seconds = 86400,
+def get_stops_from_location(api_key, lat, lon):
+    """Find nearby CUMTD stops for a selected location."""
+    stops_resp = http.get(
+        API_BASE + "/getstopsbylatlon",
+        params = {"key": api_key, "lat": str(lat), "lon": str(lon), "count": "5"},
     )
 
-    if geo_resp.status_code != 200:
-        return []
-
-    geo_data = geo_resp.json()
-    if not geo_data:
-        return []
-
-    lat = geo_data[0]["lat"]
-    lon = geo_data[0]["lon"]
-
-    # Find nearby stops (get 5 to ensure good route coverage)
-    stops_url = "%s/getstopsbylatlon?key=%s&lat=%s&lon=%s&count=5" % (API_BASE, api_key, lat, lon)
-    stops_resp = http.get(stops_url, ttl_seconds = 300)
-
-    if stops_resp.status_code != 200:
+    if stops_resp.status_code != 200 or len(stops_resp.body()) > 512 * 1024:
         return []
 
     stops_data = stops_resp.json()
+    if type(stops_data) != "dict" or type(stops_data.get("stops")) != "list":
+        return []
     stops = []
     for stop in stops_data.get("stops", [])[:5]:
+        if type(stop) != "dict" or not stop.get("stop_id") or not stop.get("stop_name"):
+            continue
         stops.append({
-            "stop_id": stop["stop_id"],
-            "name": shorten_name(stop["stop_name"]),
+            "stop_id": str(stop["stop_id"])[:40],
+            "name": shorten_name(str(stop["stop_name"])[:100]),
         })
 
-    cache.set(cache_key, json.encode(stops), ttl_seconds = 3600)
     return stops
-
-def url_encode(s):
-    """Simple URL encoding for address strings."""
-    result = ""
-    for c in s.elems():
-        if c == " ":
-            result += "%20"
-        elif c == ",":
-            result += "%2C"
-        elif c == "&":
-            result += "%26"
-        elif c == "#":
-            result += "%23"
-        else:
-            result += c
-    return result
 
 def shorten_name(name):
     """Shorten stop name for display."""
@@ -158,52 +123,62 @@ def shorten_name(name):
 
     return name
 
+def safe_color(value, fallback):
+    value = str(value)
+    if value.startswith("#"):
+        value = value[1:]
+    if len(value) != 6:
+        return fallback
+    for c in value.elems():
+        if c not in "0123456789abcdefABCDEF":
+            return fallback
+    return "#" + value
+
 def fetch_departures(api_key, stop_id, stop_name, route_filter):
     """Fetch departures for a single stop."""
-    cache_key = "cumtd_%s" % stop_id
-    cached = cache.get(cache_key)
-    if cached:
-        deps = json.decode(cached)
+    rep = http.get(
+        API_BASE + "/getdeparturesbystop",
+        params = {"key": api_key, "stop_id": stop_id, "pt": "30", "count": "20"},
+    )
 
-        # Update stop name and apply filter
-        for d in deps:
-            d["stop_name"] = stop_name
-        if route_filter:
-            deps = [d for d in deps if d["route"].upper() in route_filter]
-        return deps
-
-    url = "%s/getdeparturesbystop?key=%s&stop_id=%s&pt=30" % (API_BASE, api_key, stop_id)
-    rep = http.get(url, ttl_seconds = 60)
-
-    if rep.status_code != 200:
+    if rep.status_code != 200 or len(rep.body()) > 512 * 1024:
         return []
 
     data = rep.json()
+    if type(data) != "dict" or type(data.get("departures")) != "list":
+        return []
     departures = []
 
-    for dep in data.get("departures", []):
+    for dep in data.get("departures", [])[:20]:
+        if type(dep) != "dict" or type(dep.get("route")) != "dict":
+            continue
         route = dep.get("route", {})
-        route_color = route.get("route_color", "1E88E5")
-        text_color = route.get("route_text_color", "FFFFFF")
+        route_color = safe_color(route.get("route_color", "1E88E5"), MTD_BLUE)
+        text_color = safe_color(route.get("route_text_color", "FFFFFF"), "#FFFFFF")
 
-        if not route_color.startswith("#"):
-            route_color = "#" + route_color
-        if not text_color.startswith("#"):
-            text_color = "#" + text_color
-
-        headsign = dep.get("headsign", "")
+        headsign = str(dep.get("headsign", ""))[:100]
         direction = extract_direction(headsign)
+        mins_value = str(dep.get("expected_mins", 0))
+        if not mins_value:
+            continue
+        for c in mins_value.elems():
+            if c not in "0123456789":
+                mins_value = ""
+                break
+        if not mins_value:
+            continue
+        mins = int(mins_value)
+        if mins < 0 or mins > 999:
+            continue
 
         departures.append({
-            "mins": dep.get("expected_mins", 0),
-            "route": route.get("route_short_name", "?"),
+            "mins": mins,
+            "route": str(route.get("route_short_name", "?"))[:8],
             "direction": direction,
             "color": route_color,
             "text_color": text_color,
             "stop_name": stop_name,
         })
-
-    cache.set(cache_key, json.encode(departures), ttl_seconds = 60)
 
     if route_filter:
         departures = [d for d in departures if d["route"].upper() in route_filter]
@@ -347,13 +322,13 @@ def get_schema():
                 name = "CUMTD API Key",
                 desc = "Get your key at developer.mtd.org",
                 icon = "key",
+                secret = True,
             ),
-            schema.Text(
+            schema.Location(
                 id = "address",
-                name = "Address",
-                desc = "Your address (e.g., 601 E John St)",
+                name = "Location",
+                desc = "Location used to find nearby CUMTD stops.",
                 icon = "locationDot",
-                default = "",
             ),
             schema.Text(
                 id = "routes",

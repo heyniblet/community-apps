@@ -1,5 +1,6 @@
 # https://developer.trimet.org/ws_docs/arrivals2_ws.shtml
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/trimet_logo.png", TRIMET_LOGO_ASSET = "file")
 load("render.star", "render")
@@ -14,19 +15,27 @@ CACHE_TIME_IN_SECONDS = 30
 BUS_COLOR = "#0E4C8C"
 
 def main(config):
-    trimet_app_id = config.str("trimet_app_id", DEFAULT_APP_ID)
-    loc_id = config.str("loc_id", DEFAULT_LOC_ID)
-    trimet_api_url = "https://developer.trimet.org/ws/v2/arrivals?locIDs=%s&appID=%s" % (loc_id, trimet_app_id)
+    trimet_app_id = config.str("trimet_app_id", "")
+    loc_id = config.str("loc_id", str(DEFAULT_LOC_ID))
+    if not trimet_app_id or len(trimet_app_id) > 256 or any([c in trimet_app_id for c in [" ", "\t", "\r", "\n"]]) or not loc_id.isdigit() or len(loc_id) > 10:
+        return error_frame("TriMet App ID required")
 
-    trimet_data = http.get(trimet_api_url, ttl_seconds = CACHE_TIME_IN_SECONDS)
+    trimet_data = http.get(
+        "https://developer.trimet.org/ws/v2/arrivals",
+        params = {"locIDs": loc_id, "appID": trimet_app_id},
+    )
     stop_rows = []
-
-    if trimet_data.status_code != 200:
-        print("Trimet request failed with status %d" % trimet_data.status_code)
-    else:
-        print("Cache hit!" if (trimet_data.headers.get("Tidbyt-Cache-Status") == "HIT") else "Cache miss!")
-
-        location_name = "%s - %s" % (trimet_data.json()["resultSet"]["location"][0]["desc"], trimet_data.json()["resultSet"]["location"][0]["dir"])
+    body = trimet_data.body()
+    data = json.decode(body, {}) if trimet_data.status_code == 200 and body and len(body) <= 256 * 1024 else {}
+    result = data.get("resultSet", {}) if type(data) == "dict" else {}
+    locations = result.get("location", []) if type(result) == "dict" else []
+    arrivals = result.get("arrival", []) if type(result) == "dict" else []
+    if type(locations) == "list" and locations and type(locations[0]) == "dict" and type(arrivals) == "list":
+        desc = locations[0].get("desc", "")
+        direction = locations[0].get("dir", "")
+        if type(desc) != "string" or type(direction) != "string":
+            return error_frame("Stop unavailable")
+        location_name = "%s - %s" % (desc[:100], direction[:40])
 
         stop_rows.append(
             render.Row(
@@ -42,11 +51,12 @@ def main(config):
             ),
         )
 
-        if (len(trimet_data.json()["resultSet"]["arrival"]) > 0):
-            stop_rows.append(add_stop_row(trimet_data.json()["resultSet"]["arrival"][0]))
-
-            if (len(trimet_data.json()["resultSet"]["arrival"]) > 1):
-                stop_rows.append(add_stop_row(trimet_data.json()["resultSet"]["arrival"][1]))
+        for arrival in arrivals[:2]:
+            row = add_stop_row(arrival)
+            if row != None:
+                stop_rows.append(row)
+    else:
+        return error_frame("Stop unavailable")
 
     return render.Root(
         child = render.Row(
@@ -65,9 +75,13 @@ def main(config):
 def add_stop_row(row):
     # trimet sends data in milliseconds since epoch, convert to seconds
     # estimated time is more accurate than scheduled time
-    route = str(int(row["route"]))
-
-    arrival_in_minutes = calculate_arrival_time_in_minutes(time.from_timestamp(int(row["estimated" if ("estimated" in row) else "scheduled"] * 0.001)))
+    if type(row) != "dict" or type(row.get("route")) not in ["int", "float"]:
+        return None
+    timestamp = row.get("estimated") if type(row.get("estimated")) in ["int", "float"] else row.get("scheduled")
+    if type(timestamp) not in ["int", "float"] or timestamp <= 0:
+        return None
+    route = str(int(row["route"]))[:8]
+    arrival_in_minutes = calculate_arrival_time_in_minutes(time.from_timestamp(int(timestamp * 0.001)))
 
     return render.Row(
         children = [
@@ -112,6 +126,7 @@ def get_schema():
                 name = "Trimet APP ID",
                 desc = "Register here: https://developer.trimet.org/appid/registration/",
                 icon = "user",
+                secret = True,
             ),
             schema.Text(
                 id = "loc_id",
@@ -121,3 +136,6 @@ def get_schema():
             ),
         ],
     )
+
+def error_frame(message):
+    return render.Root(child = render.WrappedText(content = message, width = 64, color = "#f00"))

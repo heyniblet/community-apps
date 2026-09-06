@@ -2,7 +2,7 @@
 id: footballtable
 name: FootballTable
 summary: Football league standings
-desc: Displays league tables for various football leagues.
+desc: Displays league tables for various football leagues using your football-data.org API key.
 author: plumbob86
 fileName: footballtable.star
 packageName: footballtable

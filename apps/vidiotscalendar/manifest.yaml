@@ -6,9 +6,8 @@ desc: Movie showtimes for the next 7 days at Vidiots in Los Angeles, CA.
 author: Buzz Andersen
 fileName: vidiots_calendar.star
 packageName: vidiotscalendar
-recommendedInterval: 60
 broken: true
-brokenReason: Website structure changed or API endpoint removed
+recommendedInterval: 60
 category: utilities
 tags:
   - media

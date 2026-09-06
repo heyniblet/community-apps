@@ -297,40 +297,56 @@ DEFAULT_LOCATION = """
 
 CACHE_TIMEOUT = 60  # will display inaccurate on-time performance if not 60 seconds.
 
+def error_screen(message):
+    return render.Root(
+        child = render.Column(
+            expanded = True,
+            main_align = "center",
+            children = [render.Text(message, color = "#ccc", font = "tom-thumb")],
+        ),
+    )
+
 def main(config):
     widgetMode = config.bool("$widget")
     config_location = config.get("location", DEFAULT_LOCATION)
-    location = json.decode(config_location)
-    timezone = location["timezone"]
+    location = json.decode(config_location, None)
+    timezone = location.get("timezone", "America/New_York") if type(location) == "dict" else "America/New_York"
     station_id = config.str("station_id", DEFAULT_STATION_ID)
     end_station_id = config.str("end_station_id", DEFAULT_END_STATION_ID)
-    print("Calling LIRR API.")
+    if station_id not in STATIONS:
+        station_id = DEFAULT_STATION_ID
+    if end_station_id not in STATIONS:
+        end_station_id = DEFAULT_END_STATION_ID
     rep = http.get(
         "%s" % API_ENDPOINT + "/arrivals/" + station_id,
         headers = {
-            "authority": "backend-unified.mylirr.org",
             "accept": "application/json, text/plain, */*",
             "accept-language": "en-US,en;q=0.9",
             "accept-version": "3.0",
+            "user-agent": "Niblet/1.0 (+https://heyniblet.com)",
         },
         ttl_seconds = CACHE_TIMEOUT,
     )
-    arrivals = rep.json()
+    if rep.status_code != 200:
+        return error_screen("TrainTime unavailable")
+    arrivals = json.decode(rep.body(), None)
+    if type(arrivals) != "dict" or type(arrivals.get("arrivals")) != "list":
+        return error_screen("No train data")
 
     count = 0
     display = []
 
-    #print(arrivals)
-
     for arrival in arrivals["arrivals"]:
-        #print(arrival["stops"])
+        if type(arrival) != "dict" or type(arrival.get("stops")) != "list":
+            continue
+        stops = arrival["stops"]
         if count < 4:
             if (STATIONS[station_id]["railroad"] == "LIRR"):
                 # Long Island Rail Road uses a different format for their arrivals.
-                if (end_station_id in arrival["stops"] and station_id not in arrival["stops"]):
+                if (end_station_id in stops and station_id not in stops):
                     display.append(arrival)
                     count += 1
-            elif (station_id in arrival["stops"] and end_station_id in arrival["stops"]) and arrival["stops"].index(station_id) < arrival["stops"].index(end_station_id):
+            elif (station_id in stops and end_station_id in stops) and stops.index(station_id) < stops.index(end_station_id):
                 display.append(arrival)
                 count += 1
 
@@ -358,27 +374,33 @@ def main(config):
         render.Box(
             width = 64,
             height = 1,
-            color = LINE_COLORS[STATIONS[station_id]["branch"]],
+            color = LINE_COLORS.get(STATIONS[station_id]["branch"], "#4d5357"),
         ),
         direction_text,
         render.Box(
             width = 64,
             height = 1,
-            color = LINE_COLORS[STATIONS[station_id]["branch"]],
+            color = LINE_COLORS.get(STATIONS[station_id]["branch"], "#4d5357"),
         ),
     ]
-    print("Trains: %d" % count)
     if count > 0:
         for arrival in display:
             late = False
             late_seconds = 0
 
-            if "otp" in arrival["status"] and arrival["status"]["otp"] < -60:
+            status = arrival.get("status") if type(arrival.get("status")) == "dict" else {}
+            otp = status.get("otp", 0)
+            if type(otp) in ["int", "float"] and otp < -60:
                 late = True
-                late_seconds = abs(arrival["status"]["otp"])
-            children.append(render.Text("%s" %
-                                        time.from_timestamp(int(arrival["time"])).in_location(timezone).format("3:04pm") + " " +
-                                        ((str(int(time.parse_duration(str(late_seconds) + "s").minutes)) + "m Late") if late else "On Time"), color = ("#dc143c" if late else "#ccc"), font = "tom-thumb"))
+                late_seconds = abs(otp)
+            departure = arrival.get("time")
+            if type(departure) not in ["int", "float"]:
+                continue
+            children.append(render.Text(
+                "%s" % time.from_timestamp(int(departure)).in_location(timezone).format("3:04pm") + " " + ((str(int(float(late_seconds) / 60)) + "m Late") if late else "On Time"),
+                color = ("#dc143c" if late else "#ccc"),
+                font = "tom-thumb",
+            ))
     else:
         children.append(render.Text("No trains", color = "#ccc", font = "6x13"))
         children.append(render.Text(" found.", color = "#ccc", font = "6x13"))

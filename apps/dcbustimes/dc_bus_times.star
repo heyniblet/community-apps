@@ -1,500 +1,106 @@
 """
 Applet: DC Bus Times
 Summary: DC (WMATA) Bus Arrival Times
-Description: Displays the predicted arrival times for next buses at specified DC bus stop(s).
+Description: Displays the predicted arrival times for next buses at specified DC Metro bus stops.
 Author: Steven Pressnall
-Version: 2.0 - Add option to show bus route details (Show Details)
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 NEXTBUS_URL = "https://api.wmata.com/NextBusService.svc/json/jPredictions"
 DEFAULT_STOPID1 = "1001155"
-DEFAULT_STOPID2 = ""
 
-def main(config):
-    numPredictions = 0
-    numPredictions2 = 0
-    iMinutes = [0, 0, 0, 0, 0, 0, 0, 0]
-
-    apiKey = config.get("apiKey")
-
-    if not apiKey:
-        return render.Root(
-            child = render.WrappedText(
-                content = "Please configure API Key",
-                color = "#f00",
-            ),
-        )
-
-    Bus = [render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    )]
-
-    Details = [render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    ), render.Row(
-        children = [
-            render.Text(""),
-        ],
-    )]
-
-    Divider = render.Row(
-        children = [
-            render.Box(height = 1, width = 64, color = "#a0d"),
-        ],
+def render_message(message):
+    return render.Root(
+        child = render.WrappedText(content = message, width = 64, align = "center", color = "#ff0"),
     )
 
-    ShowDetails = config.bool("DetailMode", False)
+def valid_stop_id(stop_id):
+    return type(stop_id) == "string" and len(stop_id) == 7 and stop_id.isdigit()
 
-    StopID1 = config.get("StopID_1", DEFAULT_STOPID1)
-    if len(StopID1) < 7:
-        StopID1 = DEFAULT_STOPID1
+def get_predictions(stop_id, api_key, color):
+    response = http.get(NEXTBUS_URL, params = {"StopID": stop_id}, headers = {"api_key": api_key})
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return None
+    payload = json.decode(response.body(), None)
+    predictions = payload.get("Predictions") if type(payload) == "dict" else None
+    if type(predictions) != "list":
+        return None
 
-    objPredictions = GetTimes1(StopID1, apiKey)
+    result = []
+    for prediction in predictions[:50]:
+        if type(prediction) != "dict":
+            continue
+        route = prediction.get("RouteID")
+        direction = prediction.get("DirectionText")
+        minutes = prediction.get("Minutes")
+        if type(route) != "string" or not route or type(direction) != "string" or type(minutes) != "int" or minutes < 0 or minutes > 1440:
+            continue
+        result.append({
+            "route": route[:16],
+            "direction": direction[:160],
+            "minutes": minutes,
+            "color": color,
+        })
+        if len(result) == 4:
+            break
+    return result
 
-    numPredictions = min(len(objPredictions["Predictions"]), 4)
-    if numPredictions == 0:
-        return render.Root(
-            delay = 100,
-            child = render.Marquee(
-                scroll_direction = "horizontal",
-                width = 64,
-                align = "end",
-                offset_start = 32,
-                offset_end = 64,
-                child = render.Text("No predictions available", font = "5x8", color = "#ff0"),
-            ),
-        )
+def main(config):
+    api_key = config.get("apiKey")
+    if type(api_key) != "string" or not api_key:
+        return render_message("Configure WMATA key")
+    if len(api_key) > 512 or "\r" in api_key or "\n" in api_key:
+        return render_message("Invalid WMATA key")
 
-    for i in range(0, numPredictions):
-        iMinutes[i] = objPredictions["Predictions"][i]["Minutes"]
-        Bus[i] = render.Row(
+    stop_id_1 = config.get("StopID_1") or DEFAULT_STOPID1
+    stop_id_2 = config.get("StopID_2") or ""
+    if not valid_stop_id(stop_id_1) or (stop_id_2 and not valid_stop_id(stop_id_2)):
+        return render_message("Use a 7-digit stop ID")
+
+    predictions = get_predictions(stop_id_1, api_key, "#0f0")
+    if predictions == None:
+        return render_message("WMATA unavailable")
+    if stop_id_2:
+        second = get_predictions(stop_id_2, api_key, "#f00")
+        if second == None:
+            return render_message("WMATA unavailable")
+        predictions.extend(second)
+    if not predictions:
+        return render_message("No predictions available")
+
+    show_details = config.bool("DetailMode", False)
+    children = []
+    divider = render.Box(height = 1, width = 64, color = "#a0d")
+    for prediction in predictions:
+        if show_details:
+            children.append(divider)
+        children.append(render.Row(
             children = [
-                render.Text("%s " % objPredictions["Predictions"][i]["RouteID"], font = "5x8", color = "#0f0"),
-                render.Text("%d min" % iMinutes[i], font = "5x8", color = "#ff0"),
+                render.Text(prediction["route"] + " ", font = "5x8", color = prediction["color"]),
+                render.Text("%d min" % prediction["minutes"], font = "5x8", color = "#ff0"),
             ],
-        )
-        Details[i] = render.Row(
-            children = [
-                render.WrappedText("%s " % objPredictions["Predictions"][i]["DirectionText"], font = "tom-thumb", color = "#0ff", linespacing = 0),
-            ],
-        )
+        ))
+        if show_details:
+            children.append(render.WrappedText(content = prediction["direction"], width = 64, font = "tom-thumb", color = "#0ff", linespacing = 0))
+    if show_details:
+        children.append(divider)
 
-    StopID2 = config.get("StopID_2", DEFAULT_STOPID2)
-    if len(StopID2) == 7:
-        objPredictions2 = GetTimes1(StopID2, apiKey)
-        numPredictions2 = min(len(objPredictions2["Predictions"]), 4)
-
-        for i in range(0, numPredictions2):
-            iMinutes[i + numPredictions] = objPredictions2["Predictions"][i]["Minutes"]
-            Bus[i + numPredictions] = render.Row(
-                children = [
-                    render.Text("%s " % objPredictions2["Predictions"][i]["RouteID"], font = "5x8", color = "#f00"),
-                    render.Text("%d min" % iMinutes[i + numPredictions], font = "5x8", color = "#ff0"),
-                ],
-            )
-            Details[i + numPredictions] = render.Row(
-                children = [
-                    render.WrappedText("%s " % objPredictions2["Predictions"][i]["DirectionText"], font = "tom-thumb", color = "#0ff", linespacing = 0),
-                ],
-            )
-
-    numPredictions += numPredictions2
-    if numPredictions <= 3:
-        if ShowDetails == True:
-            return render.Root(
-                delay = 200,
-                show_full_animation = True,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 3,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Divider,
-                            Bus[0],
-                            Details[0],
-                            Divider,
-                            Bus[1],
-                            Details[1],
-                            Divider,
-                            Bus[2],
-                            Details[2],
-                            Divider,
-                        ],
-                    ),
-                ),
-            )
-        else:
-            return render.Root(
-                delay = 500,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 0,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Bus[0],
-                            Bus[1],
-                            Bus[2],
-                        ],
-                    ),
-                ),
-            )
-    elif numPredictions == 4:
-        if ShowDetails == True:
-            return render.Root(
-                delay = 200,
-                show_full_animation = True,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 3,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Divider,
-                            Bus[0],
-                            Details[0],
-                            Divider,
-                            Bus[1],
-                            Details[1],
-                            Divider,
-                            Bus[2],
-                            Details[2],
-                            Divider,
-                            Bus[3],
-                            Details[3],
-                            Divider,
-                        ],
-                    ),
-                ),
-            )
-        else:
-            return render.Root(
-                delay = 500,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 0,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Bus[0],
-                            Bus[1],
-                            Bus[2],
-                            Bus[3],
-                        ],
-                    ),
-                ),
-            )
-    elif numPredictions == 5:
-        if ShowDetails == True:
-            return render.Root(
-                delay = 200,
-                show_full_animation = True,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 3,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Divider,
-                            Bus[0],
-                            Details[0],
-                            Divider,
-                            Bus[1],
-                            Details[1],
-                            Divider,
-                            Bus[2],
-                            Details[2],
-                            Divider,
-                            Bus[3],
-                            Details[3],
-                            Divider,
-                            Bus[4],
-                            Details[4],
-                            Divider,
-                        ],
-                    ),
-                ),
-            )
-        else:
-            return render.Root(
-                delay = 500,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 2,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Bus[0],
-                            Bus[1],
-                            Bus[2],
-                            Bus[3],
-                            Bus[4],
-                        ],
-                    ),
-                ),
-            )
-    elif numPredictions == 6:
-        if ShowDetails == True:
-            return render.Root(
-                delay = 200,
-                show_full_animation = True,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 3,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Divider,
-                            Bus[0],
-                            Details[0],
-                            Divider,
-                            Bus[1],
-                            Details[1],
-                            Divider,
-                            Bus[2],
-                            Details[2],
-                            Divider,
-                            Bus[3],
-                            Details[3],
-                            Divider,
-                            Bus[4],
-                            Details[4],
-                            Divider,
-                            Bus[5],
-                            Details[5],
-                            Divider,
-                        ],
-                    ),
-                ),
-            )
-        else:
-            return render.Root(
-                delay = 500,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 2,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Bus[0],
-                            Bus[1],
-                            Bus[2],
-                            Bus[3],
-                            Bus[4],
-                            Bus[5],
-                        ],
-                    ),
-                ),
-            )
-    elif numPredictions == 7:
-        if ShowDetails == True:
-            return render.Root(
-                delay = 200,
-                show_full_animation = True,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 3,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Divider,
-                            Bus[0],
-                            Details[0],
-                            Divider,
-                            Bus[1],
-                            Details[1],
-                            Divider,
-                            Bus[2],
-                            Details[2],
-                            Divider,
-                            Bus[3],
-                            Details[3],
-                            Divider,
-                            Bus[4],
-                            Details[4],
-                            Divider,
-                            Bus[5],
-                            Details[5],
-                            Divider,
-                            Bus[6],
-                            Details[6],
-                            Divider,
-                        ],
-                    ),
-                ),
-            )
-        else:
-            return render.Root(
-                delay = 500,
-                child = render.Marquee(
-                    scroll_direction = "vertical",
-                    height = 32,
-                    align = "start",
-                    offset_start = 2,
-                    offset_end = 32,
-                    child = render.Column(
-                        children = [
-                            Bus[0],
-                            Bus[1],
-                            Bus[2],
-                            Bus[3],
-                            Bus[4],
-                            Bus[5],
-                            Bus[6],
-                        ],
-                    ),
-                ),
-            )
-    elif ShowDetails == True:
-        return render.Root(
-            delay = 200,
-            show_full_animation = True,
-            child = render.Marquee(
-                scroll_direction = "vertical",
-                height = 32,
-                align = "start",
-                offset_start = 3,
-                offset_end = 32,
-                child = render.Column(
-                    children = [
-                        Divider,
-                        Bus[0],
-                        Details[0],
-                        Divider,
-                        Bus[1],
-                        Details[1],
-                        Divider,
-                        Bus[2],
-                        Details[2],
-                        Divider,
-                        Bus[3],
-                        Details[3],
-                        Divider,
-                        Bus[4],
-                        Details[4],
-                        Divider,
-                        Bus[5],
-                        Details[5],
-                        Divider,
-                        Bus[6],
-                        Details[6],
-                        Divider,
-                        Bus[7],
-                        Details[7],
-                        Divider,
-                    ],
-                ),
-            ),
-        )
-    else:
-        return render.Root(
-            delay = 500,
-            child = render.Marquee(
-                scroll_direction = "vertical",
-                height = 32,
-                align = "start",
-                offset_start = 2,
-                offset_end = 32,
-                child = render.Column(
-                    children = [
-                        Bus[0],
-                        Bus[1],
-                        Bus[2],
-                        Bus[3],
-                        Bus[4],
-                        Bus[5],
-                        Bus[6],
-                        Bus[7],
-                    ],
-                ),
-            ),
-        )
-
-def GetTimes1(stopID, apiKey):
-    rep = http.get(NEXTBUS_URL, params = {"StopID": stopID}, headers = {"api_key": apiKey}, ttl_seconds = 20)
-    if rep.status_code != 200:
-        fail("NextBus request failed with status ", rep.status_code)
-
-    return rep.json()
+    return render.Root(
+        delay = 200 if show_details else 500,
+        show_full_animation = show_details,
+        child = render.Marquee(
+            scroll_direction = "vertical",
+            height = 32,
+            align = "start",
+            offset_start = 3 if show_details else 2,
+            offset_end = 32,
+            child = render.Column(children = children),
+        ),
+    )
 
 def get_schema():
     return schema.Schema(

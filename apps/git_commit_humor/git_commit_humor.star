@@ -16,7 +16,11 @@ colors = ["#099", "#65d0e6", "#f00", "#0f0", "#00f"]
 def main():
     # Fetch commit message with caching for 1 hour
     resp = http.get("https://whatthecommit.com/index.txt", ttl_seconds = 3600)
+    if resp.status_code != 200:
+        fail("Commit message request failed with status {}".format(resp.status_code))
     commit_message = resp.body().strip()
+    if commit_message == "":
+        fail("Commit message response was empty")
 
     # Randomly select a color
     selected_color = colors[random.number(0, len(colors) - 1)]

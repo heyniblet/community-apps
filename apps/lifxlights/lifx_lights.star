@@ -42,8 +42,10 @@ def main(config):
     blink = config.bool("blink", DEFAULT_BLINK)
 
     # if there's no token or light id, render the demo
-    if token == None or light_id == None:
+    if not token or not light_id:
         return render_demo_setup()
+    if len(token) > 4096 or len(light_id) > 128 or not all([char.isalnum() or char in "_-" for char in light_id.elems()]):
+        return render_error("Invalid configuration")
 
     # render error message when no lights are found during config
     if light_id == "nolights":
@@ -60,16 +62,27 @@ def main(config):
 
     # render error if API fails
     if rep.status_code != 200:
-        error = rep.json()["error"] or "Error calling LIFX API"
+        data = rep.json()
+        error = str(data.get("error") or "Error calling LIFX API")[:120] if type(data) == "dict" else "Error calling LIFX API"
         return render_error(error, get_error_message_for_status_code(rep.status_code))
 
-    light = rep.json()[0]
+    lights = rep.json()
+    if type(lights) != "list" or not lights or type(lights[0]) != "dict":
+        return render_error("Invalid LIFX response")
+    light = lights[0]
 
-    hue = light["color"]["hue"]
-    saturation = light["color"]["saturation"]
-    brightness = light["brightness"]
+    light_color = light.get("color")
+    if type(light_color) != "dict":
+        return render_error("Invalid LIFX color")
+    hue = light_color.get("hue")
+    saturation = light_color.get("saturation")
+    brightness = light.get("brightness")
+    if type(hue) not in ["int", "float"] or type(saturation) not in ["int", "float"] or type(brightness) not in ["int", "float"]:
+        return render_error("Invalid LIFX values")
+    saturation = max(0, min(saturation, 1))
+    brightness = max(0, min(brightness, 1))
     brightness_percent = int(brightness * 100)
-    power = light["power"].upper()
+    power = str(light.get("power") or "off").upper()
 
     rgb = hsb_to_rgb(hue, saturation, brightness)
 
@@ -83,7 +96,7 @@ def main(config):
                     render.Marquee(
                         width = 60,
                         align = "center",
-                        child = render.Padding(pad = (0, 1, 0, 0), child = render.Text(light["label"], font = "5x8")),
+                        child = render.Padding(pad = (0, 1, 0, 0), child = render.Text(str(light.get("label") or "LIFX Light")[:100], font = "5x8")),
                     ),
                     render.Row(
                         expanded = False,
@@ -120,83 +133,21 @@ def get_schema():
                 icon = "hashtag",
                 secret = True,
             ),
-            schema.Generated(
+            schema.Text(
                 id = "light_id",
-                source = "token",
-                handler = select_light,
+                name = "Light ID",
+                desc = "Light ID from the LIFX app or API.",
+                icon = "lightbulb",
+            ),
+            schema.Toggle(
+                id = "blink",
+                name = "Blink color",
+                desc = "Blink color when light is on.",
+                icon = "circleDot",
+                default = DEFAULT_BLINK,
             ),
         ],
     )
-
-def select_light(token):
-    """
-    Used to list the user's lights from the LIFX API after the
-    personal access token has been informed, and then return a
-    dropdown to let the user select the light to monitor.
-
-        Parameters:
-            token (string): The persona access token.
-
-        Returns:
-            schema (schema): A dropdown schema with the light options.
-    """
-
-    print("Listing available lights from LIFX API")
-    rep = http.get(LIFX_URL + "/lights/all", headers = {
-        "Authorization": "Bearer " + token,
-    })
-
-    # handle API error returning a message on the dropdown :(
-    if rep.status_code != 200:
-        return [
-            schema.Dropdown(
-                id = "light_id",
-                name = "Light",
-                desc = "Select your light.",
-                icon = "lightbulb",
-                options = [schema.Option(display = "Error retrieving lights", value = "listlighterror")],
-                default = "lighterror",
-            ),
-        ]
-
-    # get API response
-    lights = rep.json()
-    print("Retrieved %d lights" % len(lights))
-
-    options = []
-    default = ""
-
-    # loop through lights to build the dropdown options
-    for light in lights:
-        if default == "":
-            default = light["id"]
-
-        options.append(
-            schema.Option(display = light["label"], value = light["id"]),
-        )
-
-    # if there were no lights, insert a dummy option in the dropdown
-    if len(options) == 0:
-        options = [schema.Option(display = "No lights found", value = "nolights")]
-        default = "nolights"
-
-    return [
-        schema.Dropdown(
-            id = "light_id",
-            name = "Light",
-            desc = "Select your light.",
-            icon = "lightbulb",
-            options = options,
-            default = default,
-        ),
-        schema.Toggle(
-            id = "blink",
-            name = "Blink color",
-            desc = "Blink color when light is on.",
-            icon = "circleDot",
-            default = DEFAULT_BLINK,
-        ),
-    ]
 
 def render_demo_setup():
     """

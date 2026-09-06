@@ -5,51 +5,55 @@ Description: Shows random pictures of dogs from dog.ceo.
 Author: mattmcquinn
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/default_image.jpg", DEFAULT_IMAGE_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
 
 DEFAULT_IMAGE = DEFAULT_IMAGE_ASSET.readall()
+API_PREFIX = "https://dog.ceo/api/breed/"
+IMAGE_PREFIX = "https://images.dog.ceo/"
+MAX_JSON_BYTES = 16 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+BREED_ALIASES = {"african": "african/wild", "germanshepherd": "german/shepherd"}
 
 def main(config):
     image = DEFAULT_IMAGE
-    breed = config.get("breed")
+    breed = config.str("breed", "dachshund").strip().lower()
+    breed = BREED_ALIASES.get(breed, breed)
     random = config.bool("random", True)
     if random:
         url = "https://dog.ceo/api/breeds/image/random"
+    elif not valid_breed(breed):
+        return render.Root(child = render.Image(src = image, width = 64, height = 32))
     else:
-        url = "https://dog.ceo/api/breed/" + breed + "/images/random"
+        url = API_PREFIX + breed + "/images/random"
 
     # cache the request for a new image for four minutes
-    rep = http.get(url, ttl_seconds = 4 * 60)
-    if rep.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Not fetching new image url.")
-    else:
-        print("Miss! Fetching new image url.")
-    if rep.status_code == 200:
-        response = rep.json()
-        image_url = response["message"]
-        print(image_url)
-
+    rep = http.get(url, ttl_seconds = 5 * 60)
+    body = rep.body()
+    response = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_JSON_BYTES else None
+    image_url = response.get("message") if type(response) == "dict" and response.get("status") == "success" else None
+    if type(image_url) == "string" and image_url.startswith(IMAGE_PREFIX):
         # cache the actual image response for 24 hours
         # image data should not change frequently (if ever) so this TTL can be very long
         image_rep = http.get(image_url, ttl_seconds = 60 * 60 * 24)
-        if image_rep.headers.get("Tidbyt-Cache-Status") == "HIT":
-            print("Hit! Fetching image from cache.")
-        else:
-            print("Miss! Fetching image data.")
-        if image_rep.status_code == 200:
-            image = image_rep.body()
+        image_body = image_rep.body()
+        if image_rep.status_code == 200 and image_body and len(image_body) <= MAX_IMAGE_BYTES:
+            image = image_body
 
     return render.Root(
         child = render.Image(src = image, width = 64, height = 32),
     )
 
+def valid_breed(value):
+    return len(value) > 0 and len(value) <= 64 and all([char.isalnum() or char in "-/" for char in value.codepoints()])
+
 def get_schema():
     options = [
         schema.Option(display = "Affenpinscher", value = "affenpinscher"),
-        schema.Option(display = "African", value = "african"),
+        schema.Option(display = "African Wild", value = "african/wild"),
         schema.Option(display = "Airedale", value = "airedale"),
         schema.Option(display = "Akita", value = "akita"),
         schema.Option(display = "Appenzeller", value = "appenzeller"),
@@ -89,7 +93,7 @@ def get_schema():
         schema.Option(display = "Eskimo", value = "eskimo"),
         schema.Option(display = "Lapphund Finnish", value = "finnish/lapphund"),
         schema.Option(display = "Bichon Frise", value = "frise/bichon"),
-        schema.Option(display = "Germanshepherd", value = "germanshepherd"),
+        schema.Option(display = "German Shepherd", value = "german/shepherd"),
         schema.Option(display = "Italian Greyhound", value = "greyhound/italian"),
         schema.Option(display = "Groenendael", value = "groenendael"),
         schema.Option(display = "Havanese", value = "havanese"),

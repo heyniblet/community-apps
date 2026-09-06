@@ -6,7 +6,7 @@ desc: Share a custom status with coworkers.
 author: Brian Bell
 fileName: custom_status.star
 packageName: customstatus
-recommendedInterval: 5
+recommendedInterval: 0
 category: utilities
 tags:
   - tracking

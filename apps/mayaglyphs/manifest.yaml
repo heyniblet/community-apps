@@ -6,7 +6,6 @@ desc: Displays random Maya glyphs.
 author: rs7q5
 fileName: mayaglyphs.star
 packageName: mayaglyphs
-broken: true
 category: art
 tags:
   - maya

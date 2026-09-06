@@ -8,8 +8,6 @@ LOGO = LOGO_ASSET.readall()
 
 # https://www.base64encoder.io/image-to-base64-converter/
 
-TWELVE_HOURS = 43200
-
 # This is used whenever an error or invalid data appears.
 EMPTY_DATA = {
     "total_games": "0 gs",
@@ -27,16 +25,20 @@ def winning_team(replay):
 def which_team(replay, name):
     """Return which team the uploader was on."""
     for team in ["orange", "blue"]:
-        players = replay[team]["players"]
+        players = replay[team].get("players", [])
+        if type(players) != "list":
+            continue
         for p in players:
-            if p["name"] == name:
+            if type(p) == "dict" and p.get("name") == name:
                 return team
     return None
 
 def win_percentage(replays, name):
     wins = 0
     total = 0
-    for replay in replays["list"]:
+    for replay in replays.get("list", [])[:200]:
+        if type(replay) != "dict" or type(replay.get("orange")) != "dict" or type(replay.get("blue")) != "dict":
+            continue
         winner = winning_team(replay)
         color = which_team(replay, name)
         if color == None:
@@ -52,8 +54,9 @@ def win_percentage(replays, name):
 
 def total_duration(replays):
     duration = 0
-    for replay in replays["list"]:
-        duration += replay["duration"]
+    for replay in replays.get("list", [])[:200]:
+        if type(replay) == "dict" and type(replay.get("duration")) in ["int", "float"]:
+            duration += replay["duration"]
 
     # Seconds to hours.
     return duration / 60 / 60
@@ -76,13 +79,14 @@ def get_data(tag, token, playlist, since):
         API_ENDPOINT,
         headers = {"Authorization": token},
         params = params,
-        ttl_seconds = TWELVE_HOURS,
     )
 
     if res.status_code != 200:
-        fail("Error calling Ballchasing API")
+        return EMPTY_DATA
 
     replays = res.json()
+    if type(replays) != "dict" or type(replays.get("list")) != "list":
+        return EMPTY_DATA
 
     total_games, win_percent = win_percentage(replays, tag)
     total_time = total_duration(replays)
@@ -221,6 +225,4 @@ def main(config):
         return render_data(EMPTY_DATA)
 
     data = get_data(tag, token, playlist, since)
-    print(data)
-
     return render_data(data)

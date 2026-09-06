@@ -20,6 +20,10 @@ START_DATES = [
     1722488400,  #2024
     1753938000,  #2025
     1785387600,  #2026
+    1817442000,  #2027
+    1848891600,  #2028
+    1880341200,  #2029
+    1911790800,  #2030
 ]
 
 def main():
@@ -29,13 +33,15 @@ def main():
             GENCON_START = time.from_timestamp(start_date)
             break
 
-    DIFF = GENCON_START - NOW
-    DAYS = math.ceil(DIFF.hours / 24)
-
-    if DAYS <= 360:
-        OUTPUT = render.WrappedText("{} more {}".format(DAYS, humanize.plural_word(DAYS, "day!", "days")), align = "center")
+    if GENCON_START == None:
+        OUTPUT = render.WrappedText("Dates TBD", align = "center")
     else:
-        OUTPUT = render.WrappedText("Go now!", align = "center")
+        DIFF = GENCON_START - NOW
+        DAYS = math.ceil(DIFF.hours / 24)
+        if DAYS <= 360:
+            OUTPUT = render.WrappedText("{} more {}".format(DAYS, humanize.plural_word(DAYS, "day!", "days")), align = "center")
+        else:
+            OUTPUT = render.WrappedText("Go now!", align = "center")
 
     return render.Root(
         child = render.Row(

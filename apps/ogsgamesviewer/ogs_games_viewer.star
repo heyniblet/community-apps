@@ -13,6 +13,8 @@ load("schema.star", "schema")
 NUM_OF_GAMES = 5
 FRAMES = 50
 SIZES = [9, 13, 19]
+MAX_RESPONSE_BYTES = 512 * 1024
+OGS_HEADERS = {"User-Agent": "Niblet/1.0 (heyniblet.com)"}
 FAMOUS_GAMES = [
     {
         "state": [[0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 2, 0, 2, 0, 2, 2, 1, 0, 0], [0, 0, 2, 2, 0, 1, 0, 0, 2, 1, 1, 2, 2, 0, 2, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0], [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 1, 1, 1], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 1], [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 2, 2, 1, 1, 1, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 1, 0, 1, 2, 0], [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 1, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 2, 1, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 1, 2, 2, 0], [0, 0, 2, 0, 0, 0, 0, 0, 0, 1, 0, 1, 2, 0, 2, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 1, 2, 1, 2, 1, 2, 0, 0], [0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 2, 2, 1, 2, 2, 0, 0], [0, 0, 0, 0, 0, 1, 2, 1, 2, 0, 2, 2, 1, 1, 1, 1, 2, 2, 0], [0, 0, 0, 0, 0, 0, 1, 2, 0, 2, 2, 0, 2, 1, 1, 0, 1, 2, 0], [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 0, 1, 0, 1, 0, 1, 0]],
@@ -56,76 +58,105 @@ FAMOUS_GAMES = [
 
 # Query the API for the ID of a given username
 def get_player_id_by_username(username):
-    PLAYER_ID_URL = "https://online-go.com/api/v1/players?username={}".format(username)
+    if len(username) > 40:
+        return False
     req = http.get(
-        url = PLAYER_ID_URL,
+        url = "https://online-go.com/api/v1/players",
+        headers = OGS_HEADERS,
+        params = {"username": username},
         ttl_seconds = 3600,
     )
-
-    if req.status_code != 200:
-        fail("OGS request failed with status %d", req.status_code)
-
-    if len(req.json()["results"]) > 0:
-        player_info = req.json()["results"][0]
-        player_id = int(player_info["id"])
+    data = response_json(req)
+    results = data.get("results", []) if type(data) == "dict" else []
+    if results and type(results[0]) == "dict" and str(results[0].get("id", "")).isdigit():
+        player_id = int(results[0]["id"])
         return player_id
-    else:
-        return False
+    return False
 
 # Get all games for a given player ID
 def get_player_games(player_id):
     games_url = "https://online-go.com/api/v1/players/{}/games?ended__isnull=true&ordering=-ended&page_size={}".format(player_id, NUM_OF_GAMES)
     req = http.get(
         url = games_url,
+        headers = OGS_HEADERS,
         ttl_seconds = 240,
     )
-    if req.status_code != 200:
-        fail("OGS request failed with status %d", req.status_code)
-
-    return req.json()["results"]
+    data = response_json(req)
+    return data.get("results", []) if type(data) == "dict" and type(data.get("results")) == "list" else []
 
 def get_game_state(game_id):
     state_url = "https://online-go.com/termination-api/game/{}/state".format(game_id)
     state_req = http.get(
         url = state_url,
+        headers = OGS_HEADERS,
         ttl_seconds = 240,
     )
-    if state_req.status_code != 200:
-        fail("OGS request failed with status %d", state_req.status_code)
-    board_state = state_req.json()
-    return board_state["board"]
+    board_state = response_json(state_req)
+    return board_state.get("board") if type(board_state) == "dict" else None
 
 def get_game_info(game):
-    detail = game["related"]["detail"]
+    related = game.get("related", {}) if type(game) == "dict" else {}
+    detail = related.get("detail", "") if type(related) == "dict" else ""
+    if not detail.startswith("/api/v1/games/"):
+        return None
     game_url = "https://online-go.com{}".format(detail)
     game_req = http.get(
         url = game_url,
+        headers = OGS_HEADERS,
         ttl_seconds = 240,
     )
-    if game_req.status_code != 200:
-        fail("OGS request failed with status %d", game_req.status_code)
-    return game_req.json()
+    return response_json(game_req)
+
+def response_json(response):
+    if response.status_code != 200:
+        return None
+    body = response.body()
+    if not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    return response.json()
 
 # Get the details for each of a player's games
 def get_games_details(games, player_id):
     games_info = []
     for game in games:
         game_json = get_game_info(game)
+        if type(game_json) != "dict" or type(game) != "dict" or not str(game.get("id", "")).isdigit():
+            continue
+        if not str(game_json.get("width", "")).isdigit() or not str(game_json.get("height", "")).isdigit():
+            continue
         game_id = int(game["id"])
         board_state = get_game_state(game_id)
+        if type(board_state) != "list":
+            continue
         width = int(game_json["width"])
         height = int(game_json["height"])
-        if (width != height and
-            width not in SIZES):
+        if width != height or width not in SIZES or len(board_state) != height:
             continue
-        if int(game_json["players"]["black"]["id"]) == player_id:
-            opponent = game_json["players"]["white"]["username"]
+        valid_board = True
+        for row in board_state:
+            if type(row) != "list" or len(row) != width:
+                valid_board = False
+                break
+            for point in row:
+                if point not in [0, 1, 2]:
+                    valid_board = False
+                    break
+        if not valid_board:
+            continue
+        players = game_json.get("players", {})
+        black = players.get("black", {}) if type(players) == "dict" else {}
+        white = players.get("white", {}) if type(players) == "dict" else {}
+        if type(black) != "dict" or type(white) != "dict" or not str(black.get("id", "")).isdigit():
+            continue
+        if type(black.get("username")) != "string" or type(white.get("username")) != "string":
+            continue
+        if int(black["id"]) == player_id:
+            opponent = white["username"]
             opp_color = "w"
         else:
-            opponent = game_json["players"]["black"]["username"]
+            opponent = black["username"]
             opp_color = "b"
         games_info.append({
-            "moves": game_json["gamedata"]["moves"],
             "opponent": opponent,
             "opp_color": opp_color,
             "state": board_state,
@@ -317,7 +348,7 @@ def init_coords():
 #--------------------#
 
 def main(config):
-    username = config.get("username", "")
+    username = config.str("username", "").strip()
 
     # If a username has not been set, show a
     # "Username not found" message
@@ -329,7 +360,7 @@ def main(config):
         player_id = get_player_id_by_username(username)
 
         if player_id == False:
-            games_info = FAMOUS_GAMES
+            games_info = []
         else:
             # Get a list of games and game details from the API
             games = get_player_games(player_id)

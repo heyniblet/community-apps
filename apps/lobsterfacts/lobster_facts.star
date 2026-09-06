@@ -8,7 +8,6 @@ Author: Marc ten Bosch
 load("images/the_icon.png", THE_ICON_ASSET = "file")
 load("random.star", "random")
 load("render.star", "render")
-load("time.star", "time")
 
 THE_ICON = THE_ICON_ASSET.readall()
 
@@ -50,7 +49,6 @@ FACTS = [
 ]
 
 def main():
-
     idx = random.number(0, len(FACTS) - 1)
     current_fact = FACTS[idx]
 

@@ -36,7 +36,8 @@ MIN_DURATION = "10"  # minimum time of visible pass
 
 def main(config):
     api_key = config.get("n2yo_api_key")
-    ttl_time = 5200
+    if not api_key:
+        return render.Root(child = render.Text("API key missing", font = "5x8"))
     display24hour = config.bool("24_hour", DEFAULT_24_HOUR)
     location = json.decode(config.get("location", DEFAULT_LOCATION))
     lat = float(location["lat"])
@@ -45,9 +46,9 @@ def main(config):
 
     url = "https://api.n2yo.com/rest/v1/satellite/visualpasses/%s/%s/%s/%s/%s/%s/&apiKey=%s" % (SAT_ID, lat, lng, ALTITUDE, NUM_DAYS, MIN_DURATION, api_key)
 
-    data = get_data(url, ttl_time)
+    data = get_data(url)
 
-    if "error" in data:
+    if not data or "error" in data or not data.get("passes"):
         return render.Root(
             child = render.WrappedText("API error", align = "center", font = "tb-8", color = "#FF0000"),
         )
@@ -59,7 +60,6 @@ def main(config):
         # Take information only from the first pass
         first_pass_data = filtered_passes[0]
         utc_time_seconds = int(first_pass_data["startUTC"])  # Convert to integer
-        ttl_time = utc_time_seconds - time.now().unix + 2
         start_compass = first_pass_data["startAzCompass"]
         magnitude = first_pass_data["mag"]
 
@@ -106,15 +106,14 @@ def main(config):
         )
     else:
         # No filtered passes found
-        ttl_time = 86400
         return render.Root(
             child = render.WrappedText("No passes found", align = "center", font = "tb-8", color = "#FF0000"),
         )
 
-def get_data(url, ttl_time):
-    res = http.get(url, ttl_seconds = ttl_time)  # cache for 1 hour
+def get_data(url):
+    res = http.get(url)
     if res.status_code != 200:
-        fail("GET %s failed with status %d: %s", url, res.status_code, res.body())
+        return None
     return res.json()
 
 def get_schema():

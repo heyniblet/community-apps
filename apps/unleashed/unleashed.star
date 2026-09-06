@@ -6,13 +6,18 @@ load("time.star", "time")
 LOGO_URL = "https://user-images.githubusercontent.com/10697207/186202043-26947e28-b1cc-459a-8f20-ffcc7fc0c71c.png"
 RSS_URL = "https://dev.unleashedflip.com/rss"
 CACHE_TTL = 300  # 5 minutes
+MAX_RSS_BYTES = 128 * 1024
+MAX_IMAGE_BYTES = 1024 * 1024
+MAX_TEXT_LENGTH = 160
 
 DEFAULT_LOGO_WIDTH = "48"
 DEFAULT_LOGO_HEIGHT = "28"
 
 def main(config):
-    logo_width = int(config.get("logo_width", DEFAULT_LOGO_WIDTH))
-    logo_height = int(config.get("logo_height", DEFAULT_LOGO_HEIGHT))
+    logo_width_value = str(config.get("logo_width", DEFAULT_LOGO_WIDTH))
+    logo_height_value = str(config.get("logo_height", DEFAULT_LOGO_HEIGHT))
+    logo_width = int(logo_width_value) if logo_width_value in [str(i) for i in range(16, 65, 8)] else int(DEFAULT_LOGO_WIDTH)
+    logo_height = int(logo_height_value) if logo_height_value in [str(i) for i in range(10, 33, 2)] else int(DEFAULT_LOGO_HEIGHT)
     text_color = config.get("text_color", "#FFFFFF")
     date_color = config.get("date_color", "#FFB700")
     show_title = config.bool("show_title", True)
@@ -39,10 +44,11 @@ def main(config):
 def get_rss_data():
     resp = http.get(RSS_URL, ttl_seconds = CACHE_TTL)
     if resp.status_code != 200:
-        print("Failed to fetch RSS data")
         return None
 
     data = resp.body()
+    if len(data) > MAX_RSS_BYTES:
+        return None
     items = data.split("<item>")
     if len(items) < 2:
         return None
@@ -50,10 +56,19 @@ def get_rss_data():
     latest_item = items[1]
     title = extract_tag_content(latest_item, "title")
     pub_date = extract_tag_content(latest_item, "pubDate")
+    if not title:
+        content = extract_tag_content(latest_item, "content:encoded")
+        marker = "Build - "
+        start = content.find(marker)
+        if start >= 0:
+            build = content[start + len(marker):].split("<")[0].strip()
+            title = "Build " + build[:32]
+    if not title:
+        title = "Unleashed FW"
 
     rss_data = {
-        "title": title,
-        "pub_date": pub_date,
+        "title": title[:MAX_TEXT_LENGTH],
+        "pub_date": pub_date[:80],
     }
 
     return rss_data
@@ -74,8 +89,11 @@ def render_logo(width, height):
     resp = http.get(LOGO_URL, ttl_seconds = CACHE_TTL)
     if resp.status_code != 200:
         return render.Text("Failed to load logo")
+    body = resp.body()
+    if len(body) > MAX_IMAGE_BYTES:
+        return render.Text("Logo too large")
 
-    return render.Image(src = resp.body(), width = width, height = height)
+    return render.Image(src = body, width = width, height = height)
 
 def render_build_info(rss_data, text_color, date_color, show_title, show_date):
     title = rss_data["title"]

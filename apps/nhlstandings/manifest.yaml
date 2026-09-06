@@ -6,7 +6,7 @@ desc: View NHL standings by division.
 author: LunchBox8484
 fileName: nhl_standings.star
 packageName: nhlstandings
-recommendedInterval: 5
+recommendedInterval: 60
 category: sports
 tags:
   - nhl

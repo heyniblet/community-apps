@@ -5,59 +5,50 @@ Description: Results for the most recent draw of the EuroMillions transnational 
 Author: dinosaursrarr
 """
 
-load("cache.star", "cache")
-load("encoding/csv.star", "csv")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
+load("xpath.star", "xpath")
 
-RESULTS_URL = "https://www.national-lottery.co.uk/results/euromillions/draw-history/csv"
+RESULTS_URL = "https://www.national-lottery.co.uk/results/euromillions/draw-history/xml"
 TIMEZONE = "Europe/Paris"
+MAX_RESPONSE_BYTES = 64 * 1024
 
 WHITE = "#ffffff"
 BLACK = "#000000"
 RED = "#f00000"
 YELLOW = "#fff100"
 
-def parse_time(time_str):
-    return time.parse_time(time_str, "02-Jan-2006", TIMEZONE)
-
-def seconds_until_next_draw(latest_result):
-    # Draws happen at 8.45pm on Tuesday and Friday in Paris so cache until then.
-    last_draw = parse_time(latest_result[0])
-    last_draw_weekday = humanize.day_of_week(last_draw)
-    if last_draw_weekday == 2:
-        next_draw_days = 3
-    elif last_draw_weekday == 5:
-        next_draw_days = 4
-    else:
-        return time.hour // time.second
-    next_draw = last_draw + (((next_draw_days * 24) + 20) * time.hour) + (45 * time.minute)
-    seconds = (next_draw - time.now()) // time.second
-    if seconds < 60:
-        return 60
-    return seconds
-
 def fetch_latest_result():
-    cached = cache.get(RESULTS_URL)
-    if cached:
-        return csv.read_all(cached)[1]
-    resp = http.get(RESULTS_URL)
-    if resp.status_code != 200:
+    resp = http.get(RESULTS_URL, ttl_seconds = 3600)
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return None
-    results = csv.read_all(resp.body())
-
-    cache.set(RESULTS_URL, resp.body(), ttl_seconds = seconds_until_next_draw(results[1]))
-    return results[1]
-
-def parse_result(result):
-    draw_date = parse_time(result[0])
-    balls = [int(b) for b in result[1:6]]
-    lucky_stars = [int(b) for b in result[6:8]]
-    millionaire_maker_codes = result[8].split(",") + result[9].split(",")
+    result = xpath.loads(body)
+    draw_date = result.query("/draw-results/game/draw/draw-date")
+    balls = result.query_all("/draw-results/game/balls[1]/ball")
+    lucky_stars = result.query_all("/draw-results/game/balls[1]/bonus-ball")
+    millionaire_maker_codes = result.query_all("/draw-results/game/raffles/raffle")[:20]
+    if not valid_date(draw_date) or len(balls) != 5 or len(lucky_stars) != 2:
+        return None
+    if not all([valid_number(ball) for ball in balls + lucky_stars]):
+        return None
+    millionaire_maker_codes = [code for code in millionaire_maker_codes if valid_code(code)]
+    draw_date = time.parse_time(draw_date, "2006-01-02", TIMEZONE)
+    balls = [int(ball) for ball in balls]
+    lucky_stars = [int(ball) for ball in lucky_stars]
     return draw_date, balls, lucky_stars, millionaire_maker_codes
+
+def valid_number(value):
+    return type(value) == "string" and value and len(value) <= 2 and value.isdigit()
+
+def valid_date(value):
+    return type(value) == "string" and len(value) == 10 and value[4] == "-" and value[7] == "-" and value.replace("-", "").isdigit()
+
+def valid_code(value):
+    return type(value) == "string" and value and len(value) <= 64 and value.replace(" ", "").isalnum()
 
 def render_ball(number, ball_colour, text_colour):
     return render.Circle(
@@ -71,10 +62,10 @@ def render_ball(number, ball_colour, text_colour):
     )
 
 def main():
-    latest_result = fetch_latest_result()
-    if not latest_result:
+    result = fetch_latest_result()
+    if not result:
         return render.Root(render.Text("Cannot load results"))
-    draw_date, balls, lucky_stars, millionaire_maker_codes = parse_result(latest_result)
+    draw_date, balls, lucky_stars, millionaire_maker_codes = result
 
     return render.Root(
         child = render.Column(

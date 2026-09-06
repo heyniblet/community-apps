@@ -321,7 +321,7 @@ def query(apikey, method, extra = ""):
       JSON object of response or None for failed queries
     """
 
-    url = "http://ws.audioscrobbler.com/2.0/?method=" + method
+    url = "https://ws.audioscrobbler.com/2.0/?method=" + method
     if extra != "":
         url += "&" + extra
     url += "&format=json&api_key=" + apikey

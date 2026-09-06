@@ -7,13 +7,11 @@ Author: Robert Ison
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-SAMPLE_DATA = """{"Results":{"series":[{"seriesID":"CUUR0000SA0","data":[{"period":"M03","periodName":"March","value":"319.799","year":"2025"},{"period":"M02","periodName":"February","value":"319.082","year":"2025"},{"period":"M01","periodName":"January","value":"317.671","year":"2025"},{"period":"M12","periodName":"December","value":"315.605","year":"2024"},{"period":"M11","periodName":"November","value":"315.493","year":"2024"},{"period":"M10","periodName":"October","value":"315.664","year":"2024"}]}]}}"""
-
-TIME_OUT_IN_SECONDS = 172800
 CPI_CON_COLORS = ["#B31942", "#FFFFFF", "#0A3161", "#B31942", "#FFFFFF"]
 
 SELECTED_SERIES_DATA = [
@@ -49,14 +47,6 @@ display_time_period = [
     schema.Option(display = "5 Years", value = "60"),
 ]
 
-def get_category_options(display_type):
-    if display_type != "Categories":
-        return []
-    return [
-        schema.Toggle(id = item[0], name = item[1], desc = "%s  (in %s)" % (item[1], item[3]), icon = "check", default = False)
-        for item in SELECTED_SERIES_DATA
-    ]
-
 def get_category_list():
     return [item[0] for item in SELECTED_SERIES_DATA]
 
@@ -89,30 +79,35 @@ def get_cpi_data(api_key):
         "seriesid": get_category_list(),
         "startyear": str(start_year),
         "endyear": str(now.year),
-        "registrationkey": api_key,
     }
+    if api_key and (type(api_key) != "string" or len(api_key) > 128 or not re.match(r"^[A-Za-z0-9]+$", api_key)):
+        return {"status": "ERROR", "message": "Invalid API key"}
+    if api_key:
+        payload["registrationkey"] = api_key
 
-    response = http.post(url = url, headers = headers, body = json.encode(payload), ttl_seconds = TIME_OUT_IN_SECONDS)
+    response = http.post(url = url, headers = headers, body = json.encode(payload))
 
-    if response.status_code != 200:
-        return json.encode({"status": "ERROR", "message": "HTTP %d" % response.status_code})
+    if response.status_code != 200 or len(response.body()) > 2097152:
+        return {"status": "ERROR", "message": "CPI data unavailable"}
 
     data = response.json()
-
+    if type(data) != "dict":
+        return {"status": "ERROR", "message": "CPI data unavailable"}
     if data.get("status") != "REQUEST_SUCCEEDED":
         message = data.get("message", "API error")
-        if type(message) == list:
+        if type(message) == "list":
             message = message[0] if message else "API error"
-        return json.encode({"status": "ERROR", "message": str(message)})
+        return {"status": "ERROR", "message": str(message)[:100]}
 
-    return json.encode(data)
+    return data
 
 def get_series_data_by_name(parsed_data, series_name):
-    if "Results" not in parsed_data:
+    results = parsed_data.get("Results")
+    if type(results) != "dict" or type(results.get("series")) != "list":
         return None
-    for series in parsed_data["Results"]["series"]:
-        if series["seriesID"] == series_name:
-            return series["data"]
+    for series in results["series"][:25]:
+        if type(series) == "dict" and series.get("seriesID") == series_name and type(series.get("data")) == "list":
+            return [item for item in series["data"][:120] if type(item) == "dict"]
     return None
 
 def extract_filtered_data(parsed_data, series_name, months):
@@ -121,10 +116,10 @@ def extract_filtered_data(parsed_data, series_name, months):
         return []
     formatted = []
     for item in series_data[:months]:
+        if type(item) != "dict":
+            continue
         value = item.get("value")
-        if value == "-" or "Data unavailable" in str(item.get("footnotes", [])):
-            formatted.append(0.0)
-        else:
+        if type(value) == "string" and re.match(r"^-?[0-9]+(?:\.[0-9]+)?$", value) and "Data unavailable" not in str(item.get("footnotes", [])):
             formatted.append(float(value))
     return formatted
 
@@ -162,15 +157,10 @@ def main(config):
     children = []
     messages = []
 
-    # Fetch data (use sample if API key missing)
-    data_json = SAMPLE_DATA
     api_key = config.get("api_key", "")
-    if api_key != "":
-        data_json = get_cpi_data(api_key)
-
-    parsed_data = json.decode(data_json)
+    parsed_data = get_cpi_data(api_key)
     if parsed_data.get("status") == "ERROR":
-        return []
+        return render.Root(child = render.WrappedText("CPI data unavailable", font = "tom-thumb"))
 
     # Determine series to display
     series_data_sets = [SELECTED_SERIES_DATA[0][0]] if config.get("display_type") == "CPI" else [item[0] for item in SELECTED_SERIES_DATA if config.bool(item[0], False)]
@@ -181,7 +171,11 @@ def main(config):
     time_period = int(config.get("display_time_period", display_time_period[0].value))
     for series_id in series_data_sets[::-1]:
         values = extract_filtered_data(parsed_data, series_id, time_period)
-        children.append(plot_cpi_data(values, get_series_color(series_id), show_info_bar))
+        if len(values) >= 2:
+            children.append(plot_cpi_data(values, get_series_color(series_id), show_info_bar))
+
+    if not children:
+        return render.Root(child = render.WrappedText("CPI data unavailable", font = "tom-thumb"))
 
     chart_children = list(children)
     current_scene = render.Box(color = "#000", width = SCREEN_WIDTH, height = SCREEN_HEIGHT)
@@ -206,7 +200,7 @@ def main(config):
     else:
         first_item = series_data[0]
 
-    messages.append(render.Text("     {} months CPI data to {} {} ".format(time_period, first_item["periodName"], first_item["year"]), color = "#fff"))
+    messages.append(render.Text("     {} months CPI data to {} {} ".format(time_period, first_item.get("periodName", "Latest"), first_item.get("year", str(time.now().year))), color = "#fff"))
 
     for s in series_data_sets:
         messages.append(render.Text("{} in {} ".format(get_series_name(s), get_series_color_name(s)), color = get_series_color(s)))
@@ -222,12 +216,17 @@ def main(config):
 
 def get_schema():
     scroll_speed_options = [schema.Option(display = d, value = v) for d, v in [("Slow Scroll", "60"), ("Medium Scroll", "45"), ("Fast Scroll", "30")]]
-    return schema.Schema(version = "1", fields = [
-        schema.Text(id = "api_key", name = "BLS API Key", desc = "Your Bureau of Labor Statistics API key", icon = "key", secret = True),
-        schema.Toggle(id = "instructions", name = "Display Instructions", desc = "", icon = "book", default = False),
-        schema.Toggle(id = "info_bar", name = "Information Bar", desc = "Show the info bar?", icon = "info", default = True),
-        schema.Dropdown(id = "scroll", name = "Scroll", desc = "Scroll Speed", icon = "scroll", options = scroll_speed_options, default = scroll_speed_options[0].value),
-        schema.Dropdown(id = "display_time_period", icon = "timeline", name = "Time Period", desc = "Which time period to show?", options = display_time_period, default = display_time_period[0].value),
-        schema.Dropdown(id = "display_type", icon = "tv", name = "What to display", desc = "Choose main CPI or categories", options = display_type, default = display_type[0].value),
-        schema.Generated(id = "generated", source = "display_type", handler = get_category_options),
-    ])
+    return schema.Schema(
+        version = "1",
+        fields = [
+            schema.Text(id = "api_key", name = "BLS API Key", desc = "Your Bureau of Labor Statistics API key", icon = "key", secret = True),
+            schema.Toggle(id = "instructions", name = "Display Instructions", desc = "", icon = "book", default = False),
+            schema.Toggle(id = "info_bar", name = "Information Bar", desc = "Show the info bar?", icon = "info", default = True),
+            schema.Dropdown(id = "scroll", name = "Scroll", desc = "Scroll Speed", icon = "scroll", options = scroll_speed_options, default = scroll_speed_options[0].value),
+            schema.Dropdown(id = "display_time_period", icon = "timeline", name = "Time Period", desc = "Which time period to show?", options = display_time_period, default = display_time_period[0].value),
+            schema.Dropdown(id = "display_type", icon = "tv", name = "What to display", desc = "Choose main CPI or categories", options = display_type, default = display_type[0].value),
+        ] + [
+            schema.Toggle(id = item[0], name = item[1], desc = "%s (in %s)" % (item[1], item[3]), icon = "check", default = False)
+            for item in SELECTED_SERIES_DATA
+        ],
+    )

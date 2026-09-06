@@ -5,10 +5,11 @@ Description: Displays a Bluesky user's follower count.
 Author: Alex Karp
 """
 
-load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/bluesky_icon.png", BLUESKY_ICON_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -19,13 +20,11 @@ def main(config):
 
     if handle.startswith("@"):
         handle = handle[len("@"):]
-
-    cache_key = "bsky_follows_%s" % (handle)
-
-    formatted_followers_count = cache.get(cache_key)
     message = "@%s" % handle
-
-    if formatted_followers_count == None:
+    if type(handle) != "string" or not re.match(r"^[A-Za-z0-9.-]{1,253}$", handle):
+        formatted_followers_count = "Not Found"
+        message = "Check your handle."
+    else:
         followers_count = get_followers_count(handle)
 
         if followers_count == None:
@@ -33,7 +32,6 @@ def main(config):
             message = "Check your handle. (%s)" % handle
         else:
             formatted_followers_count = "%s %s" % (humanize.comma(followers_count), humanize.plural_word(followers_count, "follower"))
-            cache.set(cache_key, formatted_followers_count, ttl_seconds = 240)
 
     handle_child = render.Text(
         color = "#3c3c3c",
@@ -70,17 +68,21 @@ def main(config):
 
 def get_followers_count(handle):
     response = http.get(
-        "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=%s" % (handle),
+        "https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile",
+        params = {"actor": handle},
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/activity+json",
         },
+        ttl_seconds = 240,
     )
 
     if response.status_code == 200:
-        body = response.json()
-        if body != None and len(body) > 0:
-            return int(body["followersCount"])
+        raw = response.body()
+        body = json.decode(raw, {}) if raw and len(raw) <= 64 * 1024 else {}
+        count = body.get("followersCount") if type(body) == "dict" else None
+        if type(count) == "int" and count >= 0:
+            return count
     return None
 
 def get_schema():

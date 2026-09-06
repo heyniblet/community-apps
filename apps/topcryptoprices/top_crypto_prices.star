@@ -82,12 +82,11 @@ COINCOLORS["ZEC"] = "#0290FF"
 def main(config):
     currency = config.get("currency", "USD")
     API = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=" + currency + "&order=market_cap_desc&per_page=100"  # get more coins than needed, to compensate for excluded coins
-    if DEBUG:
-        print("Cache needs refresh. Calling market data API.")
     resp = http.get(API, ttl_seconds = TTL)
-    if resp.status_code != 200:
-        fail("API request failed with status %d", resp.status_code)
-    cachedjson = json.encode(resp.json())
+    body = resp.body()
+    market = json.decode(body, []) if resp.status_code == 200 and body and len(body) <= 2 * 1024 * 1024 else []
+    if type(market) != "list":
+        market = []
 
     COINS = []
     counter = 0
@@ -97,9 +96,8 @@ def main(config):
     if len(config.get("excludes", DEFAULTEXCLUDES)) > 0:
         BLACKLIST += config.get("excludes", DEFAULTEXCLUDES)
     BLACKLIST += " "  # end with a space
-    print(BLACKLIST)
-    for coininfo in json.decode(cachedjson):
-        if " " + coininfo["symbol"].upper() + " " not in BLACKLIST.upper() and counter < int(config.get("numcoins", DEFAULTNUMCOINS)):
+    for coininfo in market[:100]:
+        if type(coininfo) == "dict" and type(coininfo.get("symbol")) == "string" and " " + coininfo["symbol"].upper() + " " not in BLACKLIST.upper() and counter < int(config.get("numcoins", DEFAULTNUMCOINS)):
             COINS.append({"rank": int(coininfo["market_cap_rank"]), "ticker": coininfo["symbol"].upper(), "price": coininfo["current_price"], "change": coininfo["price_change_percentage_24h"]})
             counter += 1
     if DEBUG > 1:
@@ -111,6 +109,8 @@ def main(config):
         coinlines.append(renderbox(credits, color = "#AEA"))
     if DEBUG > 1:
         print(coinlines)
+    if not coinlines:
+        return render.Root(child = render.WrappedText("Crypto data unavailable", align = "center"))
     return render.Root(
         render.Animation(
             children = coinlines,

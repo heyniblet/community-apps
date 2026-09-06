@@ -5,17 +5,18 @@ Description: Shows the recent status of provided validators on the Ethereum beac
 Author: ColinCampbell
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/checkmark.png", CHECKMARK_ASSET = "file")
-load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
 
 CHECKMARK = CHECKMARK_ASSET.readall()
 
 API_VALIDATOR_LIMIT = 10
+MAX_VALIDATORS = 50
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_ATTESTATIONS = 5000
 FULL_ROW_LIMIT = 30
 FULL_COLUMN_LIMIT = 11
 
@@ -106,66 +107,58 @@ def get_schema():
     )
 
 def validator_statuses(config):
-    api_key = config.str("api_key")
-    raw_validator_indices = config.str("validators")
-
-    if api_key == None or raw_validator_indices == None:
+    api_key = str(config.str("api_key") or "").strip()
+    raw_validator_indices = str(config.str("validators") or "")
+    if not api_key or len(api_key) > 4096 or "\r" in api_key or "\n" in api_key:
         return None
-
-    validator_indices = raw_validator_indices.replace(", ", ",").split(",")
-    loaded_slot_statuses = combined_validator_statuses(api_key, validator_indices)
-
-    cache_key = slot_statuses_cache_key(raw_validator_indices)
-    oldest_loaded_slot = loaded_slot_statuses[0][0]
-    cached_slot_statuses = load_cached_slot_statuses(oldest_loaded_slot, cache_key)
-
-    all_slot_statuses = combine_lists(cached_slot_statuses, loaded_slot_statuses)
-
+    validator_indices = []
+    for value in raw_validator_indices.split(",")[:MAX_VALIDATORS]:
+        value = value.strip()
+        if value and len(value) <= 20 and value.isdigit() and value not in validator_indices:
+            validator_indices.append(value)
+    if not validator_indices:
+        return None
+    slot_statuses = combined_validator_statuses(api_key, validator_indices)
+    if slot_statuses == None:
+        return None
     status_limit = FULL_ROW_LIMIT * FULL_COLUMN_LIMIT
-    slot_status_count = len(all_slot_statuses)
-    slot_status_drop_count = slot_status_count - status_limit
-
-    slot_statuses = all_slot_statuses[slot_status_drop_count:] if slot_status_drop_count > 0 else all_slot_statuses
-
-    cache.set(cache_key, json.encode(slot_statuses), ttl_seconds = 600)
-
+    slot_statuses = slot_statuses[-status_limit:]
     empty_status_length = status_limit - len(slot_statuses)
-    return combine_lists(
-        fill_list(empty_status_length, "empty"),
-        map(slot_statuses, lambda slot_status: slot_status[1]),
-    )
-
-def load_cached_slot_statuses(older_than_slot, cache_key):
-    encoded = cache.get(cache_key)
-    decoded = json.decode(encoded) if encoded != None else []
-    tuples = map(decoded, lambda slot_status: (slot_status[0], slot_status[1]))
-    return filter(tuples, lambda slot_status: slot_status[0] < older_than_slot)
+    return ["empty" for _ in range(empty_status_length)] + [slot_status[1] for slot_status in slot_statuses]
 
 def combined_validator_statuses(api_key, validator_indices):
     validator_chunks = chunk_list(validator_indices, API_VALIDATOR_LIMIT)
-    slot_statuses = reduce(
-        validator_chunks,
-        [],
-        lambda acc, chunk: combine_lists(
-            acc,
-            load_validator_slot_statuses(api_key, chunk),
-        ),
-    )
-    merged_slot_lookup = dict_from_items_by(slot_statuses, choose_status)
-    return sorted_items(merged_slot_lookup)
+    slot_statuses = []
+    for chunk in validator_chunks:
+        loaded = load_validator_slot_statuses(api_key, chunk)
+        if loaded == None:
+            return None
+        slot_statuses.extend(loaded)
+    merged = {}
+    for slot, status in slot_statuses:
+        merged[slot] = choose_status(status, merged.get(slot))
+    return sorted(merged.items(), key = lambda item: item[0])
 
 def load_validator_slot_statuses(api_key, validator_indices):
     indices_part = ",".join(validator_indices)
-    url = "https://beaconcha.in/api/v1/validator/{0}/attestations?apikey={1}".format(indices_part, api_key)
-    json = api_response(url)
+    url = "https://beaconcha.in/api/v1/validator/{}/attestations".format(indices_part)
+    payload = api_response(url, api_key)
+    data = payload.get("data") if type(payload) == "dict" and payload.get("status") == "OK" else None
+    if type(data) != "list":
+        return None
 
     slot_attestations = []
     most_recent_slot_attestations_by_validator_index = {}
 
-    for attestion_data in json["data"]:
-        validator_index = str(int(attestion_data["validatorindex"]))
-        attestation_slot = int(attestion_data["attesterslot"])
-        raw_status = int(attestion_data["status"])
+    for attestion_data in data[:MAX_ATTESTATIONS]:
+        if type(attestion_data) != "dict":
+            continue
+        validator_index = safe_integer(attestion_data.get("validatorindex"))
+        attestation_slot = safe_integer(attestion_data.get("attesterslot"))
+        raw_status = safe_integer(attestion_data.get("status"))
+        if validator_index == None or attestation_slot == None or raw_status not in [0, 1]:
+            continue
+        validator_index = str(validator_index)
 
         most_recent_slot_attestation = most_recent_slot_attestations_by_validator_index.get(validator_index)
         if most_recent_slot_attestation == None or most_recent_slot_attestation["attestation_slot"] < attestation_slot:
@@ -214,14 +207,19 @@ def status_score(status):
     else:
         return 3
 
-def api_response(url):
-    print("Reloading from API")
+def api_response(url, api_key):
     response = http.get(url, headers = {
         "accept": "application/json",
-    }, ttl_seconds = 60)
-    json_response = response.json()
+        "apikey": api_key,
+    })
+    body = response.body()
+    return json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
 
-    return json_response
+def safe_integer(value):
+    if type(value) in ["int", "float"]:
+        return int(value) if value >= 0 else None
+    value = str(value or "")
+    return int(value) if value and len(value) <= 20 and value.isdigit() else None
 
 def status_circle(status):
     return render.Padding(
@@ -243,53 +241,10 @@ def status_color(status):
     else:
         return "#f00"
 
-# Caching
-
-def slot_statuses_cache_key(uniquer):
-    return "slot_statuses_" + uniquer
-
 # Generic Utils
 
-def combine_lists(*args):
-    result = []
-    for l in args:
-        result.extend(l)
-    return result
-
 def chunk_list(items, max_items_per_chunk):
-    chunks = []
-    for i in range(len(items)):
-        chunk_index = math.floor(i / max_items_per_chunk)
-
-        if chunk_index == len(chunks):
-            chunks.append([])
-
-        chunks[-1].append(items[i])
-
-    return chunks
-
-def filter(l, f):
-    return reduce(l, [], lambda acc, item: add_to_list_in_filter(acc, item, f))
-
-def add_to_list_in_filter(acc, item, f):
-    result = f(item)
-    if result == True:
-        acc.append(item)
-    return acc
-
-def sorted_items(d):
-    items = d.items()
-    return sorted(items, key = lambda item: item[0])
-
-def dict_from_items_by(items, f):
-    return reduce(items, {}, lambda lookup, item: choose_item(lookup, item, f))
-
-def choose_item(lookup, item, f):
-    key = item[0]
-    existing_value = lookup.get(key)
-    merged_value = f(item[1], existing_value)
-    lookup[key] = merged_value
-    return lookup
+    return [items[i:i + max_items_per_chunk] for i in range(0, len(items), max_items_per_chunk)]
 
 def count_list_by(l, f):
     result = {}
@@ -302,15 +257,3 @@ def count_list_by(l, f):
 
 def map(l, f):
     return [f(i) for i in l]
-
-def reduce(list, acc, f):
-    result = acc
-    for i in range(len(list)):
-        result = f(result, list[i])
-    return result
-
-def fill_list(n, item):
-    result = []
-    for _ in range(n):
-        result.append(item)
-    return result

@@ -10,6 +10,9 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
+IMAGE_TTL_SECONDS = 3600
+MAX_IMAGE_BYTES = 1048576
+
 def main(config):
     config_date = config.get("due_date", get_default_due_date())
     due_date = time.parse_time(config_date)
@@ -76,12 +79,13 @@ def format_due_date(date):
 
 def render_image(weeks_pregnant):
     url = "https://tidbyt-pregnancy-tracker.s3.amazonaws.com/" + str(weeks_pregnant) + ".png"
-    response = http.get(url)
-    if response.status_code != 200:
+    response = http.get(url, ttl_seconds = IMAGE_TTL_SECONDS)
+    body = response.body()
+    if response.status_code != 200 or len(body) > MAX_IMAGE_BYTES:
         return render.Text("")
     return render.Column(
         children = [
-            render.Image(src = response.body(), height = 16),
+            render.Image(src = body, height = 16),
         ],
     )
 

@@ -17,18 +17,7 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-DEBUG = False
-TEST_RUN = """{
-    "total_count": 28,
-    "workflow_runs": [
-        {
-            "conclusion": "success",
-            "updated_at": "2025-03-14T04:25:26Z",
-            "head_branch": "main",
-            "status": "completed"
-        }
-    ]
-}"""
+GITHUB_API_VERSION = "2026-03-10"
 
 GITHUB_LOGO = GITHUB_LOGO_ASSET.readall()
 GITHUB_FAILED_ICON = GITHUB_FAILED_ICON_ASSET.readall()
@@ -43,27 +32,21 @@ def should_show_jobs(repos, dwell_time):
         if "data" not in repo:
             continue
         job = repo["data"]
-        repo_name = str(repo.get("name", "unknown"))
         conclusion = str(job.get("conclusion", "unknown"))
-        status = str(job.get("status", "unknown"))
-        print("repo " + repo_name + " has conclusion: " + conclusion + ", status: " + status)
 
         # Show all repos if any repo is not success (including cancelled)
         if conclusion not in ["success", "cancelled"]:
-            print("repo " + repo_name + " is not success, showing all jobs")
             return True
 
         # Show all repos if any success is recent
-        updated_at = time.parse_time(job["updated_at"], format = "2006-01-02T15:04:05Z").in_location("UTC")
-        duration = now - updated_at
-        print("comparing " + str(duration.seconds) + " and " + str(dwell_time * 60) + " for repo " + repo_name)
-        if duration.seconds <= dwell_time * 60:
-            print("repo " + repo_name + " success is recent, showing all jobs")
+        updated_value = job.get("updated_at")
+        if type(updated_value) != "string" or len(updated_value) != 20:
             return True
-        else:
-            print("repo " + repo_name + " success is old")
+        updated_at = time.parse_time(updated_value, format = "2006-01-02T15:04:05Z").in_location("UTC")
+        duration = now - updated_at
+        if duration.seconds <= dwell_time * 60:
+            return True
 
-    print("all repos have old successes, hiding all jobs")
     return False
 
 def get_status_icon(status, conclusion):
@@ -103,42 +86,34 @@ def fetch_workflow_data(repos, access_token):
     """
     headers = {
         "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
     }
     if access_token:
+        if not valid_secret(access_token):
+            return "error", "Check GitHub token"
         headers["Authorization"] = "Bearer {}".format(access_token)
 
     modified_repos = []
-    print("repos are " + str(repos))
     for repo in repos:
         owner_name, repo_name, branch_name, workflow_id = repo["str"].split("/")
-        if not DEBUG:
-            resp = http.get(
-                "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs".format(
-                    owner_name,
-                    repo_name,
-                    workflow_id,
-                ),
-                params = {"branch": branch_name, "per_page": "1", "page": "1"},
-                headers = headers,
-                ttl_seconds = 60,
-            )
-            data = resp.json()
-            if (resp.status_code != 200):
-                print("status_code : " + str(resp.status_code))
-                print(data)
-                return ("error", data.get("message"))
-        else:
-            data = json.decode(TEST_RUN)
+        resp = http.get(
+            "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs".format(owner_name, repo_name, workflow_id),
+            params = {"branch": branch_name, "per_page": "1", "page": "1"},
+            headers = headers,
+        )
+        if resp.status_code != 200 or len(resp.body()) > 2 * 1024 * 1024:
+            return "error", "GitHub unavailable (%d)" % resp.status_code
+        data = json.decode(resp.body(), {})
 
-        if data and data.get("workflow_runs"):
+        runs = data.get("workflow_runs", []) if type(data) == "dict" else []
+        if type(runs) == "list" and runs and type(runs[0]) == "dict":
             repo_copy = {
                 "owner": repo["owner"],
                 "name": repo["name"],
                 "branch": repo["branch"],
                 "workflow": repo["workflow"],
                 "str": repo["str"],
-                "data": data.get("workflow_runs")[0],
+                "data": runs[0],
             }
             modified_repos.append(repo_copy)
     return modified_repos, None
@@ -149,12 +124,10 @@ def fetch_workflow_data(repos, access_token):
 def render_status_badge(status, repos):
     # workflow_data is an array
     rows = []
-    print(type(repos))
     if type(repos) == "list":
         for repo in repos:
-            status = repo["data"]["status"]
-            conclusion = repo["data"]["conclusion"]
-            print("appending row " + status)
+            status = str(repo["data"].get("status", "unknown"))
+            conclusion = str(repo["data"].get("conclusion", "unknown"))
             rows.append(
                 render.Row(
                     cross_align = "center",
@@ -171,7 +144,6 @@ def render_status_badge(status, repos):
                 ),
             )
     else:
-        print("error, got no data from github")
         rows.append(
             render.Row(
                 cross_align = "center",
@@ -228,23 +200,21 @@ def main(config):
     repos_strs = [repo1, repo2, repo3]
     repos = []
     for repo in repos_strs:
-        if (
-            repo == "owner/repo/branch/workflow" or
-            repo == ""
-            # or len(repo.split("/")) < 4
-        ):
+        if repo == "owner/repo/branch/workflow" or repo == "":
             continue
-        else:
-            owner, name, branch, workflow = repo.split("/")
-            repos.append(
-                {
-                    "owner": owner,
-                    "name": name,
-                    "branch": branch,
-                    "workflow": workflow,
-                    "str": repo,
-                },
-            )
+        parts = repo.split("/")
+        if len(parts) != 4 or not valid_component(parts[0]) or not valid_component(parts[1]) or not valid_branch(parts[2]) or not valid_component(parts[3]):
+            return render_status_badge("failed", "Check repo configuration")
+        owner, name, branch, workflow = parts
+        repos.append({"owner": owner, "name": name, "branch": branch, "workflow": workflow, "str": repo})
+    if not repos:
+        return render_status_badge("failed", "Configure a repository")
+
+    timeout = config.get("timeout", "0")
+    if type(timeout) != "string" or not timeout.isdigit() or len(timeout) > 5:
+        return render_status_badge("failed", "Check success timeout")
+    timeout = min(int(timeout), 10080)
+
     workflow_data = []
     workflow_data, err = fetch_workflow_data(repos, config.get("access_token", None))
 
@@ -254,18 +224,24 @@ def main(config):
         #     return render_status_badge("success", "no data")
 
     elif workflow_data and type(workflow_data) != "string":
-        should_show = should_show_jobs(workflow_data, int(config.get("timeout", "0")))
-        print("should_show_jobs returned: " + str(should_show))
+        should_show = should_show_jobs(workflow_data, timeout)
         if not should_show:
-            print("hiding all jobs, returning empty")
             return []
 
-        print("showing all jobs")
         return render_status_badge("success", workflow_data)
     elif workflow_data:
         return render_status_badge("failed", workflow_data)
     else:
         return render_status_badge("failed", "Could not connect to GitHub")
+
+def valid_component(value):
+    return type(value) == "string" and value and len(value) <= 100 and all([char.isalnum() or char in "-_." for char in value.codepoints()])
+
+def valid_branch(value):
+    return type(value) == "string" and value and len(value) <= 200 and "\r" not in value and "\n" not in value
+
+def valid_secret(value):
+    return type(value) == "string" and value and len(value) <= 2048 and "\r" not in value and "\n" not in value
 
 def get_schema():
     return schema.Schema(

@@ -11,31 +11,22 @@ load("humanize.star", "humanize")
 load("render.star", "render")
 load("time.star", "time")
 
+AUCTION_HOUSE = "0x830BD73E4184ceF73443c15111a1DF14e495C706"
+AUCTION_SELECTOR = "0x7d9f6db5"
+ETHEREUM_RPC_URL = "https://ethereum-rpc.publicnode.com"
+
 def main():
     screen = render_screen()
     return render.Root(child = screen)
 
 def render_screen():
     rep = http.post(
-        "https://api.goldsky.com/api/public/project_cldf2o9pqagp43svvbk5u3kmo/subgraphs/nouns/0.1.0/gn",
+        ETHEREUM_RPC_URL,
         body = json.encode({
-            "query": """
-                query {
-                    auctions(first:1, orderDirection: desc, orderBy: endTime) {
-                        id,
-                        amount,
-                        startTime,
-                        endTime,
-                        bidder {
-                            id,
-                        },
-                        settled
-                        noun {
-                            id,      
-                        }
-                    }
-                }
-            """,
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [{"to": AUCTION_HOUSE, "data": AUCTION_SELECTOR}, "latest"],
         }),
         headers = {
             "content-type": "application/json",
@@ -44,14 +35,25 @@ def render_screen():
     )
     if rep.status_code != 200:
         return render.WrappedText("API Error: %d" % rep.status_code, color = "#ff0000")
-    auction = rep.json()["data"]["auctions"][0]
+    body = rep.body()
+    if not body or len(body) > 65536:
+        return render.WrappedText("Auction unavailable", color = "#ff0000")
+    payload = json.decode(body)
+    result = payload.get("result", "") if type(payload) == "dict" else ""
+    if type(result) != "string" or not result.startswith("0x") or len(result) < 386:
+        return render.WrappedText("Auction unavailable", color = "#ff0000")
 
-    img_data = http.get("https://noun.pics/{}.jpg".format(auction["noun"]["id"]), ttl_seconds = 3600 * 6).body()
-    img = render.Image(src = img_data, width = 32)
+    noun_id = int(result[2:66], 16)
+    amount = int(result[66:130], 16)
+    end_time = int(result[194:258], 16)
 
-    ether = int(auction["amount"]) / 1000000000000000000
+    img_rep = http.get("https://images.weserv.nl/?url=noun.pics/{}.jpg&w=32&h=32&fit=cover".format(noun_id), ttl_seconds = 3600 * 6)
+    img_data = img_rep.body() if img_rep.status_code == 200 else None
+    img = render.Image(src = img_data, width = 32) if img_data and len(img_data) <= 2000000 else render.Box(width = 32, height = 32)
 
-    time_text = humanize.relative_time(time.now(), time.from_timestamp(int(auction["endTime"])))
+    ether = amount / 1000000000000000000
+
+    time_text = humanize.relative_time(time.now(), time.from_timestamp(end_time))
     time_text = time_text.replace(" hours", "h")
     time_text = time_text.replace(" hour", "h")
     time_text = time_text.replace(" minutes", "m")
@@ -77,7 +79,7 @@ def render_screen():
                         # of the last row...
                         render.Box(
                             height = 6,
-                            child = render.Text("{}".format(auction["noun"]["id"]), font = "tom-thumb", color = "#ffffff"),
+                            child = render.Text("{}".format(noun_id), font = "tom-thumb", color = "#ffffff"),
                         ),
                         render.Row(
                             children = [

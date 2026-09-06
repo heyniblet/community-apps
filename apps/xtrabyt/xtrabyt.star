@@ -16,21 +16,22 @@ def main(config):
 
     if (key == None):
         return renderWelcome()
-    else:
-        response = http.get(BASE_URL + "/views/" + key)
+    if type(key) != "string" or len(key) > 128 or not all([char.isalnum() or char in "_-" for char in key.elems()]):
+        return renderError("invalid key")
+
+    response = http.get(BASE_URL + "/views/" + key)
 
     if response.status_code == 200:
         data = response.json()
-        if (data["type"] == "image"):
-            return renderImage(data["content"])
-        else:
-            return renderError(key, data["type"])
+        if type(data) == "dict" and data.get("type") == "image":
+            return renderImage(data.get("content"))
+        return renderError(data.get("type", "invalid response") if type(data) == "dict" else "invalid response")
     elif response.status_code == 503:
         return renderMaintenance()
     else:
-        return renderError(key, response.status_code)
+        return renderError(response.status_code)
 
-def renderError(key, status):
+def renderError(status):
     return render.Root(
         child = render.Box(
             render.Column(
@@ -45,10 +46,6 @@ def renderError(key, status):
                     render.Text(
                         content = str(status),
                         font = "6x13",
-                    ),
-                    render.Text(
-                        content = "KEY: " + key,
-                        font = "tom-thumb",
                     ),
                 ],
             ),
@@ -112,11 +109,12 @@ def renderMaintenance():
     )
 
 def renderImage(imgUrl):
+    if type(imgUrl) != "string" or not imgUrl.startswith(BASE_URL + "/"):
+        return renderError("invalid image")
     response = http.get(imgUrl)
-    if response.status_code == 200:
-        img = response.body()
-    else:
-        img = "https://xtrabyt.com/images/logo.png"
+    if response.status_code != 200:
+        return renderError(response.status_code)
+    img = response.body()
     return render.Root(
         delay = 500,
         child = render.Box(

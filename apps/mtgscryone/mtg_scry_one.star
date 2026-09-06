@@ -5,13 +5,18 @@ Description: Scry a random card from Magic: The Gathering and displays its infor
 Author: UnBurn
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 
 SCRYFALL_API = "https://api.scryfall.com/cards/random"
 
-SCRYFALL_HEADER = { "Accept": "application/json", "User-Agent": "MtgScryOne/Application" }
+SCRYFALL_HEADER = {
+    "Accept": "application/json;q=0.9,*/*;q=0.8",
+    "User-Agent": "Niblet/1.0 (+https://heyniblet.com)",
+}
 
 DEFAULT_TTL_TIME = 1800
 MARQUEE_DELAY = 10
@@ -116,21 +121,43 @@ def render_box_backgrounds(colors):
 def get_random_card(config):
     url = SCRYFALL_API
     is_commander = config.bool("is_commander", DEFAULT_IS_COMMANDER)
-    custom_query = config.str("custom_query", DEFAULT_CUSTOM_QUERY).replace(" ", "%20")
+    custom_query = config.str("custom_query", DEFAULT_CUSTOM_QUERY).strip()
     queries = []
     if is_commander:
         queries.append("is:commander")
     if custom_query != "":
         queries.append(custom_query)
     if len(queries) > 0:
-        url = url + "?q="
-        url = url + "%20".join(queries)
+        url = url + "?q=" + humanize.url_encode(" ".join(queries))
 
-    card_json = http.get(url, headers = SCRYFALL_HEADER,  ttl_seconds = int(config.get("time_frequency", "3600")))
-    return card_json.json()
+    ttl = config.str("time_frequency", str(DEFAULT_TTL_TIME))
+    ttl = int(ttl) if ttl in ["1", "1800", "3600", "21600", "43200", "86400"] else DEFAULT_TTL_TIME
+    response = http.get(url, headers = SCRYFALL_HEADER, ttl_seconds = ttl)
+    if response.status_code != 200:
+        return None
+    card = json.decode(response.body(), None)
+    return card if type(card) == "dict" and card.get("object") == "card" else None
 
 def get_card_image(config, image_url):
-    return http.get(image_url, headers = SCRYFALL_HEADER, ttl_seconds = int(config.get("time_frequency", "3600"))).body()
+    if type(image_url) != "string" or not image_url.startswith("https://cards.scryfall.io/"):
+        return None
+    ttl = config.str("time_frequency", str(DEFAULT_TTL_TIME))
+    ttl = int(ttl) if ttl in ["1", "1800", "3600", "21600", "43200", "86400"] else DEFAULT_TTL_TIME
+    response = http.get(image_url, headers = SCRYFALL_HEADER, ttl_seconds = ttl)
+    return response.body() if response.status_code == 200 else None
+
+def get_card_face(data):
+    images = data.get("image_uris") if type(data.get("image_uris")) == "dict" else {}
+    if type(images.get("art_crop")) == "string":
+        return data, images["art_crop"]
+    faces = data.get("card_faces") if type(data.get("card_faces")) == "list" else []
+    for face in faces:
+        if type(face) != "dict":
+            continue
+        images = face.get("image_uris") if type(face.get("image_uris")) == "dict" else {}
+        if type(images.get("art_crop")) == "string":
+            return face, images["art_crop"]
+    return data, None
 
 def get_mana_colors(colors):
     ret = []
@@ -148,21 +175,42 @@ def get_mana_colors(colors):
     return ret
 
 def pick_price(prices):
-    if prices["usd"] != None:
+    if type(prices) != "dict":
+        return None
+    if type(prices.get("usd")) == "string":
         return prices["usd"]
-    if prices["usd_foil"] != None:
+    if type(prices.get("usd_foil")) == "string":
         return prices["usd_foil"]
-    if prices["usd_etched"] != None:
+    if type(prices.get("usd_etched")) == "string":
         return prices["usd_etched"]
     return None
 
+def error_screen(message):
+    return render.Root(
+        child = render.Column(
+            expanded = True,
+            main_align = "center",
+            children = [render.WrappedText(content = message, font = "tom-thumb")],
+        ),
+    )
+
 def main(config):
     data = get_random_card(config)
-    image = get_card_image(config, data["image_uris"]["art_crop"])
-    description = data["oracle_text"]
-    title = data["name"]
-    price = pick_price(data["prices"])
-    mana_colors = get_mana_colors(data["colors"])
+    if data == None:
+        return error_screen("Scryfall unavailable")
+    face, image_url = get_card_face(data)
+    image = get_card_image(config, image_url)
+    if image == None:
+        return error_screen("Card image unavailable")
+    description = face.get("oracle_text") or data.get("oracle_text") or data.get("type_line") or "No card text"
+    title = data.get("name") or "Unknown card"
+    if type(description) != "string":
+        description = "No card text"
+    if type(title) != "string":
+        title = "Unknown card"
+    price = pick_price(data.get("prices"))
+    colors = face.get("colors") if type(face.get("colors")) == "list" else data.get("colors")
+    mana_colors = get_mana_colors(colors if type(colors) == "list" else [])
     mana_color_len = len(mana_colors) if len(mana_colors) > 0 else 1
     colors = generate_gradient_steps(mana_colors, (64 // mana_color_len))
     top_bar = render.Stack(

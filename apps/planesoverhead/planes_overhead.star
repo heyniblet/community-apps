@@ -39,13 +39,13 @@ def get_schema():
             schema.Text(
                 id = "client_id",
                 name = "client_id",
-                desc = "From OpenSky API Client details (Note: OpenSky requiring new OAuth2 flow, replacing old Username + Password auth)",
+                desc = "Optional OpenSky OAuth client ID for a higher request allowance",
                 icon = "person",
             ),
             schema.Text(
                 id = "client_secret",
                 name = "client_secret",
-                desc = "From OpenSky API Client details (Note: OpenSky requiring new OAuth2 flow, replacing old Username + Password auth)",
+                desc = "Optional OpenSky OAuth client secret for a higher request allowance",
                 icon = "lock",
                 secret = True,
             ),
@@ -61,6 +61,14 @@ def get_bounding_box(lat, lng, radius):
     y2 = lat - math.degrees(radius / R)
     dict = {"lamin": y2, "lomin": x1, "lamax": y1, "lomax": x2}
     return dict
+
+def as_float(value, fallback):
+    value = value.strip()
+    unsigned = value[1:] if value.startswith("-") or value.startswith("+") else value
+    parts = unsigned.split(".")
+    if len(parts) > 2 or not "".join(parts) or not "".join(parts).isdigit():
+        return fallback
+    return float(value)
 
 def get_haversine_distance(lat1, lng1, lat2, lng2):
     # Approximate radius of earth in km
@@ -159,17 +167,20 @@ def get_arrow(heading):
 def get_typecode(icao24):
     URL = "https://buhujdzqm2.execute-api.us-east-1.amazonaws.com/default/aircraft/" + icao24
 
-    query_get = http.get(url = URL)
+    query_get = http.get(url = URL, ttl_seconds = 86400)
 
     print("Type Lookup HTTP Status:", query_get.status_code)
 
-    response = query_get.body()
+    response = query_get.body().strip()
+    if query_get.status_code != 200 or len(response) > 65536 or not response.startswith("{") or not response.endswith("}"):
+        return ""
 
     # Parse JSON safely
     data = json.decode(response) if len(response) > 0 else {}
 
     # Return typecode if available, else fallback
-    return data.get("typecode", "")  # or "" if you prefer empty string
+    typecode = data.get("typecode", "") if type(data) == "dict" else ""
+    return typecode[:12] if type(typecode) == "string" else ""
 
 def render_error(status_code):
     screen = render.Root(
@@ -178,8 +189,7 @@ def render_error(status_code):
             children = [
                 render.Row(
                     children = [
-                        render.Image(src = http.get("https://cdn-icons-png.flaticon.com/256/683/683094.png").body(), height = 15),
-                        render.Text(content = "     ", height = 15, offset = 1, font = "6x13", color = "#fcf7c5"),
+                        render.Text(content = "Planes", height = 15, offset = 1, font = "6x13", color = "#fcf7c5"),
                     ],
                 ),
                 render.WrappedText(content = "HTTP" + str(status_code), color = "#f7ba99"),
@@ -191,10 +201,12 @@ def render_error(status_code):
 def process_states(state_list, your_coord):
     output = []
     if len(state_list) > 0:
-        for item in state_list:
+        for item in state_list[:500]:
+            if type(item) != "list" or len(item) < 18 or type(item[0]) != "string" or type(item[5]) not in ["int", "float"] or type(item[6]) not in ["int", "float"]:
+                continue
             temp = {}
             temp["icao24"] = item[0]
-            temp["callsign"] = item[1].strip()
+            temp["callsign"] = item[1].strip() if type(item[1]) == "string" else ""
             temp["origin_country"] = item[2]
             temp["time_position"] = item[3]
             temp["last_contact"] = item[4]
@@ -204,13 +216,15 @@ def process_states(state_list, your_coord):
             temp["location_vs_you"] = get_heading(get_bearing(your_coord[0], your_coord[1], item[6], item[5]))
             temp["arrow"] = get_arrow(get_bearing(your_coord[0], your_coord[1], item[6], item[5]))
             temp["on_ground"] = item[8]
-            temp["speed"] = None if item[9] == None else math.round(item[9] * 2.23694)
-            temp["track"] = item[10]
-            temp["heading"] = get_heading(item[10])
-            temp["climb"] = None if item[11] == None else "ascending" if item[11] > 0.5 else "descending" if item[11] < -0.5 else "stable"
-            temp["altitude"] = None if item[13] == None and item[7] == None else math.round((item[13] or item[7]) * 3.28)
-            temp["category"] = None if item[17] == None else "H" if item[17] == 6 else "L" if item[17] == 5 else "M" if item[17] == 4 else "S" if item[17] == 4 else "-"
-            if temp["callsign"] != None and temp["on_ground"] == False:
+            speed = item[9] if type(item[9]) in ["int", "float"] else None
+            track = item[10] if type(item[10]) in ["int", "float"] else None
+            climb = item[11] if type(item[11]) in ["int", "float"] else None
+            altitude = item[13] if type(item[13]) in ["int", "float"] else item[7] if type(item[7]) in ["int", "float"] else None
+            temp["speed"] = math.round(speed * 2.23694) if speed != None else None
+            temp["heading"] = get_heading(track)
+            temp["climb"] = None if climb == None else "ascending" if climb > 0.5 else "descending" if climb < -0.5 else "stable"
+            temp["altitude"] = math.round(altitude * 3.28) if altitude != None else None
+            if temp["callsign"] and temp["on_ground"] == False:
                 output.append(temp)
         output = sorted(output, key = lambda i: i["dist_from_you"])
     return output
@@ -222,8 +236,7 @@ def render_empty():
             children = [
                 render.Row(
                     children = [
-                        render.Image(src = http.get("https://cdn-icons-png.flaticon.com/256/683/683094.png").body(), height = 15),
-                        render.Text(content = "     ", height = 15, offset = 1, font = "6x13", color = "#fcf7c5"),
+                        render.Text(content = "Planes", height = 15, offset = 1, font = "6x13", color = "#fcf7c5"),
                     ],
                 ),
                 render.WrappedText(content = "No Planes Overhead", color = "#f7ba99"),
@@ -242,13 +255,12 @@ def render_plane(planes):
             children = [
                 render.Row(
                     children = [
-                        render.Image(src = http.get("https://cdn-icons-png.flaticon.com/256/683/683094.png").body(), height = 15),
-                        render.Text(content = " %s" % planes[0]["callsign"], height = 15, offset = 1, font = "6x13", color = "#fcf7c5"),
+                        render.Text(content = planes[0]["callsign"][:12], height = 15, offset = 1, font = "6x13", color = "#fcf7c5"),
                     ],
                 ),
                 render.Text(content = "%s %s %s %s" % (typecode, planes[0]["dist_from_you"], planes[0]["arrow"], planes[0]["location_vs_you"])),
                 render.Marquee(
-                    child = render.Text(content = "Heading %s at %d mph, Altitude %d ft, %s" % (planes[0]["heading"], planes[0]["speed"], planes[0]["altitude"], planes[0]["climb"])),
+                    child = render.Text(content = "Heading %s at %s mph, Altitude %s ft, %s" % (planes[0]["heading"], planes[0]["speed"] or "N/A", planes[0]["altitude"] or "N/A", planes[0]["climb"] or "stable")),
                     scroll_direction = "horizontal",
                     offset_end = 64,
                     width = 64,
@@ -260,41 +272,41 @@ def render_plane(planes):
     return screen
 
 def get_fresh_token(client_id, client_secret):
-    if not client_id or not client_secret or client_id == "None" or client_secret == "None":
-        print("Skipping token fetch: missing client credentials.")
-        return "invalid-token"
-
-    body = "grant_type=client_credentials&client_id=" + client_id + "&client_secret=" + client_secret
-
     token_response = http.post(
         url = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
+        form_body = {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
         },
-        body = body,
+        ttl_seconds = 300,
     )
 
     if token_response.status_code != 200:
         print("Failed to fetch token: " + str(token_response.status_code))
-        return "invalid-token"
+        return None
 
-    token_json = token_response.json()
+    body = token_response.body().strip()
+    token_json = token_response.json() if len(body) <= 65536 and body.startswith("{") and body.endswith("}") else {}
 
-    if "access_token" not in token_json:
-        print("No access_token in token response. Full body: " + token_response.body())
-        return "invalid-token"
+    if type(token_json) != "dict" or type(token_json.get("access_token")) != "string":
+        print("OpenSky token response did not contain an access token")
+        return None
 
     return token_json["access_token"]
 
 def main(config):
-    lat = float(config.str("lat", "34.023"))
-    lng = float(config.str("lng", "-118.496"))
+    lat = as_float(config.str("lat", "34.023"), 34.023)
+    lng = as_float(config.str("lng", "-118.496"), -118.496)
+    lat = lat if lat >= -85 and lat <= 85 else 34.023
+    lng = lng if lng >= -180 and lng <= 180 else -118.496
     your_coord = [lat, lng]
 
-    client_id = str(config.get("client_id"))
-    client_secret = str(config.get("client_secret"))
+    client_id = config.str("client_id", "").strip()
+    client_secret = config.str("client_secret", "").strip()
 
-    radius = float(config.str("radius", "20"))
+    radius = as_float(config.str("radius", "20"), 20.0)
+    radius = radius if radius >= 1 and radius <= 100 else 20.0
     bbox = get_bounding_box(lat, lng, radius)
     print(your_coord)
 
@@ -306,32 +318,17 @@ def main(config):
         "extended": "1",
     }
 
-    # Fetch a bearer token to use to later authenticate the GET request for states
-    token = get_fresh_token(client_id, client_secret)
-
-    # If we have no valid token, return a setup screen (lets pixlet check pass)
-    if token == "invalid-token":
-        return render.Root(
-            render.Column(
-                children = [
-                    render.WrappedText(content = "Configure OpenSky: Missing Credentials", font = "5x8", color = "#f7ba99"),
-                ],
-                cross_align = "center",
-            ),
-        )
-
-    headers = {
-        "Authorization": "Bearer " + token,
-    }
+    token = get_fresh_token(client_id, client_secret) if client_id and client_secret else None
+    headers = {"Authorization": "Bearer " + token} if token else {}
 
     response = http.get(
         url = "https://opensky-network.org/api/states/all",
         headers = headers,
         params = params,
+        ttl_seconds = 300,
     )
 
     api_status_code = response.status_code
-    api_response = response.json()
 
     print("OpenSky API HTTP Response: " + str(api_status_code))
 
@@ -343,14 +340,13 @@ def main(config):
 
     if api_status_code != 200:
         return render_error(api_status_code)
-    elif "states" not in api_response.keys():
+    body = response.body().strip()
+    if len(body) > 2097152 or not body.startswith("{") or not body.endswith("}"):
+        return render_error(502)
+    api_response = response.json()
+    if type(api_response) != "dict" or type(api_response.get("states")) != "list":
         return render_empty()
-    elif "states" in api_response.keys():
-        state_list = [] if api_response["states"] == None or len(api_response["states"]) == 0 else api_response["states"]
-        planes = process_states(state_list, your_coord)
-        if len(planes) == 0:
-            return render_empty()
-        else:
-            return render_plane(planes)
-    else:
+    planes = process_states(api_response["states"], your_coord)
+    if len(planes) == 0:
         return render_empty()
+    return render_plane(planes)

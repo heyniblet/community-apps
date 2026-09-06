@@ -13,6 +13,7 @@ load("humanize.star", "humanize")
 load("images/alien_error.gif", ALIEN_ERROR_ASSET = "file")
 load("images/celebrate_fireworks.gif", CELEBRATE_FIREWORKS_ASSET = "file")
 load("images/starfield.gif", STARFIELD_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -25,7 +26,7 @@ STARFIELD = STARFIELD_ASSET.readall()
 ERROR_TEXT = "We hit a snag. Please check your app."
 
 # Endpoints
-REST_ENDPOINT = "https://{}.myshopify.com/admin/api/2022-10/{}.json"
+REST_ENDPOINT = "{}/admin/api/2026-07/{}.json"
 COUNT_ENDPOINT = "orders/count"
 
 # Metafield definitions
@@ -34,12 +35,12 @@ METAFIELD_UPDATE_ENDPOINT = "metafields/{}"
 METAFIELD_DESCRIPTION = "A number of sales last celebrated by this store's TidByt Display"
 METAFIELD_NAMESPACE = "tidbyt"
 METAFIELD_KEY = "lastcelebration"
-METAFIELD_OWNER = "shop"
 
 # Cache definitions
-CACHE_TTL = 600
+CACHE_TTL = 300
 CACHE_ID_ORDERS = "{}-{}-orders"
 CACHE_ID_METAFIELD = "{}-{}-metafields"
+MAX_RESPONSE_BYTES = 256 * 1024
 
 # Milestone definitions are a list of Tuples where the first element is a base number of sales
 # and the second element is an increment at which celebrations happen after that base.
@@ -59,21 +60,21 @@ MILESTONE_DEFINITIONS = [
 # MAIN
 # ----
 def main(config):
-    store_name = config.get("store_name")
+    store_url = normalize_store_url(config.get("store_url") or config.get("store_name"))
     api_token = config.get("api_token")
 
     # If applet isn't configured, say so
-    if not store_name or not api_token:
-        print("Error ❌: Missing store name (%s) or API token (%s)" % (store_name, api_token))
+    if not store_url or not api_token:
+        print("Error ❌: Missing or invalid Shopify store URL or API token")
         return error_view(ERROR_TEXT)
 
     # Get our current order count, and if it failed skip rendering
-    order_count = get_order_count(store_name, api_token)
+    order_count = get_order_count(store_url, api_token)
     if order_count < 0:
         return []
 
     # Get our latest celebration, and if it failed skip rendering
-    celebration = get_latest_celebration(store_name, api_token)
+    celebration = get_latest_celebration(store_url, api_token)
     if celebration.get("error"):
         return []
 
@@ -86,7 +87,7 @@ def main(config):
         }
         if celebration.get("id"):
             new_celebration["id"] = celebration["id"]
-        store_latest_celebration(new_celebration, store_name, api_token)
+        store_latest_celebration(new_celebration, store_url, api_token)
         celebration = new_celebration
 
     if should_celebrate(celebration):
@@ -111,6 +112,16 @@ def main(config):
     # There's nothing to celebrate today, so skip rendering.
     print("Skipping celebration.")
     return []
+
+def normalize_store_url(value):
+    if not value:
+        return None
+    value = value.strip().lower().removesuffix("/")
+    if re.match(r"^[a-z0-9][a-z0-9-]*$", value):
+        value = "https://{}.myshopify.com".format(value)
+    if not re.match(r"^https://[a-z0-9][a-z0-9-]*\.myshopify\.com$", value):
+        return None
+    return value
 
 # GET FORMATTED NUMBER
 # Takes a milestone number and formats it in a friendly way
@@ -180,22 +191,28 @@ def should_celebrate(last_celebration):
 # GET LATEST CELEBRATION
 # Retrieves remote data representing our latest celebration from a shop metafield.
 # -----------------------------------------------------------------------------------------
-# store_name: A name of a Shopify store for the API call
+# store_url: The canonical myshopify.com URL for the store
 # api_token: A Shopify API token
 # Returns: A dict with id, date, and orders keys, or a dict with an error key if failed
-def get_latest_celebration(store_name, api_token):
+def get_latest_celebration(store_url, api_token):
     # Check our cache
-    cache_key = CACHE_ID_METAFIELD.format(hash.sha1(store_name), hash.sha1(api_token))
+    cache_key = CACHE_ID_METAFIELD.format(hash.sha1(store_url), hash.sha1(api_token))
     cached_metafields = cache.get(cache_key)
 
     if not cached_metafields:
         # Nothing was cached, so fetch it now
-        url = REST_ENDPOINT.format(store_name, METAFIELD_ENDPOINT)
+        url = REST_ENDPOINT.format(store_url, METAFIELD_ENDPOINT)
         headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": api_token}
-        response = http.get(url = url, params = {"owner-resource": METAFIELD_OWNER}, headers = headers, ttl_seconds = CACHE_TTL)
+        response = http.get(
+            url = url,
+            params = {"namespace": METAFIELD_NAMESPACE, "key": METAFIELD_KEY, "limit": "1"},
+            headers = headers,
+            ttl_seconds = CACHE_TTL,
+        )
+        body = response.body()
 
-        if response.status_code != 200:
-            print("get_latest_celebration Error ❌: Status code %d, URL %s, Body %s" % (response.status_code, response.url, response.body()))
+        if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+            print("get_latest_celebration Error ❌: Status code %d" % response.status_code)
             return {"error": response.status_code}
 
         metafields = response.json()
@@ -206,12 +223,20 @@ def get_latest_celebration(store_name, api_token):
         metafields = json.decode(cached_metafields)
 
     # Find the metafield with our namespace and key and return it
+    if type(metafields) != "dict" or type(metafields.get("metafields")) != "list":
+        return {"error": "invalid response"}
+
     for metafield in metafields["metafields"]:
         if metafield["namespace"] == METAFIELD_NAMESPACE and metafield["key"] == METAFIELD_KEY:
+            orders = metafield.get("value")
+            if type(orders) == "string" and re.match(r"^\d+$", orders):
+                orders = int(orders)
+            if type(orders) != "int":
+                return {"error": "invalid milestone"}
             return {
                 "id": metafield["id"],
                 "date": time.parse_time(metafield["updated_at"]).in_location("utc"),
-                "orders": metafield["value"],
+                "orders": orders,
             }
 
     # If nothing was celebrated yet, our last number of celebrated orders is 0 on the epoch
@@ -224,17 +249,17 @@ def get_latest_celebration(store_name, api_token):
 # Creates or updates remote data representing our latest celebration as a shop metafield.
 # -----------------------------------------------------------------------------------------
 # celebration: A dict with 'id' and 'orders' keys
-# store_name: A name of a Shopify store for the API call
+# store_url: The canonical myshopify.com URL for the store
 # api_token: A Shopify API token
 # Returns: True if successful, False otherwise
-def store_latest_celebration(celebration, store_name, api_token):
+def store_latest_celebration(celebration, store_url, api_token):
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": api_token}
 
     if not celebration.get("id"):
         # An ID isn't already available, so we're storing our data as a metafield
         # for the first time.
 
-        url = REST_ENDPOINT.format(store_name, METAFIELD_ENDPOINT)
+        url = REST_ENDPOINT.format(store_url, METAFIELD_ENDPOINT)
 
         payload = {
             "namespace": METAFIELD_NAMESPACE,
@@ -246,7 +271,7 @@ def store_latest_celebration(celebration, store_name, api_token):
 
         response = http.post(url = url, headers = headers, json_body = {"metafield": payload})
         if response.status_code != 201:
-            print("store_latest_celebration Error ❌: Status code %d, URL %s, Body %s" % (response.status_code, response.url, response.body()))
+            print("store_latest_celebration Error ❌: Status code %d" % response.status_code)
             return False
 
         return True
@@ -254,12 +279,12 @@ def store_latest_celebration(celebration, store_name, api_token):
     else:
         # An ID is available, so we're updating our existing metafield with a new order count.
 
-        url = REST_ENDPOINT.format(store_name, METAFIELD_UPDATE_ENDPOINT.format("%d" % celebration["id"]))
+        url = REST_ENDPOINT.format(store_url, METAFIELD_UPDATE_ENDPOINT.format("%d" % celebration["id"]))
         payload = {"value": celebration["orders"]}
         response = http.put(url = url, headers = headers, json_body = {"metafield": payload})
 
         if response.status_code != 200:
-            print("store_latest_celebration Error ❌: Status code %d, URL %s, Body %s" % (response.status_code, response.url, response.body()))
+            print("store_latest_celebration Error ❌: Status code %d" % response.status_code)
             return False
 
         return True
@@ -267,23 +292,24 @@ def store_latest_celebration(celebration, store_name, api_token):
 # GET ORDER COUNT
 # Gets a number of orders for a provided store name using a provided API token
 # -----------------------------------------------------------------------------------------
-# store_name: A store name
+# store_url: The canonical myshopify.com URL for the store
 # api_token: An API token
 # Returns: A number representing the order count for a store, or -1 if the count couldn't be fetched
-def get_order_count(store_name, api_token):
+def get_order_count(store_url, api_token):
     # Check our cache
-    cache_key = CACHE_ID_ORDERS.format(hash.sha1(store_name), hash.sha1(api_token))
+    cache_key = CACHE_ID_ORDERS.format(hash.sha1(store_url), hash.sha1(api_token))
     cached_orders = cache.get(cache_key)
 
     if not cached_orders:
         # Nothing was in the cache, so fetch our orders now
-        url = REST_ENDPOINT.format(store_name, COUNT_ENDPOINT)
+        url = REST_ENDPOINT.format(store_url, COUNT_ENDPOINT)
         headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": api_token}
         response = http.get(url = url, params = {"status": "any"}, headers = headers, ttl_seconds = CACHE_TTL)
+        body = response.body()
 
         # If there was any error, return -1
-        if response.status_code != 200:
-            print("get_order_count Error ❌: Status code %d, URL %s, Body %s" % (response.status_code, response.url, response.body()))
+        if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+            print("get_order_count Error ❌: Status code %d" % response.status_code)
             return -1
 
         order_count = response.json()
@@ -294,6 +320,8 @@ def get_order_count(store_name, api_token):
         order_count = json.decode(cached_orders)
 
     # Return our count value
+    if type(order_count) != "dict" or type(order_count.get("count")) != "int":
+        return -1
     return order_count["count"]
 
 # Error View
@@ -334,14 +362,14 @@ def get_schema():
             schema.Text(
                 id = "api_token",
                 name = "API Token",
-                desc = "The API Token for your Shopify Private App",
+                desc = "A Shopify custom-app Admin API token with order and metafield access",
                 icon = "key",
                 secret = True,
             ),
             schema.Text(
-                id = "store_name",
-                name = "Shopify Store Name",
-                desc = "The Shopify store name used for API access",
+                id = "store_url",
+                name = "Shopify Store URL",
+                desc = "Your full https://store.myshopify.com URL",
                 icon = "store",
             ),
         ],

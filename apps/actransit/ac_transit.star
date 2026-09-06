@@ -7,44 +7,39 @@ Author: wshue0
 
 load("encoding/json.star", "json")
 load("http.star", "http")
-load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 PREDICTIONS_URL = "https://api.actransit.org/transit/actrealtime/prediction"
 DEFAULT_STOPID = "55652"
-ENCRYPTED_API_KEY = "AV6+xWcEWbfPDnnshqd2+XMVm/XeCQQoZ5B3271apLGxNAmnIlBL9M4N1RstU9I4WP0u6iEFKfmq0o/aFtoryFzlOSRBZyvLBA5E27riAuKhZyAMvVR3rzgQd29sv3GL74D/TfUaiHwYquPJ5TeOoRhJNduNv2qQT8LjGjjXEpfNiZsHIeE="
-LIST_STOPS_URL = "https://api.actransit.org/transit/stops"
 AC_TRANSIT_TIME_ZONE = "America/Los_Angeles"
 AC_TRANSIT_TIME_LAYOUT = "20060102 15:04"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 def main(config):
     # Initialize API token, bus stop, and max predictions number with fallbacks
     api_key = config.get("api_key")
-    if not api_key:
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
         return render.Root(
             child = render.WrappedText("API key not set. Please configure.", color = "#ff0000"),
         )
 
-    stop_id = config.get("stop_id")
+    stop_config = config.get("stop_id") or DEFAULT_STOPID
+    stop_matches = re.findall(r'"value"\s*:\s*"([0-9]{1,10})"', stop_config) if type(stop_config) == "string" else []
+    stop_id = stop_config if type(stop_config) == "string" and stop_config.isdigit() and len(stop_config) <= 10 else stop_matches[0] if stop_matches else None
     if stop_id == None:
-        stop_id = DEFAULT_STOPID
-    else:
-        stop_id = json.decode(stop_id)["value"]
+        return render.Root(child = render.WrappedText("Enter a valid AC Transit stop ID.", color = "#ff0000"))
 
-    predictions_max = config.get("predictions_max")
-    if predictions_max == None:
-        predictions_max = 2
-    else:
-        predictions_max = json.decode(config.get("predictions_max"))
+    predictions_config = config.get("predictions_max", "2")
+    predictions_max = int(predictions_config) if predictions_config in ["1", "2", "3"] else 2
 
     # Call API to get predictions for the given stop
     data = get_times(stop_id, api_key)
-    if "bustime-response" not in data or "prd" not in data["bustime-response"]:
-        predictions = []
-    else:
-        predictions = data["bustime-response"]["prd"]
+    response_data = data.get("bustime-response") if type(data) == "dict" else None
+    predictions = response_data.get("prd") if type(response_data) == "dict" else None
+    predictions = predictions[:100] if type(predictions) == "list" else []
 
     num_predictions = len(predictions)
     bus_entries = {}
@@ -52,9 +47,17 @@ def main(config):
     # Create dictionary entry for each unique bus route
     # An entry contains a bus name (usually a number), route (a locale), and an array of departure times in minutes
     for i in range(0, num_predictions):
-        diff = time_from_now(predictions[i]["prdtm"])
-        bus = predictions[i]["rtdd"]
-        route = predictions[i]["rtdir"]
+        prediction = predictions[i]
+        timestamp = prediction.get("prdtm") if type(prediction) == "dict" else None
+        bus = prediction.get("rtdd") if type(prediction) == "dict" else None
+        route = prediction.get("rtdir") if type(prediction) == "dict" else None
+        if type(timestamp) != "string" or not re.match(r"^[0-9]{8} [0-9]{2}:[0-9]{2}$", timestamp) or type(bus) != "string" or type(route) != "string":
+            continue
+        diff = time_from_now(timestamp)
+        if diff < 0:
+            continue
+        bus = bus[:20]
+        route = route[:160]
         route_key = bus + route
         if not route_key in bus_entries:
             bus_entries[route_key] = {"bus": bus, "route": route, "departures": [diff]}
@@ -270,10 +273,6 @@ def main(config):
             ),
         )
 
-def distance(stop, location):
-    # Distance metric for sorting stops
-    return math.pow(stop["Latitude"] - float(location["lat"]), 2) + math.pow(stop["Longitude"] - float(location["lng"]), 2)
-
 def time_from_now(ac_timestamp):
     # Calculates an ETA in minutes using the AC Transit timestamp
     now = time.now().in_location(AC_TRANSIT_TIME_ZONE)
@@ -284,44 +283,20 @@ def time_from_now(ac_timestamp):
 def get_displayed_times(times, predictions_max):
     # Transforms list of departures times in integers to a comma-delimited string
     # Additionally substitutes "0 min" with "now"
-    sorted(times, lambda t: t)
-    times = times[:predictions_max]
+    times = sorted(times)[:predictions_max]
     if len(times) == 1 and times[0] == 0:
         return "now"
     times = [str(t) if t != 0 else "now" for t in times]
     return "%s min" % ",".join(times)
 
-def get_stops(location, config):
-    # Hits the AC Transit API to get a list of all stops and then returns the 20 nearest based on location
-    api_key = config.get("api_key")
-    if not api_key:
-        return [schema.Option(display = "API key not set", value = "")]
-    loc = json.decode(location)
-
-    res = http.get(
-        LIST_STOPS_URL,
-        params = {
-            "token": api_key,
-        },
-    )
-    if res.status_code != 200:
-        fail("AC Transit request failed with status %d", res.status_code)
-
-    stops = res.json()
-    return [
-        schema.Option(display = stop["Name"], value = str(int(stop["StopId"])))
-        for stop in sorted(stops, key = lambda x: distance(x, loc))[:20]
-    ]
-
 def get_times(stop_id, api_key):
     # Hits AC Transit's prediction api if there are no cache hits
-    rep = http.get(PREDICTIONS_URL, params = {"stpid": stop_id, "token": api_key}, ttl_seconds = 20)
+    rep = http.get(PREDICTIONS_URL, params = {"stpid": stop_id, "token": api_key})
     if rep.status_code != 200:
-        # Instead of failing, return an empty list of predictions to trigger the 'No Data' display.
-        print("Predictions request failed with status ", rep.status_code)
         return {"bustime-response": {"prd": []}}
 
-    return rep.json()
+    body = rep.body()
+    return json.decode(body, None) if len(body) <= MAX_RESPONSE_BYTES else None
 
 def get_schema():
     # The user selects a stop from a drop-down menu of the 20 closest stops sourced from AC Transit
@@ -357,12 +332,12 @@ def get_schema():
                 icon = "key",
                 secret = True,
             ),
-            schema.LocationBased(
+            schema.Text(
                 id = "stop_id",
                 name = "Bus Stop",
-                desc = "Choose from the 20 nearest stops",
+                desc = "AC Transit stop ID shown on the stop sign or in the official stop list.",
                 icon = "bus",
-                handler = get_stops,
+                default = DEFAULT_STOPID,
             ),
         ],
     )

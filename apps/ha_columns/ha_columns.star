@@ -5,6 +5,7 @@ Description: Displays Home Assistant sensors in configurable columns (2-4 column
 Author: Mitchell Scott
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "canvas", "render")
@@ -19,6 +20,7 @@ DEFAULT_COLUMN_COUNT = "2"
 DEFAULT_LABEL_COLOR = "#FF0"
 DEFAULT_VALUE_COLOR = "#FFF"
 DEFAULT_DIVIDER_COLOR = "#444"
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 def _get_default_fonts(column_count, scale):
     if column_count >= 4:
@@ -44,7 +46,8 @@ def _format_sensor_value(value, decimals):
 
 def main(config):
     scale = 2 if canvas.is2x() else 1
-    column_count = int(config.get("column_count", DEFAULT_COLUMN_COUNT))
+    column_count_value = config.get("column_count", DEFAULT_COLUMN_COUNT)
+    column_count = int(column_count_value) if column_count_value in ["2", "3", "4"] else 2
 
     columns = []
     for i in range(1, column_count + 1):
@@ -96,19 +99,24 @@ def main(config):
     )
 
 def fetch_sensor(entity_id, config):
-    if not entity_id or not config.get("ha_url") or not config.get("ha_token"):
+    ha_url = normalized_url(config.get("ha_url"))
+    token = config.get("ha_token")
+    if not valid_entity(entity_id) or not ha_url or not valid_token(token):
         return None
 
-    url = config.get("ha_url") + "/api/states/" + entity_id
-    headers = {"Authorization": "Bearer " + config.get("ha_token")}
+    url = ha_url + "/api/states/" + entity_id
+    headers = {"Authorization": "Bearer " + token}
 
-    rep = http.get(url, ttl_seconds = 60, headers = headers)
-    if rep.status_code != 200:
+    rep = http.get(url, headers = headers)
+    body = rep.body()
+    if rep.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
         return None
 
-    data = rep.json()
+    data = json.decode(body, {})
+    if type(data) != "dict":
+        return None
     state = data.get("state")
-    if not state:
+    if type(state) != "string" or not state or len(state) > 64:
         return None
 
     isnum = state.strip().lstrip("-").replace(".", "", 1).isdigit()
@@ -116,7 +124,11 @@ def fetch_sensor(entity_id, config):
         return None
 
     attributes = data.get("attributes", {})
+    if type(attributes) != "dict":
+        attributes = {}
     unit = attributes.get("unit_of_measurement", "")
+    if type(unit) != "string" or len(unit) > 16:
+        unit = ""
 
     return {
         "value": float(state),
@@ -295,61 +307,70 @@ def get_schema():
         for key, value in sorted(render.fonts.items())
     ])
 
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Text(
-                id = "ha_url",
-                name = "Home Assistant URL",
-                desc = "Full URL to your Home Assistant instance (e.g., http://homeassistant.local:8123)",
-                icon = "house",
-            ),
-            schema.Text(
-                id = "ha_token",
-                name = "Home Assistant Token",
-                desc = "Long-lived access token from User Settings",
-                icon = "key",
-                secret = True,
-            ),
-            schema.Dropdown(
-                id = "column_count",
-                name = "Number of Columns",
-                desc = "How many columns to display (2-4)",
-                icon = "table",
-                options = [
-                    schema.Option(display = "2 Columns", value = "2"),
-                    schema.Option(display = "3 Columns", value = "3"),
-                    schema.Option(display = "4 Columns", value = "4"),
-                ],
-                default = DEFAULT_COLUMN_COUNT,
-            ),
-            schema.Dropdown(
-                id = "label_font",
-                name = "Label Font",
-                desc = "Font for column labels",
-                icon = "font",
-                options = fonts,
-                default = FONT_DEFAULT,
-            ),
-            schema.Dropdown(
-                id = "value_font",
-                name = "Value Font",
-                desc = "Font for sensor values",
-                icon = "font",
-                options = fonts,
-                default = FONT_DEFAULT,
-            ),
-            schema.Color(
-                id = "divider_color",
-                name = "Divider Color",
-                desc = "Color for column dividers",
-                icon = "brush",
-                default = DEFAULT_DIVIDER_COLOR,
-            ),
-            schema.Generated(
-                id = "generated_columns",
-                source = "column_count",
-                handler = generate_column_fields,
-            ),
-        ],
-    )
+    fields = [
+        schema.Text(
+            id = "ha_url",
+            name = "Home Assistant URL",
+            desc = "Public HTTPS root URL, such as a Home Assistant Cloud remote URL.",
+            icon = "house",
+        ),
+        schema.Text(
+            id = "ha_token",
+            name = "Home Assistant Token",
+            desc = "Long-lived access token from User Settings",
+            icon = "key",
+            secret = True,
+        ),
+        schema.Dropdown(
+            id = "column_count",
+            name = "Number of Columns",
+            desc = "How many columns to display (2-4)",
+            icon = "table",
+            options = [
+                schema.Option(display = "2 Columns", value = "2"),
+                schema.Option(display = "3 Columns", value = "3"),
+                schema.Option(display = "4 Columns", value = "4"),
+            ],
+            default = DEFAULT_COLUMN_COUNT,
+        ),
+        schema.Dropdown(
+            id = "label_font",
+            name = "Label Font",
+            desc = "Font for column labels",
+            icon = "font",
+            options = fonts,
+            default = FONT_DEFAULT,
+        ),
+        schema.Dropdown(
+            id = "value_font",
+            name = "Value Font",
+            desc = "Font for sensor values",
+            icon = "font",
+            options = fonts,
+            default = FONT_DEFAULT,
+        ),
+        schema.Color(
+            id = "divider_color",
+            name = "Divider Color",
+            desc = "Color for column dividers",
+            icon = "brush",
+            default = DEFAULT_DIVIDER_COLOR,
+        ),
+    ]
+    fields.extend(generate_column_fields(4))
+    return schema.Schema(version = "1", fields = fields)
+
+def normalized_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://") or any([char in value for char in [" ", "\t", "\r", "\n", "?", "#"]]):
+        return ""
+    parts = value.split("/", 3)
+    host = parts[2].lower() if len(parts) >= 3 else ""
+    if not host or "@" in host or ":" in host:
+        return ""
+    return value.rstrip("/")
+
+def valid_entity(value):
+    return type(value) == "string" and len(value) >= 3 and len(value) <= 128 and "." in value and all([char.isalnum() or char in "._-" for char in value.elems()])
+
+def valid_token(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 4096 and not any([char in value for char in ["\r", "\n"]])

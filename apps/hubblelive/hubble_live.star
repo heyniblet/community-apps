@@ -5,7 +5,6 @@ Description: Displays the currently scheduled observation status of the Hubble S
 Author: Brian McLaughlin (SpinStabilized)
 """
 
-load("cache.star", "cache")
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -13,7 +12,6 @@ load("humanize.star", "humanize")
 load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 #-------------------------------------------------------------------------------
 # Constants
@@ -47,11 +45,6 @@ OBS_STATE_COLORS = {
 SCREEN_HEIGHT = 32
 SCREEN_WIDTH = 64
 SMALL_FONT = "tom-thumb"
-
-# Constants for debugging. Set to true to override cache and force the api
-# calls.
-CACHE_OVERRIDE = False
-# CACHE_OVERRIDE = True
 
 #-------------------------------------------------------------------------------
 # Utilities
@@ -90,57 +83,32 @@ def get_hst_live():
     Returns:
        A dictionary of information regarding the current Hubble observation.
     """
-    data = cache.get("cached_observation")
-    if data and not CACHE_OVERRIDE:
-        obs = json.decode(data)
-    else:
-        api_reply = http.get(SPACE_TELESCOPE_LIVE_API)
-        if api_reply.status_code == HTTP_STATUS_OK:
-            obsjson_raw = api_reply.body()
-        else:
-            obsjson_raw = "{}"
+    api_reply = http.get(SPACE_TELESCOPE_LIVE_API, ttl_seconds = DEFAULT_CACHE_TIMEOUT)
+    body = api_reply.body()
+    raw = json.decode(body, {}) if api_reply.status_code == HTTP_STATUS_OK and body and len(body) <= 256 * 1024 else {}
+    if type(raw) != "dict":
+        raw = {}
 
-        obs = json.decode(obsjson_raw)
-
-        # Ensure 'state' key exists
-        if "state" not in obs:
-            obs["state"] = "Unknown"
-
-        if obs.get("what_am_i_looking_at", None) == "Hubble is acquiring a new target":
-            obs["state"] = "Acquiring New Target"
-            obs["target_name"] = ""
-            obs["ra"] = ""
-            obs["dec"] = ""
-            obs["science_instrument_acronym"] = ""
-            obs["reference_image_url"] = ""
-            obs["reference_image_base64"] = ""
-            obs["proposal_id"] = ""
-            obs["category"] = ""
-
-        if obs.get("reference_image_url", None):
-            obs["reference_image_base64"] = get_ref_image(obs["reference_image_url"])
-        else:
-            obs["reference_image_url"] = ""
-
-        if obs.get("ra", None) == None or obs.get("ra") == "":
-            obs["ra"] = ""
-        else:
-            obs["ra"] = humanize.float("+#.##", float(obs["ra"]))
-
-        if obs.get("dec", None) == None or obs.get("dec") == "":
-            obs["dec"] = ""
-        else:
-            obs["dec"] = humanize.float("+#.##", float(obs["dec"]))
-
-        if obs.get("end_at", None) != None:
-            cache_timeout = time.parse_time(obs["end_at"]) - time.now().in_location("UTC")
-            cache_timeout = int(cache_timeout.seconds) if cache_timeout.seconds >= 0 else 0
-        else:
-            cache_timeout = DEFAULT_CACHE_TIMEOUT
-
-        cache.set("cached_observation", json.encode(obs), ttl_seconds = cache_timeout)
-
+    acquiring = raw.get("what_am_i_looking_at") == "Hubble is acquiring a new target"
+    obs = {
+        "state": "Acquiring New Target" if acquiring else safe_text(raw.get("state"), 40, "Unknown"),
+        "target_name": "" if acquiring else safe_text(raw.get("target_name"), 120),
+        "science_instrument_acronym": "" if acquiring else safe_text(raw.get("science_instrument_acronym"), 40),
+        "category": "" if acquiring else safe_text(raw.get("category"), 80),
+        "ra": safe_coordinate(raw.get("ra")),
+        "dec": safe_coordinate(raw.get("dec")),
+        "reference_image_base64": "",
+    }
+    image_url = raw.get("reference_image_url")
+    if not acquiring and type(image_url) == "string":
+        obs["reference_image_base64"] = get_ref_image(image_url)
     return obs
+
+def safe_text(value, limit, default = ""):
+    return value[:limit] if type(value) == "string" and value else default
+
+def safe_coordinate(value):
+    return humanize.float("+#.##", float(value)) if type(value) in ["int", "float"] else ""
 
 def get_ref_image(image_url):
     """Retrieve an image associated with the observation target.
@@ -152,11 +120,15 @@ def get_ref_image(image_url):
         A base64 encoded version of the image or an empty string.
     """
     image_url = re.sub(r"&opt=LG", "", image_url, count = 1)
+    if len(image_url) > 2048 or not image_url.startswith("https://spacetelescopelive.org/"):
+        return ""
     image_src = ""
 
-    api_reply = http.get(image_url)
-    if api_reply.status_code == HTTP_STATUS_OK:
-        image_src = base64.encode(api_reply.body())
+    api_reply = http.get(image_url, ttl_seconds = 3600)
+    body = api_reply.body()
+    content_type = api_reply.headers.get("Content-Type", "").lower()
+    if api_reply.status_code == HTTP_STATUS_OK and body and len(body) <= 2 * 1024 * 1024 and content_type.startswith("image/"):
+        image_src = base64.encode(body)
     return image_src
 
 #-------------------------------------------------------------------------------

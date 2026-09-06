@@ -5,6 +5,7 @@ Description: Provides lesson and review counts for WaniKani.
 Author: Bardiches
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
@@ -51,7 +52,10 @@ NEW_REVIEW_PLURAL = "new reviews"
 ERROR_COUNT_TEXT = "?"
 
 def get_wk_summary(headers):
-    return http.get(WK_SUMMARY_URL, headers = headers, ttl_seconds = WK_TTL).json().get("data")
+    response = http.get(WK_SUMMARY_URL, headers = headers, ttl_seconds = WK_TTL)
+    body = response.body()
+    data = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 512 * 1024 else {}
+    return data.get("data") if type(data) == "dict" else None
 
 def get_next_wk_review(reviews):
     for review in reviews[1:]:
@@ -61,7 +65,7 @@ def get_next_wk_review(reviews):
     return None
 
 def get_wk_data(api_token):
-    if api_token == None:
+    if not api_token or len(api_token) > 512 or "\n" in api_token or "\r" in api_token:
         return dict({"error": NO_API_TOKEN_ERROR_TEXT}, **DEFAULT_WK_DATA)
 
     headers = {"AUTHORIZATION": WK_AUTHORIZATION_HEADER % api_token}
@@ -169,6 +173,7 @@ def get_schema():
                 name = API_TOKEN_NAME,
                 desc = API_TOKEN_DESC,
                 icon = API_TOKEN_ICON,
+                secret = True,
             ),
         ],
     )

@@ -15,44 +15,55 @@ load("xpath.star", "xpath")
 LOGO = LOGO_ASSET.readall()
 
 DEFAULT_CATEGORY = "Algemeen"
+VALID_CATEGORIES = ["Algemeen", "Economie", "Sport", "Achterklap", "Opmerkelijk", "Muziek", "Film", "Wetenschap", "Tech", "Gezondheid", "Podcast"]
 
 def get_news_feed(category = DEFAULT_CATEGORY, ttl_seconds = 60 * 5):
+    if category not in VALID_CATEGORIES:
+        category = DEFAULT_CATEGORY
     url = "https://www.nu.nl/rss/{}".format(category)
     response = http.get(url = url, ttl_seconds = ttl_seconds)
     if response.status_code != 200:
         fail("Nu.nl request failed with status %d @ %s", response.status_code, url)
-    return response.body()
+    body = response.body()
+    if not body or len(body) > 524288:
+        fail("Nu.nl returned an invalid feed")
+    return body
 
 def get_nth_item_from_raw_xml(raw_xml, nth = 1):
     feed_item = xpath.loads(raw_xml).query_node("//rss/channel/item[{}]".format(nth))
+    if feed_item == None:
+        return {"title": "Geen recent nieuws", "image": ""}
     return {
-        "title": feed_item.query("/title"),
-        "image": feed_item.query("/enclosure/@url"),
+        "title": feed_item.query("/title") or "Geen recent nieuws",
+        "image": feed_item.query("/enclosure/@url") or "",
     }
 
 def get_image(image_url):
+    if type(image_url) != "string" or not image_url.startswith("https://images.nu.nl/"):
+        return None
     response = http.get(url = image_url.replace("sqr256.jpg", "std160"), ttl_seconds = 60 * 60 * 24 * 7)
     if response.status_code != 200:
-        fail("Image from nu.nl request failed with status %d @ %s", response.status_code, image_url)
-    return response.body()
+        return None
+    body = response.body()
+    return body if body and len(body) <= 2000000 else None
 
 def main(config):
     category = config.str("category", DEFAULT_CATEGORY)
+    if category not in VALID_CATEGORIES:
+        category = DEFAULT_CATEGORY
 
     news_feed = get_news_feed(category)
     nth_item = random.number(1, 10)
     news_item = get_nth_item_from_raw_xml(news_feed, nth_item)
+    image = get_image(news_item["image"])
+    background = render.Image(src = image, width = 64, height = 32) if image else render.Box(width = 64, height = 32, color = "#000")
 
     return render.Root(
         show_full_animation = True,
         max_age = 60 * 5,
         child = render.Stack(
             children = [
-                render.Image(
-                    src = get_image(news_item["image"]),
-                    width = 64,
-                    height = 32,
-                ),
+                background,
                 render.Column(
                     main_align = "space_between",
                     expanded = True,

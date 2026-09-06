@@ -5,6 +5,7 @@ Description: Shows random stills or animations from the Frinkiac archive with se
 Author: radiocolin
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
 load("render.star", "canvas", "render")
@@ -36,16 +37,42 @@ EPISODE_COUNTS = {
 
 # 24 Hour Cache for speed
 CACHE_TTL = 86400
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_RESPONSE_BYTES = 512 * 1024
+
+def config_int(config, field, fallback):
+    value = str(config.get(field, fallback))
+    return int(value) if value.isdigit() and len(value) <= 2 else fallback
+
+def fetch_frames(episode, timestamp, before, after):
+    response = http.get(FRAMES_URL_BASE % (episode, timestamp, before, after), ttl_seconds = CACHE_TTL)
+    body = response.body()
+    payload = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    frames = []
+    for item in payload[:500] if type(payload) == "list" else []:
+        item_episode = item.get("Episode") if type(item) == "dict" else None
+        item_timestamp = item.get("Timestamp") if type(item) == "dict" else None
+        if item_episode == episode and type(item_timestamp) in ("int", "float") and 0 <= item_timestamp and item_timestamp <= 10000000:
+            frames.append({"Episode": episode, "Timestamp": int(item_timestamp)})
+    return frames
+
+def fetch_image(episode, timestamp):
+    response = http.get(IMAGE_URL_BASE % (episode, timestamp), ttl_seconds = CACHE_TTL)
+    body = response.body()
+    octets = body.elem_ords()
+    if response.status_code != 200 or len(body) < 2 or len(body) > MAX_IMAGE_BYTES or octets[0] != 255 or octets[1] != 216:
+        return None
+    return body
 
 def main(config):
     # 1. Configuration
-    min_s = int(config.get("min_season", "1"))
-    max_s = int(config.get("max_season", "17"))
+    min_s = config_int(config, "min_season", 1)
+    max_s = config_int(config, "max_season", 17)
     include_movie = config.bool("include_movie", True)
     animate = config.bool("animate", False)
 
-    actual_min = min_s if min_s >= 1 else 1
-    actual_max = max_s if max_s <= 17 else 17
+    actual_min = min_s if 1 <= min_s and min_s <= 17 else 1
+    actual_max = max_s if 1 <= max_s and max_s <= 17 else 17
     if actual_min > actual_max:
         actual_min, actual_max = actual_max, actual_min
 
@@ -67,12 +94,10 @@ def main(config):
             anchor_ts = random.number(60000, 1200000)
 
         # Get frames around anchor (Small window for faster JSON parsing)
-        res = http.get(FRAMES_URL_BASE % (ep_code, anchor_ts, 30000, 30000), ttl_seconds = CACHE_TTL)
-        if res.status_code == 200:
-            frames_in_window = res.json()
-            if len(frames_in_window) > 0:
-                frame = frames_in_window[random.number(0, len(frames_in_window) - 1)]
-                break
+        frames_in_window = fetch_frames(ep_code, anchor_ts, 30000, 30000)
+        if frames_in_window:
+            frame = frames_in_window[random.number(0, len(frames_in_window) - 1)]
+            break
 
     if not frame:
         return []
@@ -89,9 +114,8 @@ def main(config):
     # 3. Optimized Animation Retrieval
     if animate:
         # Request 15s window
-        frames_res = http.get(FRAMES_URL_BASE % (episode_code, timestamp, 0, 15000), ttl_seconds = CACHE_TTL)
-        if frames_res.status_code == 200:
-            frames_data = frames_res.json()
+        frames_data = fetch_frames(episode_code, timestamp, 0, 15000)
+        if frames_data:
             image_frames = []
 
             # PERFORMANCE LIMIT: 18 frames total (~1.2 fps)
@@ -109,9 +133,9 @@ def main(config):
                 f_item = frames_data[i]
 
                 # Each image call is cached for 24h
-                f_img_res = http.get(IMAGE_URL_BASE % (f_item.get("Episode"), int(f_item.get("Timestamp"))), ttl_seconds = CACHE_TTL)
-                if f_img_res.status_code == 200:
-                    image_frames.append(render.Image(src = f_img_res.body(), width = img_w, height = height))
+                image = fetch_image(f_item["Episode"], f_item["Timestamp"])
+                if image:
+                    image_frames.append(render.Image(src = image, width = img_w, height = height))
                     count += 1
 
             if len(image_frames) > 0:
@@ -127,11 +151,11 @@ def main(config):
                 )
 
     # 4. Static Render
-    img_res = http.get(IMAGE_URL_BASE % (episode_code, timestamp), ttl_seconds = CACHE_TTL)
-    if img_res.status_code != 200:
+    image = fetch_image(episode_code, timestamp)
+    if not image:
         return []
 
-    children = [render.Image(src = img_res.body(), width = img_w, height = height)]
+    children = [render.Image(src = image, width = img_w, height = height)]
     if not is_movie:
         children.append(render_sidebar(episode_code, canvas.is2x(), text_w, height))
 

@@ -10,8 +10,7 @@ load("images/no_deal.png", NO_DEAL_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
 
-MEH_URL = "https://meh.com/api/1/current.json?apikey="
-TTL_SECONDS = 600
+MEH_URL = "https://meh.com/api/1/current.json"
 
 NO_DEAL_IMAGE = NO_DEAL_ASSET.readall()
 
@@ -79,10 +78,12 @@ def main(config):
 def get_deal(api_key):
     deal = {"title": "No Deal", "items": [{"price": 0}]}
 
-    if api_key != None:
-        response = http.get(MEH_URL + api_key, ttl_seconds = TTL_SECONDS)
+    if api_key:
+        response = http.get(MEH_URL, params = {"apikey": api_key})
         if response.status_code == 200:
-            deal = response.json()["deal"]
+            candidate = response.json().get("deal", {})
+            if candidate.get("title") and candidate.get("items"):
+                deal = candidate
 
     return deal
 
@@ -92,7 +93,9 @@ def get_image(deal):
     item = deal["items"][0]
     if "photo" in item.keys():
         photo_url = item["photo"]
-        response = http.get(photo_url, ttl_seconds = TTL_SECONDS)
+        if not photo_url.startswith("https://media.stores.com/mediocre/"):
+            return image
+        response = http.get(photo_url)
         if response.status_code == 200:
             image = response.body()
 

@@ -13,6 +13,8 @@ load("schema.star", "schema")
 load("xpath.star", "xpath")
 
 API_URL = "https://nasstatus.faa.gov/api/airport-status-information"
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_ENTRIES = 100
 MIN_PAGE_DURATION = 60  # 60 frames * 50ms = 3000ms
 
 demo_data = [
@@ -65,10 +67,12 @@ def get_schema():
     )
 
 def main(config):
-    favorites = config.get("favorites", "")
-    mode = config.get("mode", "demo")
+    favorites = str(config.get("favorites", "") or "")
+    mode = config.get("mode", "favorites_first")
+    if mode not in ["favorites_only", "favorites_first", "demo"]:
+        mode = "favorites_first"
     max_airports = validate_int(config.get("max_airports", 0))
-    if max_airports < 0:
+    if max_airports < 0 or max_airports > MAX_ENTRIES:
         max_airports = 0
 
     info = demo_data
@@ -197,33 +201,38 @@ def format_float(n):
 
 def load_raw():
     resp = http.get(API_URL, ttl_seconds = 60)
-    if resp.status_code != 200:
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES or not body.startswith("<AIRPORT_STATUS_INFORMATION>"):
         return []
 
-    body = resp.body()
     xp = xpath.loads(body)
     result = []
 
-    ground_delays = xp.query_all_nodes("/AIRPORT_STATUS_INFORMATION/Delay_type/Ground_Delay_List/Ground_Delay")
-    result += [parse_ground_delay(gd) for gd in ground_delays]
+    groups = [
+        ("/AIRPORT_STATUS_INFORMATION/Delay_type/Ground_Delay_List/Ground_Delay", parse_ground_delay),
+        ("/AIRPORT_STATUS_INFORMATION/Delay_type/Ground_Stop_List/Program", parse_ground_stop),
+        ("/AIRPORT_STATUS_INFORMATION/Delay_type/Arrival_Departure_Delay_List/Delay", parse_general_delay),
+    ]
+    for path, parser in groups:
+        for node in xp.query_all_nodes(path)[:MAX_ENTRIES]:
+            entry = parser(node)
+            if entry:
+                result.append(entry)
 
-    ground_stops = xp.query_all_nodes("/AIRPORT_STATUS_INFORMATION/Delay_type/Ground_Stop_List/Program")
-    result += [parse_ground_stop(gs) for gs in ground_stops]
-
-    general_delays = xp.query_all_nodes("/AIRPORT_STATUS_INFORMATION/Delay_type/Arrival_Departure_Delay_List/Delay")
-    result += [parse_general_delay(d) for d in general_delays]
-
-    return result
+    return result[:MAX_ENTRIES]
 
 def parse_general_delay(xp):
-    airport = xp.query("/ARPT")
+    airport = safe_airport(xp.query("/ARPT"))
 
     reason = parse_reason(xp.query("/Reason"))
 
     min_minutes = parse_duration(xp.query("/Arrival_Departure/Min"))
     max_minutes = parse_duration(xp.query("/Arrival_Departure/Max"))
 
-    kind = xp.query("/Arrival_Departure/@Type").lower()
+    kind_value = xp.query("/Arrival_Departure/@Type")
+    kind = kind_value.lower() if type(kind_value) == "string" else ""
+    if not airport or kind not in ["arrival", "departure"] or min_minutes < 0 or max_minutes < min_minutes:
+        return None
 
     return {
         "type": kind + "_delay",
@@ -234,7 +243,7 @@ def parse_general_delay(xp):
     }
 
 def parse_ground_stop(xp):
-    airport = xp.query("/ARPT")
+    airport = safe_airport(xp.query("/ARPT"))
     reason = parse_reason(xp.query("/Reason"))
     end_time = parse_end_time(xp.query("/End_Time"))
 
@@ -243,10 +252,10 @@ def parse_ground_stop(xp):
         "airport": airport,
         "reason": reason,
         "end_time": end_time,
-    }
+    } if airport and end_time else None
 
 def parse_ground_delay(xp):
-    airport = xp.query("/ARPT")
+    airport = safe_airport(xp.query("/ARPT"))
     reason = parse_reason(xp.query("/Reason"))
 
     avg_minutes = parse_duration(xp.query("/Avg"))
@@ -258,10 +267,12 @@ def parse_ground_delay(xp):
         "reason": reason,
         "avg_minutes": avg_minutes,
         "max_minutes": max_minutes,
-    }
+    } if airport and avg_minutes >= 0 and max_minutes >= avg_minutes else None
 
 # strips out timezone specifier and spaces for brevity
 def parse_end_time(end_time):
+    if type(end_time) != "string" or len(end_time) > 64:
+        return ""
     end_time = end_time.lower()
     digits = "0123456789"
 
@@ -274,6 +285,9 @@ def parse_end_time(end_time):
     return "".join(result)
 
 def parse_reason(reason):
+    if type(reason) != "string":
+        return "Unknown"
+    reason = reason[:160]
     reason = reason.upper()
     if not reason:
         return "Unknown"
@@ -296,9 +310,13 @@ def midpoint(a, b):
 
 # parses strings like "1 hour and 15 minutes" into an integer number of minutes
 def parse_duration(duration_string):
+    if type(duration_string) != "string" or len(duration_string) > 128:
+        return -1
+
     # without an arg, Starlark's split function splits on runs of whitespace (after stripping leading + trailing)
     parts = duration_string.split()
     total_minutes = 0
+    found = False
 
     for i in range(len(parts)):
         if validate_int(parts[i], -1) == -1:
@@ -313,13 +331,15 @@ def parse_duration(duration_string):
 
         if "hour" in unit:
             total_minutes += value * 60
+            found = True
         elif "minute" in unit:
             total_minutes += value
+            found = True
         else:
             # unknown string format
             return -1
 
-    return total_minutes
+    return total_minutes if found else -1
 
 def load_filtered(favorites, mode, max_airports):
     raw = load_raw()
@@ -337,7 +357,7 @@ def load_filtered(favorites, mode, max_airports):
     raw = sorted(raw, key = sort_key)
 
     # add favorites
-    faves = [s.strip().upper() for s in favorites.split(",")]
+    faves = [safe_airport(s) for s in favorites.split(",")[:20] if safe_airport(s)]
     result = []
     for entry in raw:
         if entry["airport"] in faves:
@@ -356,15 +376,15 @@ def load_filtered(favorites, mode, max_airports):
 
 # is there really no better way to do this? int() throws but Starlark has no try/except
 def validate_int(num_str, fallback = 0):
-    num_str = str(num_str)
-    valid = "-0123456789"
-    if len(num_str) == 0:
+    num_str = str(num_str).strip()
+    if not num_str:
         return fallback
-    for i in range(len(num_str)):
-        c = num_str[i]
-        if c not in valid:
-            return fallback
-    return int(num_str)
+    unsigned = num_str[1:] if num_str.startswith("-") else num_str
+    return int(num_str) if unsigned and len(unsigned) <= 6 and unsigned.isdigit() else fallback
+
+def safe_airport(value):
+    value = value.strip().upper() if type(value) == "string" else ""
+    return value if len(value) == 3 and value.isalnum() else None
 
 # hack, see https://github.com/tidbyt/pixlet/issues/823
 def MinDuration(child, min_duration):

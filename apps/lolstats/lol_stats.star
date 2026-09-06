@@ -23,6 +23,7 @@ MATCH_PATH = "/lol/match/v5/matches/"
 
 DEFAULT_QUEUE = "solo"
 DEFAULT_REGION = "NA1"
+VALID_REGIONS = ["NA1", "EUW1", "EUN1", "KR", "BR1", "ME1", "LA1", "LA2", "JP1", "OC1", "SG2", "TR1", "RU", "VN2", "TW2"]
 
 # standard components:
 win = render.Text(content = "W", color = "#00FF00", font = WL_FONT)
@@ -63,6 +64,8 @@ def main(config):
     configured_summoner = config.str("gamename", "")
     tag_line = config.str("tagline", "")
     region = config.str("region", "")
+    if region not in VALID_REGIONS:
+        region = DEFAULT_REGION
 
     summoner = struct(name = configured_summoner, summoner_name = configured_summoner, tag_line = tag_line, region = region)
 
@@ -475,19 +478,21 @@ def routing_domain(region):
         return "https://americas.api.riotgames.com"
 
 def region_domain(region):
+    if region not in VALID_REGIONS:
+        region = DEFAULT_REGION
     return "https://" + region.lower() + ".api.riotgames.com"
 
 # === RIOT API Fetching Functions
 def fetch_puuid(summoner, api_key):
     account_url = routing_domain(summoner.region) + ACCOUNT_PATH + summoner.summoner_name + "/" + summoner.tag_line
-    account_rep = http.get(account_url, headers = {"X-Riot-Token": api_key}, ttl_seconds = 60 * 60 * 10)
+    account_rep = http.get(account_url, headers = {"X-Riot-Token": api_key})
     if account_rep.status_code == 200:
         return 200, account_rep.json()["puuid"]
     return account_rep.status_code, None
 
 def fetch_summoner_stats(puuid, region, configured_queue, api_key):
     stats_url = region_domain(region) + STATS_PATH + puuid
-    stats_rep = http.get(stats_url, headers = {"X-Riot-Token": api_key}, ttl_seconds = 600)
+    stats_rep = http.get(stats_url, headers = {"X-Riot-Token": api_key})
     if stats_rep.status_code != 200:
         return stats_rep.status_code, None
     for d in stats_rep.json():
@@ -499,7 +504,7 @@ def fetch_summoner_stats(puuid, region, configured_queue, api_key):
 def fetch_match_ids(puuid, region, configured_queue, api_key):
     queue_filter = queue_id(configured_queue)
     match_url = routing_domain(region) + MATCHES_PATH + puuid + "/ids?queue=" + str(queue_filter)
-    matches_rep = http.get(match_url, headers = {"X-Riot-Token": api_key}, ttl_seconds = 600)
+    matches_rep = http.get(match_url, headers = {"X-Riot-Token": api_key})
     if matches_rep.status_code != 200:
         return matches_rep.status_code, []
     match_ids = matches_rep.json()
@@ -507,7 +512,7 @@ def fetch_match_ids(puuid, region, configured_queue, api_key):
 
 def fetch_match_data(puuid, region, match_id, api_key):
     match_details_url = routing_domain(region) + MATCH_PATH + match_id
-    match_details_rep = http.get(match_details_url, headers = {"X-Riot-Token": api_key}, ttl_seconds = 60 * 60 * 10)
+    match_details_rep = http.get(match_details_url, headers = {"X-Riot-Token": api_key})
     if match_details_rep.status_code != 200:
         return match_details_rep.status_code, {}
     match_data = match_details_rep.json()

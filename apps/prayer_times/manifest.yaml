@@ -6,7 +6,7 @@ desc: Displays the prayer times for today's date and also shows the remaining ti
 author: EslamMoh
 fileName: prayer_times.star
 packageName: prayertimes
-recommendedInterval: 5
+recommendedInterval: 1
 category: utilities
 tags:
   - lifestyle

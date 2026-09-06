@@ -21,7 +21,7 @@ ERROR_422 = "422"
 ERROR_UNKNOWN = "Unknown"
 
 MARKETSTACK_ICON_IMAGE = MARKETSTACK_DATA
-MARKETSTACK_PRICE_URL = "http://api.marketstack.com/v1/"
+MARKETSTACK_PRICE_URL = "https://api.marketstack.com/v1/"
 MARKETSTACK_PRICE_URL_KEY = "access_key="
 
 def main(config):

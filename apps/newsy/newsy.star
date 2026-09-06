@@ -3,11 +3,11 @@ Newsy — Tidbyt Pixlet applet.
 64x32 RSS headline ticker. Up to 3 configurable feeds.
 """
 
-load("render.star", "render")
 load("http.star", "http")
+load("random.star", "random")
+load("render.star", "render")
 load("schema.star", "schema")
 load("xpath.star", "xpath")
-load("random.star", "random")
 
 DEFAULT_FEED1 = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
 DEFAULT_FEED2 = "https://feeds.bbci.co.uk/news/rss.xml"
@@ -39,13 +39,18 @@ def main(config):
         current_feed_label = ""
         headlines = ["No active feeds"]
     else:
-        randomize = config.get("random_start", "true") == "true"
+        randomize = config.bool("random_start", True)
         if randomize and len(active_feeds) > 1:
             start_idx = random.number(0, len(active_feeds) - 1)
             active_feeds = active_feeds[start_idx:] + active_feeds[:start_idx]
 
-        current_url, current_feed_label = active_feeds[0]
-        headlines = _fetch_titles(current_url, max_items)
+        current_feed_label = ""
+        headlines = []
+        for current_url, label in active_feeds:
+            headlines = _fetch_titles(current_url, max_items)
+            if headlines:
+                current_feed_label = label
+                break
 
     if not headlines:
         ticker = "No headlines available"
@@ -120,13 +125,15 @@ def _label_for(url, default_url, default_name, slot_num):
         return "FEED %d" % slot_num if slot_num < 5 else "CUSTOM"
 
 def _fetch_titles(url, max_items):
+    if not url.startswith("https://"):
+        return []
     res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
     if res.status_code != 200:
-        return ["Feed unavailable"]
+        return []
 
     body = res.body()
-    if not body:
-        return ["Empty feed"]
+    if not body or len(body) > 512000:
+        return []
 
     doc = xpath.loads(body)
     titles = doc.query_all("/rss/channel/item/title")
@@ -141,8 +148,6 @@ def _fetch_titles(url, max_items):
         if len(cleaned) >= max_items:
             break
 
-    if not cleaned:
-        return ["No items"]
     return cleaned
 
 def get_schema():
@@ -152,35 +157,35 @@ def get_schema():
             schema.Text(
                 id = "feed1",
                 name = "Feed 1 (Google News)",
-                desc = "RSS feed URL. Defaults to Google News Top Stories.",
+                desc = "HTTPS RSS feed URL. Defaults to Google News Top Stories.",
                 icon = "rss",
                 default = DEFAULT_FEED1,
             ),
             schema.Text(
                 id = "feed2",
                 name = "Feed 2 (BBC News)",
-                desc = "RSS feed URL. Defaults to BBC News Top Stories.",
+                desc = "HTTPS RSS feed URL. Defaults to BBC News Top Stories.",
                 icon = "rss",
                 default = DEFAULT_FEED2,
             ),
             schema.Text(
                 id = "feed3",
                 name = "Feed 3 (NPR)",
-                desc = "RSS feed URL. Defaults to NPR News.",
+                desc = "HTTPS RSS feed URL. Defaults to NPR News.",
                 icon = "rss",
                 default = DEFAULT_FEED3,
             ),
             schema.Text(
                 id = "feed4",
                 name = "Feed 4 (Associated Press)",
-                desc = "RSS feed URL. Defaults to Associated Press Top Stories.",
+                desc = "HTTPS RSS feed URL. Defaults to Associated Press Top Stories.",
                 icon = "rss",
                 default = DEFAULT_FEED4,
             ),
             schema.Text(
                 id = "feed5",
                 name = "Feed 5 (Custom)",
-                desc = "Optional fifth RSS feed URL.",
+                desc = "Optional fifth HTTPS RSS feed URL.",
                 icon = "rss",
                 default = DEFAULT_FEED5,
             ),

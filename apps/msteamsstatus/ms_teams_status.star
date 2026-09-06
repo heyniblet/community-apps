@@ -8,14 +8,15 @@ Author: schumatt
 load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 load("secret.star", "secret")
 
 DEBUG_ON = False
 
-M365PresenceAPIEndpoint = "https://graph.microsoft.com/beta/me/presence"
-M365UserAPIEndpoint = "https://graph.microsoft.com/beta/me/profile"
+M365PresenceAPIEndpoint = "https://graph.microsoft.com/v1.0/me/presence"
+M365UserAPIEndpoint = "https://graph.microsoft.com/v1.0/me?$select=displayName"
 
 defaultUserDisplayName = "Not Signed In"
 defaultAvailability = "PresenceUnknown"
@@ -175,33 +176,34 @@ def main(config):
         return render_teams_status(userDisplayName, availability, defaultActivity, statusMessage, False)
 
     M365APIHeaders = {
-        "Authorization": msft_access_token,
+        "Authorization": "Bearer " + msft_access_token,
     }
 
     UserInfoQuery = http.get(M365UserAPIEndpoint, headers = M365APIHeaders)
     if UserInfoQuery.status_code != 200:
         #statusMessage = "Retrieve user information failed with error " +
         # print(UserInfoQuery.json())
-        return render_teams_status("Error " + str(UserInfoQuery.status_code), "", "", UserInfoQuery.json()["error"]["code"] + " -- " + UserInfoQuery.json()["error"]["message"], False)
+        return render_teams_status("Error " + str(UserInfoQuery.status_code), "", "", get_api_error(UserInfoQuery), False)
     else:
-        userDisplayName = UserInfoQuery.json()["names"][0]["displayName"]
+        userDisplayName = UserInfoQuery.json().get("displayName") or defaultUserDisplayName
 
     UserPresenceQuery = http.get(M365PresenceAPIEndpoint, headers = M365APIHeaders)
     if UserPresenceQuery.status_code != 200:
         #statusMessage = "Retrieve user information failed with error " +
         # print(UserPresenceQuery.json())
-        return render_teams_status("Error " + str(UserPresenceQuery.status_code), "", "", UserPresenceQuery.json()["error"]["code"] + " -- " + UserPresenceQuery.json()["error"]["message"], False)
+        return render_teams_status("Error " + str(UserPresenceQuery.status_code), "", "", get_api_error(UserPresenceQuery), False)
     else:
-        availability = UserPresenceQuery.json()["availability"]
-        activity = UserPresenceQuery.json()["activity"]
-        if UserPresenceQuery.json()["statusMessage"]:
-            statusMessage = UserPresenceQuery.json()["statusMessage"]["message"]["content"]
-        else:
-            statusMessage = ""
-        if UserPresenceQuery.json()["outOfOfficeSettings"]:
-            isOutOfOffice = UserPresenceQuery.json()["outOfOfficeSettings"]["isOutOfOffice"]
+        presence = UserPresenceQuery.json()
+        availability = presence.get("availability") or defaultAvailability
+        activity = presence.get("activity") or defaultActivity
+        statusMessage = ((presence.get("statusMessage") or {}).get("message") or {}).get("content") or ""
+        isOutOfOffice = (presence.get("outOfOfficeSettings") or {}).get("isOutOfOffice") or False
 
     return render_teams_status(userDisplayName, availability, activity, statusMessage, isOutOfOffice)
+
+def get_api_error(response):
+    error = response.json().get("error") or {}
+    return (error.get("code") or "API error") + " -- " + (error.get("message") or "Request failed")
 
 def render_teams_status(userDisplayName, availability, activity, statusMessage, isOutOfOffice):
     if availability == "":
@@ -322,11 +324,11 @@ def refresh_msft_access_token(config):
             "Content-type": "application/x-www-form-urlencoded",
         }
         body = (
-            "client_id=" + (prodClientID or devClientID) +
+            "client_id=" + humanize.url_encode(prodClientID or devClientID) +
             "&scope=offline_access%20User.read%20Presence.Read" +
-            "&refresh_token=" + msft_refresh_token +
+            "&refresh_token=" + humanize.url_encode(msft_refresh_token) +
             "&grant_type=refresh_token" +
-            "&client_secret=" + (prodClientSecret or devClientSecret)
+            "&client_secret=" + humanize.url_encode(prodClientSecret or devClientSecret)
         )
         response = http.post(url = TokenEndpoint, headers = headers, body = body)
 
@@ -336,15 +338,14 @@ def refresh_msft_access_token(config):
 
         response_json = response.json()
 
-        cache.set(
-            response_json["refresh_token"],
-            response_json["access_token"],
-            ttl_seconds = int(response_json["expires_in"]) - 30,
-        )
+        access_token = response_json.get("access_token")
+        if not access_token:
+            fail("Refresh response did not include an access token")
+        cache.set(msft_refresh_token, access_token, ttl_seconds = int(response_json.get("expires_in") or 300) - 30)
 
         #print (" -- Cached token for " + str(int(response_json["expires_in"] - 30)) + " seconds")
         #print ("RETURNING refresh_msft_access_token: " + response_json["access_token"])
-        return response_json["access_token"]
+        return access_token
 
 def oauth_handler(params):
     if DEBUG_ON:
@@ -356,12 +357,12 @@ def oauth_handler(params):
         "Content-type": "application/x-www-form-urlencoded",
     }
     body = (
-        "client_id=" + params["client_id"] +
+        "client_id=" + humanize.url_encode(params["client_id"]) +
         "&scope=offline_access%20User.read%20Presence.Read" +
-        "&code=" + params["code"] +
-        "&redirect_uri=" + params["redirect_uri"] +
+        "&code=" + humanize.url_encode(params["code"]) +
+        "&redirect_uri=" + humanize.url_encode(params["redirect_uri"]) +
         "&grant_type=authorization_code" +
-        "&client_secret=" + (prodClientSecret or devClientSecret)  # Provide runtime a default secret
+        "&client_secret=" + humanize.url_encode(prodClientSecret or devClientSecret)  # Provide runtime a default secret
     )
     response = http.post(url = TokenEndpoint, headers = headers, body = body)
 
@@ -371,15 +372,19 @@ def oauth_handler(params):
 
     response_json = response.json()
 
+    refresh_token = response_json.get("refresh_token")
+    access_token = response_json.get("access_token")
+    if not refresh_token or not access_token:
+        fail("Token response did not include refresh and access tokens")
     cache.set(
-        response_json["refresh_token"],
-        response_json["access_token"],
+        refresh_token,
+        access_token,
         ttl_seconds = int(response_json["expires_in"]) - 30,
     )
     if DEBUG_ON:
-        print("RETURNING oauth_handler: " + str(response_json["refresh_token"]))
+        print("RETURNING oauth_handler: token received")
 
-    return response_json["refresh_token"]
+    return refresh_token
 
 def get_schema():
     return schema.Schema(

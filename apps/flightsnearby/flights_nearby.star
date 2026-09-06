@@ -5,7 +5,6 @@ Description: Find the closest flight to your location.
 Author: eddichen
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")  #for easy reading numbers and times
@@ -40,6 +39,7 @@ load("images/tail_ua.png", TAIL_UA_ASSET = "file")
 load("images/tail_ul.png", TAIL_UL_ASSET = "file")
 load("images/tail_wy.png", TAIL_WY_ASSET = "file")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -52,8 +52,7 @@ DEFAULT_LOCATION = json.encode({
     "timezone": "",
 })
 DEFAULT_DISTANCE = "10"
-DEFAULT_CACHE = 180
-FLIGHT_RADAR_URL = "https://flight-radar1.p.rapidapi.com/flights/list-in-boundary"
+FLIGHT_RADAR_URL = "https://flight-radar1.p.rapidapi.com/flights/v2/list-in-boundary"
 TAILS = {
     "AA": TAIL_AA_ASSET.readall(),
     "AY": TAIL_AY_ASSET.readall(),
@@ -128,9 +127,9 @@ def get_bounding_box(centrePoint, distance):
     minLon = 0
     maxLon = 0
 
-    # define deltaLon to help determine min and max longitudes
-    deltaLon = math.asin(math.sin(radDist) / math.cos(radLat))
     if (minLat > MIN_LAT) and (maxLat < MAX_LAT):
+        # define deltaLon to help determine min and max longitudes
+        deltaLon = math.asin(math.sin(radDist) / math.cos(radLat))
         minLon = radLon - deltaLon
         maxLon = radLon + deltaLon
         if minLon < MIN_LON:
@@ -140,8 +139,8 @@ def get_bounding_box(centrePoint, distance):
 
         # a pole is within the given distance
     else:
-        minLat = math.max(minLat, MIN_LAT)
-        maxLat = math.min(maxLat, MAX_LAT)
+        minLat = max(minLat, MIN_LAT)
+        maxLat = min(maxLat, MAX_LAT)
         minLon = MIN_LON
         maxLon = MAX_LON
     return [
@@ -157,12 +156,15 @@ def is_key_present(k):
     else:
         return TAILS["Q4"]
 
-def reduce_accuracy(coord):
-    coord_list = coord.split(".")
-    coord_remainder = coord_list[1]
-    if len(coord_remainder) > 3:
-        coord_remainder = coord_remainder[0:3]
-    return ".".join([coord_list[0], coord_remainder])
+def coordinate(value, minimum, maximum):
+    text = str(value or "")
+    if len(text) > 24 or not re.match("^-?[0-9]+(\\.[0-9]+)?$", text):
+        return None
+    number = float(text)
+    return number if number >= minimum and number <= maximum else None
+
+def safe_text(value, fallback = "?"):
+    return str(value)[:32] if type(value) == "string" and value else fallback
 
 def update_display(tail, text):
     return render.Row(
@@ -215,7 +217,7 @@ def main(config):
     hide_when_nothing_to_display = config.bool("hide", True)
     extend = config.bool("extend", True)
 
-    if (api_key == "") or (api_key == None):
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
         tail = TAILS["Q4"]
         text = [
             render.Text("Add"),
@@ -226,48 +228,38 @@ def main(config):
             child = update_display(tail, text),
         )
 
-    location = json.decode(config.get("location", DEFAULT_LOCATION))
+    location = json.decode(config.get("location", DEFAULT_LOCATION), {})
+    if type(location) != "dict":
+        location = {}
 
-    orig_lat = location["lat"]
-    orig_lng = location["lng"]
+    orig_lat = coordinate(location.get("lat"), -90, 90)
+    orig_lng = coordinate(location.get("lng"), -180, 180)
+    if orig_lat == None or orig_lng == None:
+        return render.Root(child = render.WrappedText("Invalid location", color = "#ff6666"))
 
-    lat = reduce_accuracy(orig_lat)
-    lng = reduce_accuracy(orig_lng)
+    distance = config.get("distance", DEFAULT_DISTANCE)
+    if distance not in ["1", "5", "10", "20"]:
+        distance = DEFAULT_DISTANCE
 
-    cache_key = "_".join([lat, lng])
+    boundingBox = get_bounding_box([orig_lat, orig_lng], distance)
+    rep = http.get(
+        FLIGHT_RADAR_URL,
+        params = {"bl_lat": boundingBox[0], "bl_lng": boundingBox[1], "tr_lat": boundingBox[2], "tr_lng": boundingBox[3], "altitude": "1000,60000"},
+        headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "flight-radar1.p.rapidapi.com"},
+    )
+    if rep.status_code != 200 or len(rep.body()) > 2 * 1024 * 1024:
+        return render.Root(child = render.WrappedText("Flight data unavailable", color = "#ff6666"))
 
-    flight_cached = cache.get(cache_key)
-    if flight_cached != None:
-        print("Hit! Displaying cached data.")
-        flight = json.decode(flight_cached)
-    else:
-        print("Miss! Contacting Flight Radar")
-        centrePoint = [float(lat), float(lng)]
-        boundingBox = get_bounding_box(centrePoint, config.get("distance", DEFAULT_DISTANCE))
-        rep = http.get(
-            FLIGHT_RADAR_URL,
-            params = {"bl_lat": boundingBox[0], "bl_lng": boundingBox[1], "tr_lat": boundingBox[2], "tr_lng": boundingBox[3], "altitude": "1000,60000"},
-            headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "flight-radar1.p.rapidapi.com"},
-            ttl_seconds = DEFAULT_CACHE,
-        )
-        if rep.status_code != 200:
-            fail("Failed to fetch flights with status code:", rep.status_code)
+    payload = json.decode(rep.body(), {})
+    flights = payload.get("aircraft", []) if type(payload) == "dict" else []
+    flights = flights[:2000] if type(flights) == "list" else []
+    flight = flights[len(flights) // 2] if flights else []
 
-        if rep.json()["aircraft"]:
-            flights = rep.json()["aircraft"]
-            if flights and len(flights) > 1:
-                middle = (len(flights) // 2)
-                flight = flights[middle]
-            else:
-                flight = flights[0]
-        else:
-            flight = []
-
-    if flight:
-        origin = flight[12]
-        destination = flight[13]
-        flightNumber = flight[14]
-        aircraftType = flight[9]
+    if type(flight) == "list" and len(flight) >= 15 and type(flight[2]) in ["int", "float"] and type(flight[3]) in ["int", "float"]:
+        origin = safe_text(flight[12])
+        destination = safe_text(flight[13])
+        flightNumber = safe_text(flight[14])
+        aircraftType = safe_text(flight[9])
         airline = flightNumber[0:2]
         tail = is_key_present(airline)
 
@@ -278,7 +270,7 @@ def main(config):
                 render.Text("%s" % flightNumber),
                 render.Marquee(
                     width = 32,
-                    child = render.Text("Look %s for %s flying at %s feet, heading %s at %s mph" % (get_bearing(orig_lat, orig_lng, flight[2], flight[3]), aircraftType, humanize.comma(flight[5]), get_cardinal_point(flight[4]), humanize.comma(flight[6])), color = "#fff"),
+                    child = render.Text("Look %s for %s flying at %s feet, heading %s at %s mph" % (get_bearing(orig_lat, orig_lng, flight[2], flight[3]), aircraftType, humanize.comma(flight[5] if type(flight[5]) in ["int", "float"] else 0), get_cardinal_point(flight[4] if type(flight[4]) in ["int", "float"] else 0), humanize.comma(flight[6] if type(flight[6]) in ["int", "float"] else 0)), color = "#fff"),
                 ),
             ]
         else:
@@ -326,11 +318,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Location(
+            schema.Text(
                 id = "location",
                 name = "Location",
-                desc = "Your current location",
+                desc = "Location JSON with lat and lng. Existing Tidbyt location values continue to work.",
                 icon = "locationDot",
+                default = DEFAULT_LOCATION,
             ),
             schema.Dropdown(
                 id = "distance",

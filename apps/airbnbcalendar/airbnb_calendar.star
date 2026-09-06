@@ -16,10 +16,10 @@ load("time.star", "time")
 SCREEN_HEIGHT = 32
 SCREEN_WIDTH = 64
 MAX_LISTING_COUNT = 5
-DEFAULT_TIMEZONE = "America/New_York"
 DEFAULT_CHECKIN_HOUR = 15
 DEFAULT_CHECKOUT_HOUR = 11
 DEFAULT_HOURS_PER_PIXEL = 2
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 COLORS = {
     "PAST": ("#333", "#333"),
@@ -55,28 +55,30 @@ LETTERS = {
     ]),
 }
 
-def listing(url, height):
-    if not re.match(r"^https://www\.airbnb\.com/calendar/ical/", url):
+def listing(url, height, location):
+    if type(url) != "string" or len(url) > 2048 or "\r" in url or "\n" in url or not re.match(r"^https://www\.airbnb\.com/calendar/ical/", url):
         return render.Text(content = "Invalid URL", font = "tom-thumb")
 
-    res = http.get(url, ttl_seconds = 300)
+    res = http.get(url)
 
     if res.status_code != 200:
         return render.Text(content = "HTTP error %d" % res.status_code, font = "tom-thumb")
 
     ical = res.body()
+    if len(ical) > MAX_RESPONSE_BYTES:
+        return render.Text(content = "Calendar too large", font = "tom-thumb")
 
-    dtstart_list = re.match(r"DTSTART;VALUE=DATE:(.{4})(.{2})(.{2})", ical)
-    dtend_list = re.match(r"DTEND;VALUE=DATE:(.{4})(.{2})(.{2})", ical)
+    dtstart_list = re.match(r"DTSTART;VALUE=DATE:([0-9]{4})([0-9]{2})([0-9]{2})", ical)
+    dtend_list = re.match(r"DTEND;VALUE=DATE:([0-9]{4})([0-9]{2})([0-9]{2})", ical)
     summary_list = re.match(r"SUMMARY:([^\r\n]+)", ical)
-    event_list = zip(dtstart_list, dtend_list, summary_list)
+    event_list = zip(dtstart_list, dtend_list, summary_list)[:100]
     now = time.now()
 
     children = []
 
     for [dtstart, dtend, summary] in event_list:
-        start = time.time(year = int(dtstart[1]), month = int(dtstart[2]), day = int(dtstart[3]), hour = DEFAULT_CHECKIN_HOUR, location = DEFAULT_TIMEZONE)
-        end = time.time(year = int(dtend[1]), month = int(dtend[2]), day = int(dtend[3]), hour = DEFAULT_CHECKOUT_HOUR, location = DEFAULT_TIMEZONE)
+        start = time.time(year = int(dtstart[1]), month = int(dtstart[2]), day = int(dtstart[3]), hour = DEFAULT_CHECKIN_HOUR, location = location)
+        end = time.time(year = int(dtend[1]), month = int(dtend[2]), day = int(dtend[3]), hour = DEFAULT_CHECKOUT_HOUR, location = location)
         offset = math.ceil((start - now).hours)
         duration = math.ceil((end - now).hours - offset)
 
@@ -182,7 +184,8 @@ def grid(location):
     return render.Stack(children)
 
 def main(config):
-    count = int(config.get("count", "0"))
+    count_config = config.get("count", "1")
+    count = int(count_config) if count_config in ["1", "2", "3", "4"] else 1
     timezone = time.tz()
 
     stack = [grid(timezone)]
@@ -194,7 +197,7 @@ def main(config):
         max_height = math.ceil(min_stay / DEFAULT_HOURS_PER_PIXEL)
         height = min(math.floor((SCREEN_HEIGHT - 4) / count), max_height)
 
-        listings = [listing(url, height) for url in urls]
+        listings = [listing(url, height, timezone) for url in urls]
         stack.append(
             render.Padding(
                 pad = (0, 4, 0, 0),
@@ -207,14 +210,6 @@ def main(config):
         )
 
     return render.Root(render.Stack(stack))
-
-def get_listing_schema(count):
-    return [schema.Text(
-        id = "ical_%s" % i,
-        name = "%s listing" % humanize.ordinal(i + 1),
-        desc = "The calendar url for your %s Airbnb listing, from the Export Calendar link in the Pricing and Availability tab" % humanize.ordinal(i + 1),
-        icon = "calendar-days",
-    ) for i in range(0, int(count))]
 
 def get_schema():
     options = [schema.Option(
@@ -233,10 +228,14 @@ def get_schema():
                 default = "1",
                 options = options,
             ),
-            schema.Generated(
-                id = "listing_list",
-                source = "count",
-                handler = get_listing_schema,
-            ),
+        ] + [
+            schema.Text(
+                id = "ical_%s" % i,
+                name = "%s listing" % humanize.ordinal(i + 1),
+                desc = "Private calendar URL for your %s Airbnb listing; only the selected count is fetched." % humanize.ordinal(i + 1),
+                icon = "calendarDays",
+                secret = True,
+            )
+            for i in range(0, MAX_LISTING_COUNT - 1)
         ],
     )

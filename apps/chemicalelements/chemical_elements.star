@@ -12,8 +12,6 @@ load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-DEFAULT_TIMEZONE = "America/New_York"
-
 ELEMENTS = [
     {
         "AtomicNumber": 1,
@@ -1645,13 +1643,14 @@ def main(config):
     if (config.get("display", ELEMENT_DISPLAY_OPTIONS[0].value) == ELEMENT_DISPLAY_OPTIONS[0].value):
         now = config.get("time")
         now = (time.parse_time(now) if now else time.now())
-        current_element = ELEMENTS[(day_of_year(now, DEFAULT_TIMEZONE) - 1) % len(ELEMENTS)]
+        timezone = time.tz()
+        current_element = ELEMENTS[(day_of_year(now.in_location(timezone), timezone) - 1) % len(ELEMENTS)]
     else:
         #default is random element
         # seed the RNG with a new value every minute to improve
         # cross-user caching while still appearing random.
         random.seed(time.now().unix // 60)
-        current_element = ELEMENTS[int(random.number(0, len(ELEMENTS)))]
+        current_element = ELEMENTS[random.number(0, len(ELEMENTS) - 1)]
 
     row1 = current_element["Name"]
     row2 = get_main_commentary(current_element)

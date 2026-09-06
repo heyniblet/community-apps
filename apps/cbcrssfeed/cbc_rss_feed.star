@@ -15,6 +15,7 @@ VERSION = 23248
 
 # cache data for 15 minutes
 CACHE_TTL_SECONDS = 900
+MAX_RESPONSE_BYTES = 512 * 1024
 
 DEFAULT_NEWS = "canada"
 DEFAULT_ARTICLE_COUNT = "3"
@@ -82,9 +83,13 @@ SECTION_TITLE = {
 
 def main(config):
     edition = config.get("news_edition", DEFAULT_NEWS)
+    if edition not in SECTION_TITLE:
+        edition = DEFAULT_NEWS
 
-    articlecount = int(config.get("articlecount", DEFAULT_ARTICLE_COUNT))
+    articlecount = int(config.get("articlecount", DEFAULT_ARTICLE_COUNT)) if config.get("articlecount", DEFAULT_ARTICLE_COUNT) in ["1", "2", "3"] else 3
     articles = get_cacheable_data(edition.lower(), articlecount)
+    if not articles:
+        return render.Root(child = render.WrappedText("CBC News unavailable", align = "center", width = 64))
 
     if canvas.is2x():
         return render_2x(articles, edition)
@@ -391,15 +396,17 @@ def get_cacheable_data(url, articlecount):
         ttl_seconds = CACHE_TTL_SECONDS,
         headers = {"User-Agent": "Mozilla/5.0 (compatible; Pixlet)"},
     )
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
     data = res.body()
+    if res.status_code != 200 or not data or len(data) > MAX_RESPONSE_BYTES:
+        return []
 
     data_xml = xpath.loads(data)
 
     for i in range(1, articlecount + 1):
         title_query = "//item[{}]/title".format(str(i))
         desc_query = "//item[{}]/description".format(str(i))
-        articles.append((data_xml.query(title_query), str(data_xml.query(desc_query)).replace("None", "")))
+        title = data_xml.query(title_query)
+        if title:
+            articles.append((str(title)[:300], str(data_xml.query(desc_query) or "")[:2000]))
 
     return articles
