@@ -34,29 +34,28 @@ def main(config):
     count_color = config.str("count_color", DEFAULT_FOLLOWERS_COLOR)
     username_color = config.str("username_color", DEFAULT_USERNAME_COLOR)
 
+    if not re.match(r"^[A-Za-z0-9._]{1,30}$", username):
+        return render_user_not_found(username[:30])
+
     # get user's page
     res = http.get("https://www.instagram.com/%s/" % username, ttl_seconds = CACHE_TTL, headers = {
         "accept-language": "en-US,en;q=1.0",
     })
 
     # handle api errors
-    if res.status_code != 200:
-        print("API error %d: %s" % (res.status_code, res.body()))
+    html = res.body()
+    if res.status_code != 200 or not html or len(html) > 1024 * 1024:
         return render_error(str(res.status_code))
 
-    # get html content
-    html = res.body()
-
     # try to find number of followers
-    matches = re.match("(\\w+) Followers,", html)
+    matches = re.match(r"([0-9][0-9.,KMB]*) Followers,", html)
 
     # render user not found message if there are no RegEx matches
     if (len(matches) == 0):
-        print("No matches returned from RegExp for username %s" % username)
         return render_user_not_found(username)
 
     # extract number from RegEx
-    followers = matches[0][1]
+    followers = matches[0][1][:20]
 
     return render.Root(
         child = render.Column(

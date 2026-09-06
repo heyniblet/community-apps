@@ -158,12 +158,21 @@ NBA_TEAMS = {
 
 def get_events_with_competitor(all_events, id):
     events_with_competitor = []
-    for event in all_events:
-        for competition in event["competitions"]:
-            for competitor in competition["competitors"]:
-                if competitor["id"] == id:
+    for event in all_events[:100]:
+        competitions = event.get("competitions", []) if type(event) == "dict" else []
+        for competition in (competitions[:4] if type(competitions) == "list" else []):
+            competitors = competition.get("competitors", []) if type(competition) == "dict" else []
+            for competitor in (competitors[:4] if type(competitors) == "list" else []):
+                if type(competitor) == "dict" and competitor.get("id") == id:
                     events_with_competitor.append(event)
     return events_with_competitor
+
+def fetch_events(url):
+    rep = http.get(url, ttl_seconds = 120)
+    body = rep.body()
+    data = json.decode(body, {}) if rep.status_code == 200 and body and len(body) <= 512 * 1024 else {}
+    events = data.get("events", []) if type(data) == "dict" else []
+    return events[:100] if type(events) == "list" else []
 
 def render_event_status(event, timezone):
     if event["status"]["type"]["name"] == "STATUS_SCHEDULED":
@@ -189,8 +198,10 @@ def render_event_status(event, timezone):
 
 def main(config):
     location = config.get("location", DEFAULT_LOCATION)
-    loc = json.decode(location)
-    timezone = loc["timezone"]
+    loc = json.decode(location, {}) if type(location) == "string" and len(location) <= 4096 else {}
+    timezone = loc.get("timezone", "UTC") if type(loc) == "dict" else "UTC"
+    if type(timezone) != "string" or not time.is_valid_timezone(timezone):
+        timezone = "UTC"
 
     my_nfl_teams = []
     for team in NFL_TEAMS.keys():
@@ -212,53 +223,25 @@ def main(config):
         if (config.bool(team)):
             my_nba_teams.append(team)
 
-    rep = http.get(FOOTBALL_URL, ttl_seconds = 120)
-    if rep.status_code != 200:
-        fail("Football request failed with status %d", rep.status_code)
+    my_nfl_events = []
+    nfl_events = fetch_events(FOOTBALL_URL) if my_nfl_teams else []
+    for team in my_nfl_teams:
+        my_nfl_events.extend(get_events_with_competitor(nfl_events, NFL_TEAMS[team]))
 
-    if not rep or not rep.json():
-        my_nfl_events = []
-    else:
-        nfl_events = rep.json()["events"]
-        my_nfl_events = []
-        for team in my_nfl_teams:
-            my_nfl_events = my_nfl_events + get_events_with_competitor(nfl_events, NFL_TEAMS[team])
+    my_mlb_events = []
+    mlb_events = fetch_events(BASEBALL_URL) if my_mlb_teams else []
+    for team in my_mlb_teams:
+        my_mlb_events.extend(get_events_with_competitor(mlb_events, MLB_TEAMS[team]))
 
-    rep = http.get(BASEBALL_URL, ttl_seconds = 120)
-    if rep.status_code != 200:
-        fail("Baseball request failed with status %d", rep.status_code)
+    my_nhl_events = []
+    nhl_events = fetch_events(HOCKEY_URL) if my_nhl_teams else []
+    for team in my_nhl_teams:
+        my_nhl_events.extend(get_events_with_competitor(nhl_events, NHL_TEAMS[team]))
 
-    if not rep or not rep.json():
-        my_mlb_events = []
-    else:
-        mlb_events = rep.json()["events"]
-        my_mlb_events = []
-        for team in my_mlb_teams:
-            my_mlb_events = my_mlb_events + get_events_with_competitor(mlb_events, MLB_TEAMS[team])
-
-    rep = http.get(HOCKEY_URL, ttl_seconds = 120)
-    if rep.status_code != 200:
-        fail("Hockey request failed with status %d", rep.status_code)
-
-    if not rep or not rep.json():
-        my_nhl_events = []
-    else:
-        nhl_events = rep.json()["events"]
-        my_nhl_events = []
-        for team in my_nhl_teams:
-            my_nhl_events = my_nhl_events + get_events_with_competitor(nhl_events, NHL_TEAMS[team])
-
-    rep = http.get(BASKETBALL_URL, ttl_seconds = 120)
-    if rep.status_code != 200:
-        fail("Basketball request failed with status %d", rep.status_code)
-
-    if not rep or not rep.json():
-        my_nba_events = []
-    else:
-        nba_events = rep.json()["events"]
-        my_nba_events = []
-        for team in my_nba_teams:
-            my_nba_events = my_nba_events + get_events_with_competitor(nba_events, NBA_TEAMS[team])
+    my_nba_events = []
+    nba_events = fetch_events(BASKETBALL_URL) if my_nba_teams else []
+    for team in my_nba_teams:
+        my_nba_events.extend(get_events_with_competitor(nba_events, NBA_TEAMS[team]))
 
     my_events = my_nfl_events + my_mlb_events + my_nba_events + my_nhl_events
 

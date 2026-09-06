@@ -87,8 +87,16 @@ def get_schema():
     )
 
 def trimToJSON(js_command):
-    js_command = js_command.split("= ", 1)[1]
-    return js_command[:len(js_command) - 2]
+    parts = js_command.split("= ", 1)
+    if len(parts) != 2:
+        return ""
+    value = parts[1]
+    return value[:-2] if value.endswith(";\r") else (value[:-1] if value.endswith(";") else "")
+
+def fetch_page(url):
+    response = http.get(url, ttl_seconds = 1800)
+    body = response.body()
+    return body if response.status_code == 200 and body and len(body) <= 1024 * 1024 else ""
 
 def Getweather_data(resort):
     """Pulls weather info from the weather page associated with the given resort
@@ -102,29 +110,35 @@ def Getweather_data(resort):
 
     weather_stub = WEATHER_URL_STUBS.get(resort, WEATHER_URL_STUB)
     url = RESORT_URLS[resort] + weather_stub
-    r = http.get(url, ttl_seconds = 600)
-    response = r.body()
+    response = fetch_page(url)
     temperature = None
     snowfall = None
     weather_description = None
     for line in response.splitlines():
         if line.startswith("    FR.forecasts = "):
-            temp_data = json.decode(trimToJSON(line))
-            temperature = humanize.ftoa(temp_data[0]["CurrentTempStandard"])
-            weather_description = temp_data[0]["ForecastData"][0]["WeatherIconStatus"]
+            temp_data = json.decode(trimToJSON(line), [])
+            if type(temp_data) == "list" and temp_data and type(temp_data[0]) == "dict" and type(temp_data[0].get("CurrentTempStandard")) in ["int", "float"]:
+                value = temp_data[0]["CurrentTempStandard"]
+                temperature = str(value) if type(value) == "int" else humanize.ftoa(value)
         if line.startswith("    FR.snowReportData = "):
-            snowfall = json.decode(trimToJSON(line))["TwentyFourHourSnowfall"]["Inches"]
+            snow = json.decode(trimToJSON(line), {})
+            snow24 = snow.get("TwentyFourHourSnowfall", {}) if type(snow) == "dict" else {}
+            if type(snow24) == "dict" and type(snow24.get("Inches")) in ["string", "int", "float"]:
+                snowfall = str(snow24.get("Inches"))[:20]
     if temperature == None and weather_stub != WEATHER_URL_STUB_ALT:
         url = RESORT_URLS[resort] + WEATHER_URL_STUB_ALT
-        r = http.get(url, ttl_seconds = 600)
-        response = r.body()
+        response = fetch_page(url)
         for line in response.splitlines():
             if line.startswith("    FR.forecasts = "):
-                temp_data = json.decode(trimToJSON(line))
-                temperature = humanize.ftoa(temp_data[0]["CurrentTempStandard"])
-                weather_description = temp_data[0]["ForecastData"][0]["WeatherIconStatus"]
+                temp_data = json.decode(trimToJSON(line), [])
+                if type(temp_data) == "list" and temp_data and type(temp_data[0]) == "dict" and type(temp_data[0].get("CurrentTempStandard")) in ["int", "float"]:
+                    value = temp_data[0]["CurrentTempStandard"]
+                    temperature = str(value) if type(value) == "int" else humanize.ftoa(value)
             if line.startswith("    FR.snowReportData = "):
-                snowfall = json.decode(trimToJSON(line))["TwentyFourHourSnowfall"]["Inches"]
+                snow = json.decode(trimToJSON(line), {})
+                snow24 = snow.get("TwentyFourHourSnowfall", {}) if type(snow) == "dict" else {}
+                if type(snow24) == "dict" and type(snow24.get("Inches")) in ["string", "int", "float"]:
+                    snowfall = str(snow24.get("Inches"))[:20]
     if temperature == None or snowfall == None:
         return None
 
@@ -144,8 +158,7 @@ def getTerrain(resort):
     url = RESORT_URLS[resort] + terrain_stub
 
     # Pull an HTML response of the lift status page
-    r = http.get(url, ttl_seconds = 600)
-    response = r.body()
+    response = fetch_page(url)
 
     # filter out to just the JSON Object. It's a little wierd so it requires some string manipulation
     terrain_status_js_command = None
@@ -155,25 +168,26 @@ def getTerrain(resort):
             break
     if terrain_status_js_command == None and terrain_stub != TERRAIN_URL_STUB_ALT:
         url = RESORT_URLS[resort] + TERRAIN_URL_STUB_ALT
-        r = http.get(url, ttl_seconds = 600)
-        response = r.body()
+        response = fetch_page(url)
         for line in response.splitlines():
             if line.startswith("    FR.TerrainStatusFeed = "):
                 terrain_status_js_command = line
                 break
     if terrain_status_js_command == None:
-        print("error finding trail info on " + RESORT_URLS[resort])
         return None
     terrain_status_js = trimToJSON(terrain_status_js_command)
 
     # Turn it into JSON
-    terrain_report = json.decode(terrain_status_js)
+    terrain_report = json.decode(terrain_status_js, {})
+    if type(terrain_report) != "dict" or type(terrain_report.get("GroomingAreas")) != "list":
+        return None
 
     # Filter it out just the trails
     trails = []
-    for area in terrain_report["GroomingAreas"]:
-        for trail in area["Trails"]:
-            trails.append(trail)
+    for area in terrain_report["GroomingAreas"][:100]:
+        area_trails = area.get("Trails", []) if type(area) == "dict" else []
+        if type(area_trails) == "list":
+            trails.extend([trail for trail in area_trails[:1000] if type(trail) == "dict"])
 
     # generate a trail summary
 
@@ -181,13 +195,17 @@ def getTerrain(resort):
     summary = {}
 
     for trail in trails:
-        if repr(trail["Difficulty"]) not in summary.keys():
-            summary[repr(trail["Difficulty"])] = dict(open = 0, total = 1)
+        difficulty = trail.get("Difficulty")
+        if type(difficulty) not in ["int", "float"]:
+            continue
+        difficulty_key = repr(int(difficulty))
+        if difficulty_key not in summary.keys():
+            summary[difficulty_key] = dict(open = 0, total = 1)
         else:
-            summary[repr(trail["Difficulty"])]["total"] += 1
+            summary[difficulty_key]["total"] += 1
 
-        if trail["IsOpen"]:
-            summary[repr(trail["Difficulty"])]["open"] += 1
+        if trail.get("IsOpen") == True:
+            summary[difficulty_key]["open"] += 1
     for x in ["1", "2", "3"]:
         if x not in summary.keys():
             summary[x] = dict(open = 0, total = 0)
@@ -225,7 +243,7 @@ def trailStatus(image, open, total):
     """
     if int(open) == 0:
         color = "#BB1111"  #Red
-    elif int(open) // int(total) < 0.5:
+    elif int(total) == 0 or int(open) * 2 < int(total):
         color = "#DFEF21"  #Yellow
     else:
         color = "#0FA700"  #Green
@@ -294,6 +312,8 @@ def weather(resort):
 
 def main(config):
     resort = config.str("resort", "Vail")
+    if resort not in RESORT_URLS:
+        resort = "Vail"
     return render.Root(
         child = render.Column(
             children = [

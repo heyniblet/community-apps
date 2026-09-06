@@ -6,10 +6,10 @@ Shows current value, trend arrow, 4-hour history graph, and color-coded alerts.
 Author: Bob (@Eserobe)
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("hash.star", "hash")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -105,11 +105,17 @@ def llu_login(email, password, base_url):
     body = json.encode({"email": email, "password": password})
     rep = http.post(base_url + "/llu/auth/login", headers = LLU_BASE_HEADERS, body = body)
 
-    if rep.status_code != 200:
+    raw = rep.body()
+    if rep.status_code != 200 or not raw or len(raw) > 256 * 1024:
         return None, None, base_url, "HTTP " + str(rep.status_code)
 
-    data = rep.json()
-    status = int(data.get("status", -1))
+    data = json.decode(raw, {})
+    if type(data) != "dict":
+        return None, None, base_url, "Invalid response"
+    status_value = data.get("status")
+    if type(status_value) not in ["int", "float"] and (type(status_value) != "string" or not status_value.isdigit()):
+        return None, None, base_url, "Invalid response"
+    status = int(status_value)
 
     # Rate limit
     if status == 429:
@@ -136,42 +142,57 @@ def llu_login(email, password, base_url):
                 return llu_login(email, password, fallback)
             return None, None, base_url, "No region: " + str(data)
 
-        new_url = "https://api-" + str(shard).lower() + ".libreview.io"
+        shard = str(shard).lower()
+        if shard not in LLU_REGIONS:
+            return None, None, base_url, "Unsupported region"
+        new_url = LLU_REGIONS[shard]
         if new_url == base_url:
             return None, None, base_url, "Redirect loop: " + shard
         return llu_login(email, password, new_url)
 
     if status != 0:
-        err_msg = data.get("error", {}).get("message", "")
-        return None, None, base_url, "status=" + str(status) + " " + err_msg
+        error = data.get("error", {})
+        err_msg = error.get("message", "") if type(error) == "dict" else ""
+        return None, None, base_url, "status=" + str(status) + " " + str(err_msg)[:120]
 
     inner = data.get("data", {})
+    inner = inner if type(inner) == "dict" else {}
     ticket = inner.get("authTicket", {})
+    ticket = ticket if type(ticket) == "dict" else {}
     token = ticket.get("token", "")
-    user_id = (inner.get("user") or {}).get("id", "")
+    user = inner.get("user") or {}
+    user_id = user.get("id", "") if type(user) == "dict" else ""
 
     # account-id = SHA-256(user.id) — requerido por la API LibreLinkUp
-    account_id = hash.sha256(user_id)
+    account_id = hash.sha256(user_id) if type(user_id) == "string" and user_id and len(user_id) <= 200 else ""
 
-    if not token:
-        return None, None, base_url, "Token vacío. inner=" + str(inner)
+    if type(token) != "string" or not token or len(token) > 4096 or not account_id:
+        return None, None, base_url, "Token vacío"
 
     return token, account_id, base_url, None
 
 def llu_connections(token, account_id, base_url):
-    rep = http.get(base_url + "/llu/connections", headers = auth_headers(token, account_id), ttl_seconds = 300)
-    if rep.status_code != 200:
-        return None, "HTTP " + str(rep.status_code) + " " + rep.body()[:100]
-    data = rep.json()
-    conns = data.get("data", [])
-    return conns, None
-
-def llu_graph(token, account_id, patient_id, base_url):
-    url = base_url + "/llu/connections/" + patient_id + "/graph"
-    rep = http.get(url, headers = auth_headers(token, account_id), ttl_seconds = 300)
+    rep = http.get(base_url + "/llu/connections", headers = auth_headers(token, account_id))
     if rep.status_code != 200:
         return None, "HTTP " + str(rep.status_code)
-    return rep.json().get("data", {}), None
+    body = rep.body()
+    data = json.decode(body, {}) if body and len(body) <= 512 * 1024 else {}
+    if type(data) != "dict":
+        return None, "Invalid response"
+    conns = data.get("data", [])
+    return (conns[:100], None) if type(conns) == "list" else (None, "Invalid response")
+
+def llu_graph(token, account_id, patient_id, base_url):
+    if type(patient_id) != "string" or not re.match(r"^[A-Za-z0-9_-]{1,100}$", patient_id):
+        return None, "Invalid patient"
+    url = base_url + "/llu/connections/" + patient_id + "/graph"
+    rep = http.get(url, headers = auth_headers(token, account_id))
+    if rep.status_code != 200:
+        return None, "HTTP " + str(rep.status_code)
+    body = rep.body()
+    data = json.decode(body, {}) if body and len(body) <= 1024 * 1024 else {}
+    result = data.get("data", {}) if type(data) == "dict" else {}
+    return (result, None) if type(result) == "dict" else (None, "Invalid response")
 
 # ─── App principal ─────────────────────────────────────────────────────────────
 
@@ -181,33 +202,17 @@ def main(config):
     low_str = config.get("low_threshold", "70")
     high_str = config.get("high_threshold", "180")
 
-    if email == "" or password == "":
+    if type(email) != "string" or type(password) != "string" or not email or len(email) > 320 or not password or len(password) > 512:
         return warning_screen("Configura tu cuenta LibreLinkUp")
 
-    low = int(low_str) if low_str != "" else 70
-    high = int(high_str) if high_str != "" else 180
+    low = int(low_str) if str(low_str).isdigit() and int(low_str) >= 20 and int(low_str) <= 400 else 70
+    high = int(high_str) if str(high_str).isdigit() and int(high_str) >= 20 and int(high_str) <= 400 else 180
+    if low >= high:
+        low, high = 70, 180
 
-    # ── Autenticación (caché 45 min) ─────────────────────────────────────────
-    cache_key = "llu_token_" + email
-    cache_key_aid = "llu_acct_" + email
-    cache_key_url = "llu_url_" + email
-    cache_key_rate = "llu_rate_" + email
-    token = cache.get(cache_key)
-    account_id = cache.get(cache_key_aid) or ""
-    base_url = cache.get(cache_key_url) or LLU_DEFAULT_URL
-
-    if token == None:
-        if cache.get(cache_key_rate) != None:
-            return error_screen("Rate limit. Espera 30 min.")
-
-        token, account_id, base_url, err = llu_login(email, password, LLU_DEFAULT_URL)
-        if err != None:
-            if "429" in err or "Rate limit" in err:
-                cache.set(cache_key_rate, "blocked", ttl_seconds = 1800)
-            return error_screen("Login: " + err)
-        cache.set(cache_key, token, ttl_seconds = 28800)  # 8 horas
-        cache.set(cache_key_aid, account_id, ttl_seconds = 28800)
-        cache.set(cache_key_url, base_url, ttl_seconds = 28800)
+    token, account_id, base_url, err = llu_login(email, password, LLU_DEFAULT_URL)
+    if err != None:
+        return error_screen("Login: " + err)
 
     # ── Conexiones (pacientes) ────────────────────────────────────────────────
     conns, err = llu_connections(token, account_id, base_url)
@@ -217,10 +222,17 @@ def main(config):
         return warning_screen("Sin conexiones LibreLinkUp")
 
     conn = conns[0]
+    if type(conn) != "dict":
+        return error_screen("Conexión inválida")
     patient_id = conn.get("patientId", "")
     glucose_m = conn.get("glucoseMeasurement") or {}
-    current = int(glucose_m.get("Value", 0))
-    trend_id = int(glucose_m.get("TrendArrow", 3))
+    if type(glucose_m) != "dict" or type(glucose_m.get("Value")) not in ["int", "float"]:
+        return error_screen("Lectura inválida")
+    current = int(glucose_m.get("Value"))
+    if current < 0 or current > 1000:
+        return error_screen("Lectura inválida")
+    trend = glucose_m.get("TrendArrow", 3)
+    trend_id = int(trend) if type(trend) in ["int", "float"] else 3
     arrow = TREND_ARROWS.get(trend_id, "→")
 
     # Minutos desde la última lectura (para los cuadraditos)
@@ -263,10 +275,12 @@ def main(config):
     raw_history = []
     if graph_data != None:
         raw_history = graph_data.get("graphData", [])
+        if type(raw_history) != "list":
+            raw_history = []
 
     # Ventana fija de 4h (240 min). x = minutos desde "hace 4h" hasta "ahora"
     start = len(raw_history) - 48 if len(raw_history) > 48 else 0
-    points = raw_history[start:]
+    points = [point for point in raw_history[start:] if type(point) == "dict" and type(point.get("Value")) in ["int", "float"] and point.get("Value") >= 0 and point.get("Value") <= 1000]
     n_pts = len(points)
 
     plot_data = []
@@ -400,12 +414,14 @@ def get_schema():
                 name = "Email LibreLinkUp",
                 desc = "Correo de tu cuenta LibreLinkUp",
                 icon = "envelope",
+                secret = True,
             ),
             schema.Text(
                 id = "password",
                 name = "Contraseña LibreLinkUp",
                 desc = "Contraseña de tu cuenta LibreLinkUp",
                 icon = "lock",
+                secret = True,
             ),
             schema.Text(
                 id = "low_threshold",

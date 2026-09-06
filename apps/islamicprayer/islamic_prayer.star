@@ -37,7 +37,9 @@ def main(config):
     loc = location(config)
     latitude = loc["lat"]
     longitude = loc["lng"]
-    prayer_calc_option = config.get("prayer_calc_options")
+    prayer_calc_option = str(config.get("prayer_calc_options") or "2")
+    if prayer_calc_option not in ["1", "2", "3", "4", "5", "7", "8", "9", "10", "11", "12", "13", "14"]:
+        prayer_calc_option = "2"
     show_sunrise = config.bool("show_sunrise", False)
     non_color_mode = config.bool("non_color", False)
     now = time.now().in_location(loc["timezone"])
@@ -46,6 +48,8 @@ def main(config):
     year = now.year
 
     prayer_timings = get_prayer_for_the_day(latitude, longitude, day, month, year, show_sunrise, prayer_calc_option)
+    if not prayer_timings:
+        return render.Root(child = render.WrappedText("Prayer times unavailable", width = 64, align = "center", color = "#f00"))
 
     return render.Root(
         delay = int(config.str("speed", "70")),
@@ -62,8 +66,16 @@ def main(config):
     )
 
 def location(config):
-    location = config.get("location")
-    return json.decode(location) if location else json.decode(str(DEFAULT_LOCATION))
+    raw = config.get("location")
+    loc = json.decode(raw, {}) if type(raw) == "string" and len(raw) <= 4096 else {}
+    if type(loc) != "dict":
+        loc = {}
+    lat = loc.get("lat")
+    lng = loc.get("lng")
+    timezone = loc.get("timezone")
+    if type(lat) not in ["int", "float"] or lat < -90 or lat > 90 or type(lng) not in ["int", "float"] or lng < -180 or lng > 180 or type(timezone) != "string" or not time.is_valid_timezone(timezone):
+        return DEFAULT_LOCATION
+    return {"lat": lat, "lng": lng, "timezone": timezone}
 
 def get_table_of_prayer_times(prayer_timings, non_color_mode):
     column_children = []
@@ -151,18 +163,25 @@ def get_prayer_for_the_day(latitude, longitude, day, month, year, show_sunrise, 
     day_str = day_to_str(day)
 
     # the API returns the whole month.  So we just need to find today.
-    for entry in prayer_month_parsed["data"]:
+    entries = prayer_month_parsed.get("data", []) if type(prayer_month_parsed) == "dict" else []
+    if type(entries) != "list":
+        return []
+    for entry in entries[:31]:
         # returns the whole month.  So let's find today
-        if entry["date"]["gregorian"]["day"] == day_str:
+        if type(entry) == "dict" and type(entry.get("date")) == "dict" and type(entry["date"].get("gregorian")) == "dict" and entry["date"]["gregorian"].get("day") == day_str:
             matched_entry = entry
             break
 
-    return prayer_timings_filter(matched_entry["timings"], show_sunrise)
+    timings = matched_entry.get("timings", {})
+    return prayer_timings_filter(timings, show_sunrise) if type(timings) == "dict" else []
 
 # Return a list of Tuples
 # We only care about: fajr, Dhuhr, asr, maghrib, isha
 # Additionally if `show_sunrise` is set we can add that.
 def prayer_timings_filter(pre_filtered_timings, show_sunrise):
+    names = ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"]
+    if any([type(pre_filtered_timings.get(name)) != "string" or len(pre_filtered_timings.get(name)) > 40 for name in names]):
+        return []
     filtered_prayer_times = [
         ("Fajr", pre_filtered_timings["Fajr"]),
     ]
@@ -178,11 +197,18 @@ def prayer_timings_filter(pre_filtered_timings, show_sunrise):
 
 def fetch_prayer_times(latitude, longitude, month, year, prayer_calc_option):
     # API docs: https://aladhan.com/prayer-times-api#GetCalendar
-    api_url = "https://api.aladhan.com/v1/calendar?latitude={}&longitude={}&month={}&year={}&method={}".format(latitude, longitude, month, year, prayer_calc_option)
-    prayer_month_raw = http.get(api_url, ttl_seconds = ONE_MONTH)
+    prayer_month_raw = http.get("https://api.aladhan.com/v1/calendar", params = {
+        "latitude": str(latitude),
+        "longitude": str(longitude),
+        "month": str(month),
+        "year": str(year),
+        "method": prayer_calc_option,
+    }, ttl_seconds = ONE_MONTH)
     prayer_month_body = prayer_month_raw.body()
-
-    return json.decode(prayer_month_body)
+    if prayer_month_raw.status_code != 200 or not prayer_month_body or len(prayer_month_body) > 256 * 1024:
+        return {}
+    result = json.decode(prayer_month_body, {})
+    return result if type(result) == "dict" else {}
 
 # Helper function for: 4 -> 04
 def day_to_str(day):

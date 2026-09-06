@@ -1,17 +1,37 @@
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 
-def get_question():
-    res = http.get("https://raw.githubusercontent.com/abochnak/tidbyt-jeopardy/main/data/questions.json", ttl_seconds = 900)
-    if res.status_code != 200:
-        fail("Failed with status_code %d" % res.status_code)
+FALLBACK_QUESTION = {"category": "SCIENCE", "answer": "The planet known as the Red Planet", "response": "Mars", "air_date": ""}
 
-    questions = res.json()
-    question = questions[random.number(0, len(questions))]
-    return question
+def get_question():
+    res = http.get("https://www.jeopardy.com/api/j6-clues", ttl_seconds = 21600)
+    body = res.body()
+    games = json.decode(body, []) if res.status_code == 200 and body and len(body) <= 256 * 1024 else []
+    if type(games) != "list" or not games or type(games[0]) != "dict":
+        return FALLBACK_QUESTION
+    game = games[0]
+    questions = []
+    for key in ["clues_round_1", "clues_round_2", "clues_round_3"]:
+        clues = game.get(key, [])
+        if type(clues) == "list":
+            questions.extend(clues[:100])
+    if not questions:
+        return FALLBACK_QUESTION
+    question = questions[random.number(0, len(questions) - 1)]
+    answers = question.get("answers", []) if type(question) == "dict" else []
+    index = question.get("correct_answer_index", "") if type(question) == "dict" else ""
+    if type(answers) != "list" or type(index) != "string" or not index.isdigit() or int(index) < 1 or int(index) > len(answers):
+        return FALLBACK_QUESTION
+    category = question.get("category")
+    clue = question.get("clue")
+    response = answers[int(index) - 1]
+    if any([type(value) != "string" for value in [category, clue, response]]):
+        return FALLBACK_QUESTION
+    return {"category": category[:100], "answer": clue[:500], "response": response[:300], "air_date": str(game.get("date", ""))[:40]}
 
 def display_for(duration, child):
     return render.Box(
@@ -117,17 +137,17 @@ def main(config):
     data = get_question()
 
     part_one = [
-        category_section(data["category"], int(config.str("category_duration", "20"))),
-        display_for(int(config.str("answer_duration", "100")), answer_section(data["answer"])),
+        category_section(data["category"], safe_duration(config.str("category_duration", "20"), 20)),
+        display_for(safe_duration(config.str("answer_duration", "100"), 100), answer_section(data["answer"])),
     ]
 
     part_two = [
-        display_for(int(config.str("what_is_delay", "20")), what_is_section()),
-        display_for(int(config.str("response_delay", "100")), response_section(data["response"], data["air_date"])),
+        display_for(safe_duration(config.str("what_is_delay", "20"), 20), what_is_section()),
+        display_for(safe_duration(config.str("response_delay", "100"), 100), response_section(data["response"], data["air_date"])),
     ]
 
     return render.Root(
-        delay = int(config.str("delay", "100")),
+        delay = 100,
         show_full_animation = True,
         child = render.Sequence(
             children = part_one + part_two if config.bool("show_all") else (
@@ -135,6 +155,9 @@ def main(config):
             ),
         ),
     )
+
+def safe_duration(value, default):
+    return min(max(int(value), 1), 1000) if value.isdigit() else default
 
 def get_schema():
     return schema.Schema(
