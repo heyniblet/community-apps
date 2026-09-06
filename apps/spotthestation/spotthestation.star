@@ -22,8 +22,6 @@ ISS_ICON3 = ISS_ICON3_ASSET.readall()
 ISS_ICON4 = ISS_ICON4_ASSET.readall()
 ISS_ICON5 = ISS_ICON5_ASSET.readall()
 
-CACHE_DURATION = 1 * 86400  # 86400 seconds = 1 days
-
 SPACE_STATION_ID = 25544
 STATION_LOCATION_API = "https://api.n2yo.com/rest/v1/satellite/visualpasses/{space_station_id}/{latitude}/{longitude}/0/10/60/&apiKey={api_key}"
 
@@ -139,10 +137,13 @@ def main(config):
 
     # If we have an API key, let's get real data
     if api_key:
-        resp = http.get(STATION_LOCATION_API.format(space_station_id = SPACE_STATION_ID, latitude = location["lat"], longitude = location["lng"], api_key = api_key), ttl_seconds = CACHE_DURATION)
+        resp = http.get(STATION_LOCATION_API.format(space_station_id = SPACE_STATION_ID, latitude = location["lat"], longitude = location["lng"], api_key = api_key))
 
-        resp_json = resp.json()
-        if resp.status_code == 200 and "error" not in resp_json:
+        if resp.status_code == 200:
+            resp_json = resp.json()
+        else:
+            resp_json = {}
+        if resp.status_code == 200 and type(resp_json) == "dict" and "error" not in resp_json:
             is_sample_data = False
             station_data = resp_json
         else:
@@ -158,7 +159,7 @@ def main(config):
     if station_data and "passes" in station_data:
         passes = station_data["passes"]
         if passes and len(passes) > 0:
-            for p in passes:
+            for p in passes[:10]:
                 # 1️⃣ Check duration
                 if "duration" in p and int(p["duration"]) >= minimum_duration:
                     # 2️⃣ Check notice window

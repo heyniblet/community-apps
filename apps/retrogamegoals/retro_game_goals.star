@@ -238,15 +238,20 @@ def get_games_from_console(config, console_id):
 
     params = auth_params(config)
     params.update({"f": "1", "i": console_id})
-    games = http.get(endpoint, headers = {"User-Agent": "pixlet"}, params = params, ttl_seconds = ONE_HOUR_IN_SECONDS * 24 * 7).json()
-    return games
+    response = http.get(endpoint, headers = {"User-Agent": "pixlet"}, params = params)
+    return response.json() if response.status_code == 200 else []
 
 def get_game_info(config, game_id):
     endpoint = "%s/%s" % (RA_API_URL, "API_GetGameExtended.php")
 
     params = auth_params(config)
     params.update({"i": game_id})
-    game_data = http.get(endpoint, headers = {"User-Agent": "pixlet"}, params = params, ttl_seconds = ONE_HOUR_IN_SECONDS).json()
+    response = http.get(endpoint, headers = {"User-Agent": "pixlet"}, params = params)
+    if response.status_code != 200:
+        return None
+    game_data = response.json()
+    if type(game_data) != "dict" or type(game_data.get("Achievements")) != "dict":
+        return None
     ra_aches = game_data["Achievements"]
     achievements = ra_aches.values()
     achs = []
@@ -269,6 +274,8 @@ def get_game_info(config, game_id):
 
 def get_random_game_from_console(config, console_id):
     console_games = get_games_from_console(config, console_id)
+    if type(console_games) != "list" or not console_games:
+        return None
     game = console_games[random.number(0, len(console_games) - 1)]
     return str(int(game["ID"]))
 
@@ -289,8 +296,12 @@ def main(config):
     game_id = cache.get(console_cache_key)
     if game_id == None:
         game_id = get_random_game_from_any() if console == "0" else get_random_game_from_console(config, console)
+        if game_id == None:
+            return []
         cache.set(console_cache_key, game_id, ttl_seconds = TEN_MINUTES_IN_SECONDS)
     game = get_game_info(config, game_id)
+    if game == None or not game["achievements"]:
+        return []
 
     total_achievements_count = len(game["achievements"])
 
