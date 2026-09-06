@@ -9,7 +9,6 @@ load("cache.star", "cache")
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
-load("humanize.star", "humanize")
 load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -17,18 +16,25 @@ load("schema.star", "schema")
 NUM_QUESTIONS = 20
 JSERVICE = "https://opentdb.com/api.php?amount=%d&type=multiple&encode=base64" % NUM_QUESTIONS
 CACHE_TTL_SECONDS = 15 * NUM_QUESTIONS
+MAX_RESPONSE_BYTES = 512 * 1024
 
 def get_data():
-    question_index = int(cache.get("question_index") or "0")
+    cached_index = cache.get("question_index") or "0"
+    question_index = int(cached_index) if cached_index.isdigit() else 0
 
     rep = http.get(JSERVICE, ttl_seconds = CACHE_TTL_SECONDS)
-    if rep.status_code != 200:
-        fail("Jservice (Trivia) request failed with status %d", rep.status_code)
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+
+    payload = json.decode(body, {})
+    questions = payload.get("results", []) if type(payload) == "dict" and payload.get("response_code") == 0 else []
+    if type(questions) != "list" or not questions:
+        return None
 
     cache.set("question_index", str(question_index + 1), ttl_seconds = CACHE_TTL_SECONDS)
-    questions = json.decode(rep.body())["results"]
-
-    return questions[question_index % NUM_QUESTIONS]
+    question = questions[question_index % len(questions)]
+    return question if type(question) == "dict" else None
 
 def remove_chars(strr):
     return re.compile(r"<[^>]+>").sub("", strr)
@@ -47,23 +53,21 @@ def calc_delay(question, category):
 
     return 0
 
-def get_value(value):
-    if value == None:
-        return "FINAL"
-
-    return humanize.comma(value)
-
 def main(config):
     body = get_data()
+    required = ["difficulty", "question", "correct_answer", "category"]
+    if body == None or any([type(body.get(key)) != "string" for key in required]):
+        return render.Root(child = render.WrappedText(content = "Trivia is temporarily unavailable"), max_age = 60)
     value = base64.decode(body["difficulty"]).upper()
-    question = remove_chars(base64.decode(body["question"]))
-    answer = remove_chars(base64.decode(body["correct_answer"]))
-    category = remove_chars(base64.decode(body["category"]))
+    question = remove_chars(base64.decode(body["question"]))[:1000]
+    answer = remove_chars(base64.decode(body["correct_answer"]))[:500]
+    category = remove_chars(base64.decode(body["category"]))[:300]
 
     DELAY = int(config.str("scroll_speed", DEFAULT_SPEED)) + calc_delay(question, category)
     ANSWER_DELAY = config.str("answer_delay", DEFAULT_ANSWER_DELAY)
 
     return render.Root(
+        max_age = 60,
         child = render.Box(
             child = render.Column(
                 children = [

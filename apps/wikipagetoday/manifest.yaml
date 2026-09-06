@@ -6,8 +6,7 @@ desc: Display Wikipedia's Featured Article of the Day in a Tidbyt format.
 author: UnBurn
 fileName: wiki_page_today.star
 packageName: wikipagetoday
-broken: true
-recommendedInterval: 5
+recommendedInterval: 360
 category: utilities
 tags:
   - utility

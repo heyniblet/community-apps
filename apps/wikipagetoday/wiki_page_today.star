@@ -6,6 +6,7 @@ Author: UnBurn
 """
 
 load("encoding/base64.star", "base64")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -25,37 +26,55 @@ rkJggg==
 """)
 
 WIKIPEDIA_URL = "https://api.wikimedia.org/feed/v1/wikipedia/%s/featured/%s"
-WIKIPEDIA_HEADER = {"Accept": "application/json", "User-Agent": "WikiPageToday/Application"}
+WIKIPEDIA_HEADER = {"Accept": "application/json", "User-Agent": "WikiPageToday/1.0 (https://github.com/tronbyt/apps)"}
 
-TTL_TIME = 86400
+TTL_TIME = 21600
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+SUPPORTED_LANGS = ["de", "en", "hu", "la", "sv"]
 MARQUEE_DELAY = 150
 
 DEFAULT_LANG = "en"
 DEFAULT_COLOR = "#FFFFFF"
 
 def get_featured_article_json(lang, date):
+    if lang not in SUPPORTED_LANGS:
+        lang = DEFAULT_LANG
     url = WIKIPEDIA_URL % (lang, date)
-
-    article_json = http.get(url, headers = WIKIPEDIA_HEADER, ttl_seconds = TTL_TIME).json()
-    return article_json
+    response = http.get(url, headers = WIKIPEDIA_HEADER, ttl_seconds = TTL_TIME)
+    body = response.body()
+    article_json = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else {}
+    return article_json if type(article_json) == "dict" else {}
 
 def extract_article_information(article_json):
     article = article_json["tfa"]
-    title = article["normalizedtitle"]
-    extract = article["extract"]
+    titles = article.get("titles", {})
+    title = titles.get("normalized") if type(titles) == "dict" else None
+    title = title or article.get("normalizedtitle") or article.get("title") or "Featured article"
+    title = title[:300] if type(title) == "string" else "Featured article"
+    extract = article.get("extract", "")
+    extract = extract[:5000] if type(extract) == "string" else ""
     description = get_reduced_extract(extract)
-    if "thumbnail" in article and "source" in article["thumbnail"]:
-        image = http.get(article["thumbnail"]["source"], headers = WIKIPEDIA_HEADER, ttl_seconds = TTL_TIME).body()
-    else:
-        image = WIKIPEDIA_THUMBNAIL
+    image = WIKIPEDIA_THUMBNAIL
+    thumbnail = article.get("thumbnail", {})
+    if type(thumbnail) == "dict" and "source" in thumbnail:
+        image_url = thumbnail["source"]
+        if type(image_url) == "string" and image_url.startswith("https://upload.wikimedia.org/"):
+            response = http.get(image_url, headers = WIKIPEDIA_HEADER, ttl_seconds = TTL_TIME)
+            body = response.body()
+            content_type = response.headers.get("Content-Type", response.headers.get("content-type", ""))
+            if response.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES and content_type.startswith("image/"):
+                image = body
     return (title, description, image)
 
 def has_featured_article(article_json):
-    return "tfa" in article_json.keys() and "extract" in article_json["tfa"].keys()
+    return type(article_json) == "dict" and type(article_json.get("tfa")) == "dict" and type(article_json["tfa"].get("extract")) == "string"
 
 def get_reduced_extract(extract):
     MAX_LENGTH = 100
 
+    if not extract:
+        return "Featured article details are unavailable."
     sentences = extract.split(".")
     ret = sentences[0] + "."
     for s in sentences[1:]:
@@ -91,9 +110,11 @@ def main(config):
         else:
             PREVIOUS_ARTICLE_UNAVAILABLE = True
 
-    # If neither the current nor previous article can be found, fail
+    # If neither the current nor previous article can be found, render a retryable fallback.
     if CURRENT_ARTICLE_UNAVAILABLE and PREVIOUS_ARTICLE_UNAVAILABLE:
-        fail("Featured article is currently unavailable")
+        title = "Wikipedia"
+        description = "Featured article is currently unavailable."
+        image = WIKIPEDIA_THUMBNAIL
 
     top_bar = render.Stack(
         children = [
@@ -133,6 +154,7 @@ def main(config):
     )
 
     return render.Root(
+        max_age = TTL_TIME,
         show_full_animation = True,
         delay = 20,
         child = render.Column(

@@ -10,8 +10,7 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("xpath.star", "xpath")
 
-# cache data for 15 minutes
-CACHE_TTL_SECONDS = 900
+MAX_FEED_BYTES = 1024 * 1024
 
 DEFAULT_FEED_URL = "https://discuss.tidbyt.com/latest.rss"
 DEFAULT_ARTICLE_COUNT = "3"
@@ -45,15 +44,22 @@ def main(config):
     font = config.get("font", DEFAULT_FONT)
 
     # if feed name is empty, show as "RSS Feed"
-    if feed_name.strip() == "":
+    if type(feed_name) != "string" or feed_name.strip() == "":
         feed_name = "RSS Feed"
+    feed_name = feed_name[:100]
 
     # if feed url is empty, use default
-    if feed_url.strip() == "":
+    if type(feed_url) != "string" or feed_url.strip() == "":
         feed_url = DEFAULT_FEED_URL
+    feed_url = feed_url.strip()
+
+    if not valid_feed_url(feed_url):
+        return render.Root(child = render.WrappedText(content = "Use a public HTTPS RSS feed URL"))
 
     # get feed articles
     articles = get_feed(feed_url, article_count)
+    if articles == None:
+        return render.Root(child = render.WrappedText(content = "RSS feed unavailable"))
 
     # render view
     return render.Root(
@@ -104,6 +110,10 @@ def render_articles(articles, show_content, article_color, content_color, font):
 
     return article_text
 
+def valid_feed_url(url):
+    parts = url.split("/")
+    return len(url) <= 2048 and url.startswith("https://") and len(parts) >= 3 and parts[2] != "" and "@" not in parts[2] and "\\" not in url and "\r" not in url and "\n" not in url and "\t" not in url and " " not in url
+
 def get_feed(url, article_count):
     """Retrieves an RSS feeds and builds a list with article's titles and content.
 
@@ -115,18 +125,22 @@ def get_feed(url, article_count):
         list: List of tuples with (article title, article content).
     """
 
-    res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        fail("Request to %s failed with status code: %d: %s" % (url, res.status_code, res.body()))
+    res = http.get(url = url)
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > MAX_FEED_BYTES or not body.lstrip().startswith("<"):
+        return None
 
     articles = []
-    data_xml = xpath.loads(res.body())
+    data_xml = xpath.loads(body)
     for i in range(1, article_count + 1):
         title_query = "//item[%s]/title" % str(i)
         desc_query = "//item[%s]/description" % str(i)
-        articles.append((data_xml.query(title_query), str(data_xml.query(desc_query)).replace("None", "")))
+        title = str(data_xml.query(title_query) or "")[:500]
+        description = str(data_xml.query(desc_query) or "")[:2000]
+        if title:
+            articles.append((title, description))
 
-    return articles
+    return articles if articles else None
 
 def get_schema():
     """Creates the schema for the configuration screen.
