@@ -348,9 +348,9 @@ def main(config):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "X-XScreenSaver-Token": "d75b09a2cfebf082a95c41e29a6be98d38a7609e67f10223c29c380324aaba72",
     }
-    print("https://xscreensaver.eod.com/" + config.get("hackfile", hacks[hack][0]) + ".gif")
+    hackfile = hacks[hack][0]
     response = http.get(
-        "https://xscreensaver.eod.com/" + config.get("hackfile", hacks[hack][0]) + ".gif",
+        "https://xscreensaver.eod.com/" + hackfile + ".gif",
         headers = headers,
         ttl_seconds = CACHE_SECONDS,
     )
@@ -514,12 +514,7 @@ def get_schema():
                 options = groups,
                 default = GROUP_DEFAULT,
             ),
-            schema.Generated(
-                id = "hacks",
-                source = "group",
-                handler = group_test,
-            ),
-        ]
+        ] + group_test("All")
 
     else:
         fields += [
@@ -531,12 +526,7 @@ def get_schema():
                 options = groups,
                 default = GROUP_DEFAULT,
             ),
-            schema.Generated(
-                id = "hacks",
-                source = "group",
-                handler = group_real,
-            ),
-        ]
+        ] + group_real("All")
 
     # And hand the options to the system
     return schema.Schema(

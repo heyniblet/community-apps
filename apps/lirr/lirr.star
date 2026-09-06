@@ -23,14 +23,9 @@ CORE_TEXT_COLOR = "#FFFFFF"
 PENN_STATION = "237"
 
 def main(config):
-    station_id = config.str("station")
-    if station_id == None:
-        station_id = PENN_STATION
-    else:
-        station_id = json.decode(station_id)["value"]
+    station_id = station_value(config.str("station", PENN_STATION))
     gtfs = get_gtfs()
     stops = getIds(gtfs, station_id)
-    print(stops)
     if stops == None or len(stops) == 0:
         return render.Root(child = render.Marquee(
             width = 64,
@@ -51,6 +46,14 @@ def main(config):
             renderTrain(gtfs, stops[1]),
         ],
     ))
+
+def station_value(raw):
+    # Accept the old LocationBased wrapper as well as the new plain station ID.
+    if raw and raw.startswith("{"):
+        value = json.decode(raw).get("value")
+        if value:
+            return str(value)
+    return raw or PENN_STATION
 
 def renderTrain(gtfs, stop_time):
     trip = gtfs["trips"][stop_time["trip_id"]]
@@ -281,12 +284,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Text(
                 id = "station",
                 name = "Train Station",
-                desc = "A list of LIRR train stations based on a location.",
+                desc = "LIRR station ID (Penn Station is 237).",
                 icon = "train",
-                handler = get_stations,
+                default = PENN_STATION,
             ),
         ],
     )

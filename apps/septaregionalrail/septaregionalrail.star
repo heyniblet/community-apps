@@ -611,12 +611,7 @@ def get_schema():
                 default = DEFAULT_STATION,
                 options = regional_rail_station_options(),
             ),
-            schema.Generated(
-                id = "direction",
-                source = "station",
-                handler = select_direction,
-            ),
-        ] + line_toggle_fields() + [
+        ] + select_direction(DEFAULT_STATION) + line_toggle_fields() + [
             schema.Text(
                 id = "banner",
                 name = "Custom banner text",

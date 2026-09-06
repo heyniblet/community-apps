@@ -392,12 +392,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "station_id",
                 name = "Departure Station",
-                desc = "Search and select station",
+                desc = "Trenitalia station ID (for example S01700).",
                 icon = "trainSubway",
-                handler = search_stations,
+                default = "S01700",
             ),
             schema.Text(
                 id = "station_name",

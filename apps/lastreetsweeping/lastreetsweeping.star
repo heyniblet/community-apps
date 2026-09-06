@@ -340,9 +340,5 @@ def get_schema():
         icon = "car",
         default = False,
     ))
-    fields.append(schema.Generated(
-        id = "other_side",
-        source = "side_b",
-        handler = other_side_fields,
-    ))
+    fields.extend(side_fields("b", "Other side", "Wed", "13"))
     return schema.Schema(version = "1", fields = fields)

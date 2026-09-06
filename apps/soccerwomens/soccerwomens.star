@@ -670,11 +670,6 @@ def get_schema():
                 default = displayOptions[0].value,
                 options = displayOptions,
             ),
-            schema.Generated(
-                id = "wide_generated",
-                source = "displayType",
-                handler = show_wide_options,
-            ),
             schema.Color(
                 id = "displayTimeColor",
                 name = "Time Color",
@@ -711,12 +706,7 @@ def get_schema():
                 icon = "rightLeft",
                 default = False,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "day_range",
-                handler = show_day_range,
-            ),
-        ],
+        ] + show_wide_options("wide3") + show_day_range("true"),
     )
 
 def show_wide_options(displayType):

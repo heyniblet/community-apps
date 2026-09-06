@@ -306,6 +306,7 @@ def get_schema():
                 name = "Counter ID",
                 desc = "Unique ID of the counter set up in the Counter app for Shopify",
                 icon = "shopify",
+                secret = True,
             ),
             schema.Dropdown(
                 id = "relativeDate",
@@ -315,10 +316,5 @@ def get_schema():
                 default = date_range_options[0].value,
                 options = date_range_options,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "relativeDate",
-                handler = date_range_custom_options,
-            ),
-        ],
+        ] + date_range_custom_options("custom"),
     )
