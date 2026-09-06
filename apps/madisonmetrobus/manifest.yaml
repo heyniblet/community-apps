@@ -6,9 +6,7 @@ desc: Check arrivals for a given stop in Madison.
 author: Corey Johnsen
 fileName: madison_metro_bus.star
 packageName: madisonmetrobus
-recommendedInterval: 5
-broken: true
-brokenReason: The SMSMyBus arrivals API is retired; its former host has an invalid certificate and returns 404 even with an API key.
+recommendedInterval: 1
 category: transit
 tags: []
 published: '2024-09-17T15:06:27Z'

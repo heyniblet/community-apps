@@ -1,9 +1,4 @@
-"""
-Applet: Mastodon Follows
-Summary: Mastodon Follower Count
-Description: Display your follower count from a Mastodon instance.
-Author: Nick Penree
-"""
+"""Display a Mastodon account's follower count."""
 
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -14,123 +9,84 @@ load("schema.star", "schema")
 
 MASTODON_ICON = MASTODON_ICON_ASSET.readall()
 
+def config_value(value, default):
+    if type(value) != "string" or not value.strip():
+        return default
+    value = value.strip()
+    if value.startswith("{"):
+        option = json.decode(value, {})
+        value = option.get("value") if type(option) == "dict" else None
+    return value.strip() if type(value) == "string" and value.strip() else default
+
 def main(config):
-    username = config.get("username", "lisamelton")
+    username = config_value(config.get("username"), "lisamelton").lstrip("@")
+    instance = config_value(config.get("instance"), "mastodon.social")
+    instance = instance[len("https://"):] if instance.startswith("https://") else instance
+    instance = instance.rstrip("/")
 
-    if username.startswith("@"):
-        username = username[len("@"):]
+    if (
+        len(username) > 80 or
+        len(instance) > 253 or
+        any([char in username for char in ["/", "?", "#", "@", " "]]) or
+        any([char in instance for char in ["/", "?", "#", "@", " ", ":"]])
+    ):
+        return message("Configure a valid Mastodon account")
 
-    instance = json.decode(config.get("instance", "{\"display\":\"mastodon.social\",\"value\":\"mastodon.social\"}"))
-    instance_name = instance["value"]
-    message = "@%s@%s" % (username, instance_name)
-    followers_count = get_followers_count(instance_name, username)
-
-    if followers_count == None:
-        formatted_followers_count = "Not Found"
-        message = "Check your username. (%s)" % message
-    else:
-        formatted_followers_count = "%s %s" % (humanize.comma(followers_count), humanize.plural_word(followers_count, "follower"))
-
-    username_child = render.Text(
-        color = "#3c3c3c",
-        content = message,
+    account = "@%s@%s" % (username, instance)
+    followers = get_followers_count(instance, username)
+    count_text = "Not found" if followers == None else "%s %s" % (
+        humanize.comma(followers),
+        humanize.plural_word(followers, "follower"),
     )
+    account_text = render.Text(account[:340], color = "#3c3c3c")
+    if len(account) > 12:
+        account_text = render.Marquee(width = 64, child = account_text)
 
-    if len(message) > 12:
-        username_child = render.Marquee(
-            width = 64,
-            child = username_child,
-        )
-
-    return render.Root(
-        child = render.Box(
-            render.Column(
+    return render.Root(child = render.Column(
+        expanded = True,
+        main_align = "space_evenly",
+        cross_align = "center",
+        children = [
+            render.Row(
                 expanded = True,
                 main_align = "space_evenly",
                 cross_align = "center",
-                children = [
-                    render.Row(
-                        expanded = True,
-                        main_align = "space_evenly",
-                        cross_align = "center",
-                        children = [
-                            render.Image(MASTODON_ICON),
-                            render.WrappedText(formatted_followers_count),
-                        ],
-                    ),
-                    username_child,
-                ],
+                children = [render.Image(MASTODON_ICON), render.WrappedText(count_text)],
             ),
-        ),
-    )
+            account_text,
+        ],
+    ))
 
 def get_followers_count(instance, username):
     response = http.get(
-        "https://%s/api/v1/accounts/lookup/?acct=%s" % (instance, username),
-        headers = {
-            "Content-Type": "application/json",
-        },
-        ttl_seconds = 240,
+        "https://%s/api/v1/accounts/lookup" % instance,
+        params = {"acct": username},
+        headers = {"Accept": "application/json"},
     )
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 131072:
+        return None
+    account = json.decode(body, {})
+    count = account.get("followers_count") if type(account) == "dict" else None
+    return count if type(count) == "int" and count >= 0 and count <= 1000000000000 else None
 
-    if response.status_code == 200:
-        body = response.json()
-        if body != None and len(body) > 0:
-            return int(body["followers_count"])
-    return None
-
-def search_instances(pattern, config):
-    matched_instances = []
-    response = http.get(
-        "https://instances.social/api/1.0/instances/search",
-        params = {
-            "name": "true",
-            "q": pattern,
-        },
-        headers = {
-            "Authorization": "Bearer %s" % config.get("instances_api_token"),
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-    )
-
-    if response.status_code == 200:
-        body = response.json()
-        if body != None and len(body) > 0:
-            if "instances" in body:
-                instances = body["instances"]
-                for instance in instances:
-                    matched_instances.append(
-                        schema.Option(
-                            display = instance["name"],
-                            value = instance["name"],
-                        ),
-                    )
-    return matched_instances
+def message(text):
+    return render.Root(child = render.WrappedText(text, width = 64, align = "center"))
 
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Text(
-                id = "instances_api_token",
-                name = "Instances.social API Token",
-                desc = "Your API token for instances.social. See https://instances.social/api/ for details.",
-                icon = "key",
-                secret = True,
-            ),
-            schema.Typeahead(
-                id = "instance",
-                name = "Instance",
-                desc = "Mastodon instances from instances.social",
-                icon = "gear",
-                handler = search_instances,
-            ),
-            schema.Text(
-                id = "username",
-                name = "User Name",
-                icon = "user",
-                desc = "User name for which to display follower count",
-            ),
-        ],
-    )
+    return schema.Schema(version = "1", fields = [
+        schema.Text(
+            id = "instance",
+            name = "Instance",
+            desc = "Mastodon server hostname, such as mastodon.social.",
+            icon = "gear",
+            default = "mastodon.social",
+        ),
+        schema.Text(
+            id = "username",
+            name = "User Name",
+            icon = "user",
+            desc = "Account name whose follower count should be displayed.",
+            default = "lisamelton",
+        ),
+    ])

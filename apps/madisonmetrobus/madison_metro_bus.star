@@ -1,77 +1,74 @@
-"""
-Applet: Madison Metro Bus
-Summary: Track Madison Buses
-Description: Check arrivals for a given stop in Madison.
-Author: Corey Johnsen
-"""
+"""Show Madison Metro arrivals from the official GTFS-Realtime feed."""
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
+load("time.star", "time")
+
+FEED_URL = "https://transitdata.cityofmadison.com/GTFS-RealTime/TrapezeRealTimeFeed.json"
+
+def positive_int(config, key, default, minimum, maximum):
+    value = str(config.get(key) or default)
+    if not value.isdigit():
+        return default
+    value = int(value)
+    return value if value >= minimum and value <= maximum else default
 
 def main(config):
-    next_n = int(config.get("next_n", 3))
-    stop = config.get("stopID", 863)
-    min_mins = int(config.get("min_mins", 2))
-    updates = []
-    api_key = config.get("madison_metro_bus_api_key")
-    URL = "https://api.smsmybus.com/v1/getarrivals?key=" + str(api_key) + "&stopID="
+    stop_id = str(config.get("stopID") or "863").strip()
+    next_n = positive_int(config, "next_n", 3, 1, 4)
+    min_mins = positive_int(config, "min_mins", 2, 0, 120)
+    if len(stop_id) > 24 or not stop_id.isdigit():
+        return status("Configure a valid stop ID")
 
-    rep = http.get(URL + str(stop), ttl_seconds = 60)
+    response = http.get(FEED_URL, headers = {"Accept": "application/json"}, ttl_seconds = 60)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 2097152:
+        return status("Madison Metro unavailable")
+    data = json.decode(body, {})
+    entities = data.get("entity") if type(data) == "dict" else None
+    if type(entities) != "list":
+        return status("Invalid Madison Metro data")
 
-    json = rep.json()
-    if int(json["status"]) < 0:
-        return render.Root(
-            child = render.Marquee(width = 64, child = render.Text("Error: %s" % (json["description"]["msg"]), color = "#FF0000"), offset_start = 5, offset_end = 32),
-        )
+    now = time.now().unix
+    arrivals = []
+    for entity in entities[:2000]:
+        trip_update = entity.get("trip_update") if type(entity) == "dict" else None
+        if type(trip_update) != "dict":
+            continue
+        trip = trip_update.get("trip")
+        route = str(trip.get("route_id") or "Bus")[:12] if type(trip) == "dict" else "Bus"
+        updates = trip_update.get("stop_time_update")
+        if type(updates) != "list":
+            continue
+        for update in updates[:100]:
+            if type(update) != "dict" or str(update.get("stop_id") or "") != stop_id:
+                continue
+            event = update.get("arrival") or update.get("departure")
+            timestamp = event.get("time") if type(event) == "dict" else None
+            if type(timestamp) == "string" and timestamp.isdigit():
+                timestamp = int(timestamp)
+            if type(timestamp) != "int":
+                continue
+            minutes = int((timestamp - now) / 60)
+            if minutes >= min_mins and minutes <= 240:
+                arrivals.append((minutes, route))
 
-    for i in range(next_n):
-        bus = json["stop"]["route"][i]
-        if bus["minutes"] < min_mins:
-            i -= 1
-        else:
-            updates.append(render.Row(children = [
-                render.Text(bus["routeID"] + ": "),
-                render.Marquee(width = 64, child = render.Text("%s min (%s)" % (int(bus["minutes"]), bus["arrivalTime"]))),
-            ]))
+    arrivals = sorted(arrivals)[:next_n]
+    if not arrivals:
+        return status("No upcoming buses\nStop %s" % stop_id)
+    children = [render.Text("Stop %s Arrivals" % stop_id, color = "#2222FF", font = "tom-thumb")]
+    for minutes, route in arrivals:
+        children.append(render.Row(children = [render.Text("%s: " % route), render.Text("%d min" % minutes)]))
+    return render.Root(child = render.Column(children = children))
 
-    children = [render.Text("Stop %s Arrivals" % (stop), color = "#2222FF", font = "tom-thumb")]
-    for update in updates:
-        children.append(update)
-    return render.Root(
-        child = render.Column(
-            children = children,
-        ),
-    )
+def status(text):
+    return render.Root(child = render.WrappedText(text, width = 64, align = "center"))
 
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Text(
-                id = "madison_metro_bus_api_key",
-                name = "Madison Metro Bus API Key",
-                desc = "Your Madison Metro Bus API key. See https://smsmybus.com/ for details.",
-                icon = "key",
-                secret = True,
-            ),
-            schema.Text(
-                id = "stopID",
-                name = "Stop ID",
-                desc = "The stop ID to display arrivals for.",
-                icon = "gear",
-            ),
-            schema.Text(
-                id = "next_n",
-                name = "Num Buses",
-                desc = "Number of buses to display.",
-                icon = "gear",
-            ),
-            schema.Text(
-                id = "min_mins",
-                name = "Minimum Mins",
-                desc = "Minimum minutes for bus arrival to display.",
-                icon = "gear",
-            ),
-        ],
-    )
+    return schema.Schema(version = "1", fields = [
+        schema.Text(id = "stopID", name = "Stop ID", desc = "Madison Metro GTFS stop ID.", icon = "gear", default = "863"),
+        schema.Text(id = "next_n", name = "Num Buses", desc = "Number of arrivals to display (1-4).", icon = "gear", default = "3"),
+        schema.Text(id = "min_mins", name = "Minimum Mins", desc = "Ignore arrivals closer than this many minutes.", icon = "gear", default = "2"),
+    ])
