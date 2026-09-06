@@ -1,128 +1,56 @@
 """
 Applet: Guardian News
 Summary: Latest news
-Description: Show the latest Guardian top story from your preferred Edition.
+Description: Show the latest Guardian top story from your preferred edition.
 Author: meejle
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/news_icon.gif", NEWS_ICON_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
 
 NEWS_ICON = NEWS_ICON_ASSET.readall()
+API_URL = "https://content.guardianapis.com/"
+MAX_RESPONSE_BYTES = 1024 * 1024
+EDITIONS = ["uk", "us", "au", "international"]
+FONTS = ["tb-8", "tom-thumb"]
 
 def main(config):
     edition = config.get("edition", "uk")
     fontsize = config.get("fontsize", "tb-8")
+    api_key = config.get("api_key")
+    edition = edition if edition in EDITIONS else "uk"
+    fontsize = fontsize if fontsize in FONTS else "tb-8"
+    if not valid_key(api_key):
+        return connection_error(fontsize, "Configure Guardian API key")
 
-    #For the sake of linting
-    finalheadline = ""
-    finalblurb = ""
-    finalpillar = ""
-    finalsection = ""
-    blurbstripopst = ""
-    blurbstripedst = ""
-    blurbstripopem = ""
-    blurbstripedem = ""
-    blurbstripstbo = ""
-    blurbstripedbo = ""
-    blurbstripopit = ""
-    blurbstripedit = ""
+    response = http.get(
+        API_URL + edition,
+        params = {"show-editors-picks": "true", "api-key": api_key, "show-fields": "trailText"},
+    )
+    body = response.body()
+    if response.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
+        return connection_error(fontsize, "Guardian unavailable")
+    payload = json.decode(body, {})
+    api_response = payload.get("response", {}) if type(payload) == "dict" else {}
+    stories = api_response.get("editorsPicks", []) if type(api_response) == "dict" else []
+    story = stories[0] if type(stories) == "list" and stories and type(stories[0]) == "dict" else None
+    if story == None:
+        return connection_error(fontsize, "No top story")
 
-    if edition == "uk":
-        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=2f517de6-c7e1-4c67-b79f-0c857fb7494a&show-fields=trailText", ttl_seconds = 900)
-        if GET_GUARDIAN.status_code != 200:
-            return connectionError()
-        GET_UKHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]
-        GET_UKBLURB = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["fields"]["trailText"]
-        GET_UKPILLAR = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["pillarName"]
-        GET_UKSECTION = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["sectionName"]
-        finalheadline = str(GET_UKHEADLINE)
-        finalblurb = str(GET_UKBLURB)
-        finalpillar = str(GET_UKPILLAR)
-        finalsection = str(GET_UKSECTION)
-        blurbstripopst = finalblurb.replace("<strong>", "")
-        blurbstripedst = blurbstripopst.replace("</strong>", "")
-        blurbstripopem = blurbstripedst.replace("<em>", "")
-        blurbstripedem = blurbstripopem.replace("</em>", "")
-        blurbstripstbo = blurbstripedem.replace("<b>", "")
-        blurbstripedbo = blurbstripstbo.replace("</b>", "")
-        blurbstripopit = blurbstripedbo.replace("<i>", "")
-        blurbstripedit = blurbstripopit.replace("</i>", "")
-    if edition == "us":
-        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
-        if GET_GUARDIAN.status_code != 200:
-            return connectionError()
-        GET_USHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]
-        GET_USBLURB = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["fields"]["trailText"]
-        GET_USPILLAR = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["pillarName"]
-        GET_USSECTION = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["sectionName"]
-        finalheadline = str(GET_USHEADLINE)
-        finalblurb = str(GET_USBLURB)
-        finalpillar = str(GET_USPILLAR)
-        finalsection = str(GET_USSECTION)
-        blurbstripopst = finalblurb.replace("<strong>", "")
-        blurbstripedst = blurbstripopst.replace("</strong>", "")
-        blurbstripopem = blurbstripedst.replace("<em>", "")
-        blurbstripedem = blurbstripopem.replace("</em>", "")
-        blurbstripstbo = blurbstripedem.replace("<b>", "")
-        blurbstripedbo = blurbstripstbo.replace("</b>", "")
-        blurbstripopit = blurbstripedbo.replace("<i>", "")
-        blurbstripedit = blurbstripopit.replace("</i>", "")
-    if edition == "au":
-        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
-        if GET_GUARDIAN.status_code != 200:
-            return connectionError()
-        GET_AUHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]
-        GET_AUBLURB = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["fields"]["trailText"]
-        GET_AUPILLAR = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["pillarName"]
-        GET_AUSECTION = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["sectionName"]
-        finalheadline = str(GET_AUHEADLINE)
-        finalblurb = str(GET_AUBLURB)
-        finalpillar = str(GET_AUPILLAR)
-        finalsection = str(GET_AUSECTION)
-        blurbstripopst = finalblurb.replace("<strong>", "")
-        blurbstripedst = blurbstripopst.replace("</strong>", "")
-        blurbstripopem = blurbstripedst.replace("<em>", "")
-        blurbstripedem = blurbstripopem.replace("</em>", "")
-        blurbstripstbo = blurbstripedem.replace("<b>", "")
-        blurbstripedbo = blurbstripstbo.replace("</b>", "")
-        blurbstripopit = blurbstripedbo.replace("<i>", "")
-        blurbstripedit = blurbstripopit.replace("</i>", "")
-    if edition == "international":
-        GET_GUARDIAN = http.get("https://content.guardianapis.com/" + edition + "?show-editors-picks=true&api-key=a13d8fc0-0142-4078-ace2-b88d89457a8b&show-fields=trailText", ttl_seconds = 900)
-        if GET_GUARDIAN.status_code != 200:
-            return connectionError()
-        GET_INTLHEADLINE = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["webTitle"]
-        GET_INTLBLURB = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["fields"]["trailText"]
-        GET_INTLPILLAR = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["pillarName"]
-        GET_INTLSECTION = GET_GUARDIAN.json()["response"]["editorsPicks"][0]["sectionName"]
-        finalheadline = str(GET_INTLHEADLINE)
-        finalblurb = str(GET_INTLBLURB)
-        finalpillar = str(GET_INTLPILLAR)
-        finalsection = str(GET_INTLSECTION)
-        blurbstripopst = finalblurb.replace("<strong>", "")
-        blurbstripedst = blurbstripopst.replace("</strong>", "")
-        blurbstripopem = blurbstripedst.replace("<em>", "")
-        blurbstripedem = blurbstripopem.replace("</em>", "")
-        blurbstripstbo = blurbstripedem.replace("<b>", "")
-        blurbstripedbo = blurbstripstbo.replace("</b>", "")
-        blurbstripopit = blurbstripedbo.replace("<i>", "")
-        blurbstripedit = blurbstripopit.replace("</i>", "")
+    headline = safe_text(story.get("webTitle"), 300)
+    section = safe_text(story.get("sectionName"), 80)
+    pillar = safe_text(story.get("pillarName"), 40)
+    fields = story.get("fields", {})
+    blurb = strip_markup(safe_text(fields.get("trailText"), 1000) if type(fields) == "dict" else "")
+    if not headline:
+        return connection_error(fontsize, "No top story")
+    pillar_color = {"Opinion": "#ff7f0f", "Sport": "#00b2ff", "Arts": "#eacca0", "Lifestyle": "#ffabdb"}.get(pillar, "#ff5944")
+    return render_story(section, headline, blurb, fontsize, pillar_color)
 
-    #fallback
-    pillarcol = "#ff5944"
-
-    if finalpillar == "Opinion":
-        pillarcol = "#ff7f0f"
-    if finalpillar == "Sport":
-        pillarcol = "#00b2ff"
-    if finalpillar == "Arts":
-        pillarcol = "#eacca0"
-    if finalpillar == "Lifestyle":
-        pillarcol = "#ffabdb"
-
+def render_story(section, headline, blurb, fontsize, pillar_color):
     return render.Root(
         delay = 50,
         child = render.Marquee(
@@ -131,94 +59,46 @@ def main(config):
             offset_start = 27,
             offset_end = 32,
             child = render.Column(
-                main_align = "start",
                 children = [
                     render.Image(width = 64, height = 32, src = NEWS_ICON),
-                    render.WrappedText(content = finalsection, width = 64, color = "#fff", font = "CG-pixel-3x5-mono", linespacing = 1, align = "left"),
-                    render.Box(width = 64, height = 1, color = pillarcol),
+                    render.WrappedText(content = section or "News", width = 64, color = "#fff", font = "CG-pixel-3x5-mono", linespacing = 1),
+                    render.Box(width = 64, height = 1, color = pillar_color),
                     render.Box(width = 64, height = 2),
-                    render.WrappedText(content = finalheadline, width = 64, color = pillarcol, font = fontsize, linespacing = 1, align = "left"),
+                    render.WrappedText(content = headline, width = 64, color = pillar_color, font = fontsize, linespacing = 1),
                     render.Box(width = 64, height = 2),
-                    render.WrappedText(content = blurbstripedit, width = 64, color = "#fff", font = fontsize, linespacing = 1, align = "left"),
+                    render.WrappedText(content = blurb, width = 64, color = "#fff", font = fontsize, linespacing = 1),
                 ],
             ),
         ),
     )
 
-def connectionError(config):
-    fontsize = config.get("fontsize", "tb-8")
-    return render.Root(
-        delay = 50,
-        child = render.Marquee(
-            scroll_direction = "vertical",
-            height = 32,
-            offset_start = 27,
-            offset_end = 32,
-            child = render.Column(
-                main_align = "start",
-                children = [
-                    render.Image(width = 64, height = 32, src = NEWS_ICON),
-                    render.WrappedText(content = "Error", width = 64, color = "#fff", font = "CG-pixel-3x5-mono", linespacing = 0, align = "left"),
-                    render.Box(width = 64, height = 1),
-                    render.Box(width = 64, height = 1, color = "#ff5944"),
-                    render.Box(width = 64, height = 2),
-                    render.WrappedText(content = "Couldn’t get the top story", width = 64, color = "#ff5944", font = fontsize, linespacing = 1, align = "left"),
-                    render.Box(width = 64, height = 2),
-                    render.WrappedText(content = "For the latest headlines, visit theguardian .com", width = 64, color = "#fff", font = fontsize, linespacing = 1, align = "left"),
-                ],
-            ),
-        ),
-    )
+def connection_error(fontsize, message):
+    return render_story("Error", message, "Visit theguardian.com for headlines", fontsize, "#ff5944")
+
+def valid_key(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 256 and all([char.isalnum() or char in "-_" for char in value.elems()])
+
+def safe_text(value, maximum):
+    return value[:maximum] if type(value) == "string" else ""
+
+def strip_markup(value):
+    for tag in ["<strong>", "</strong>", "<em>", "</em>", "<b>", "</b>", "<i>", "</i>", "<p>", "</p>"]:
+        value = value.replace(tag, "")
+    return value
 
 def get_schema():
-    options = [
-        schema.Option(
-            display = "UK",
-            value = "uk",
-        ),
-        schema.Option(
-            display = "US",
-            value = "us",
-        ),
-        schema.Option(
-            display = "Australia",
-            value = "au",
-        ),
-        schema.Option(
-            display = "International",
-            value = "international",
-        ),
+    editions = [
+        schema.Option(display = "UK", value = "uk"),
+        schema.Option(display = "US", value = "us"),
+        schema.Option(display = "Australia", value = "au"),
+        schema.Option(display = "International", value = "international"),
     ]
-
-    fsoptions = [
-        schema.Option(
-            display = "Larger",
-            value = "tb-8",
-        ),
-        schema.Option(
-            display = "Smaller",
-            value = "tom-thumb",
-        ),
-    ]
-
+    fonts = [schema.Option(display = "Larger", value = "tb-8"), schema.Option(display = "Smaller", value = "tom-thumb")]
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
-                id = "edition",
-                name = "Choose your Edition",
-                desc = "Get news that’s relevant to you.",
-                icon = "newspaper",
-                default = options[0].value,
-                options = options,
-            ),
-            schema.Dropdown(
-                id = "fontsize",
-                name = "Change the text size",
-                desc = "To prevent long words falling off the edge.",
-                icon = "textHeight",
-                default = fsoptions[0].value,
-                options = fsoptions,
-            ),
+            schema.Dropdown(id = "edition", name = "Choose your Edition", desc = "Get news relevant to you.", icon = "newspaper", default = "uk", options = editions),
+            schema.Dropdown(id = "fontsize", name = "Change the text size", desc = "Use smaller text for long words.", icon = "textHeight", default = "tb-8", options = fonts),
+            schema.Text(id = "api_key", name = "Guardian API Key", desc = "Your Guardian Open Platform key.", icon = "key", secret = True),
         ],
     )

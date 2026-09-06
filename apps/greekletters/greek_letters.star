@@ -16,6 +16,7 @@ GREEK_LETTER_IMAGE_LOOKUP_URL = "https://assets.imgix.net/~text?w=150&h=150&txt-
 
 # These images not likely to ever be updated, so lets cache as long as possible
 TTL_SECONDS = 31536000  #one year
+MAX_IMAGE_BYTES = 256 * 1024
 
 GREEK_ALPHABET = [
     {"letter": "Α", "lowercase": "α", "name": "Alpha", "pronunciation": "AHL-fah"},
@@ -63,17 +64,28 @@ def get_image_stack_for_letter(letter_info):
 
     #Get Greek Letter image
     capital_greek_letter = GREEK_LETTER_IMAGE_LOOKUP_URL + base64.encode(letter_info["letter"])
-    capital_greek_letter_src = http.get(capital_greek_letter, ttl_seconds = TTL_SECONDS).body()
+    capital_greek_letter_src = fetch_letter_image(capital_greek_letter)
+    if capital_greek_letter_src == None:
+        return render.WrappedText(content = "Letter image unavailable", width = 62, align = "center")
     items.append(add_padding_to_child_element(render.Image(height = 65, width = 65, src = capital_greek_letter_src), -3, -10))
 
     #Get Greek Letter image
     capital_greek_letter = GREEK_LETTER_IMAGE_LOOKUP_URL + base64.encode(letter_info["lowercase"])
-    capital_greek_letter_src = http.get(capital_greek_letter, ttl_seconds = TTL_SECONDS).body()
+    capital_greek_letter_src = fetch_letter_image(capital_greek_letter)
+    if capital_greek_letter_src == None:
+        return render.WrappedText(content = "Letter image unavailable", width = 62, align = "center")
     items.append(add_padding_to_child_element(render.Image(height = 65, width = 65, src = capital_greek_letter_src), 23, -10))
 
     return render.Stack(
         children = items,
     )
+
+def fetch_letter_image(url):
+    response = http.get(url, ttl_seconds = TTL_SECONDS)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_IMAGE_BYTES:
+        return None
+    return body
 
 def get_info_stack_for_letter(letter_info):
     message = "%s is %s or in lowercase %s and is pronounced '%s'." % (letter_info["name"], letter_info["letter"], letter_info["lowercase"], letter_info["pronunciation"])
@@ -106,7 +118,7 @@ def main(config):
         random_number = random.number(0, len(GREEK_ALPHABET) - 1)
         display_letter_item = GREEK_ALPHABET[random_number]
     else:
-        display_letter_item = get_letter_by_name(selected_letter)
+        display_letter_item = get_letter_by_name(selected_letter) or GREEK_ALPHABET[0]
 
     display_items = []
     display_items.append(get_image_stack_for_letter(display_letter_item))
@@ -119,7 +131,7 @@ def main(config):
             children = display_items,
         ),
         show_full_animation = True,
-        delay = int(config.get("scroll", 45)),
+        delay = int(config.get("scroll", "45")) if config.get("scroll", "45") in ["30", "45", "60"] else 45,
     )
 
 def get_schema():
