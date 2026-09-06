@@ -5,6 +5,7 @@ Description: Displays the ranking of an FRC team at the team's active event.
 Author: dragid10
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/default_team_avatar.png", DEFAULT_TEAM_AVATAR_ASSET = "file")
@@ -15,9 +16,6 @@ load("time.star", "time")
 DEFAULT_TEAM_AVATAR = DEFAULT_TEAM_AVATAR_ASSET.readall()
 
 ## ==================== BEGIN CONSTANTS ====================
-# Cache and API settings
-TEAM_INFO_CACHE_SECS = 600
-TEAM_RANK_CACHE_SECS = 100
 IMG_MAX_WIDTH = 20
 IMG_MAX_HEIGHT = 20
 DATETIME_FORMAT = "yyyy-MM-dd"
@@ -29,31 +27,13 @@ WIDGET_COLOR = "#ffffff"
 # Default values for UI display when API calls fail
 
 DEFAULT_TEAM_NAME = "N/A"
-DEFAULT_TEAM_NUMBER = 0
 DEFAULT_RANKING_MSG = "No Ranking"
-DEFAULT_ERROR_MSG = "No valid Blue Alliance API key provided. Please enter a valid TBA api key."
-DEFAULT_NO_EVENTS_MSG = "No active events for team %d!"
 
 # Use The Blue Alliance API to get the team's current competition ranking
 TBA_BASE_URL = "https://www.thebluealliance.com/api/v3"
 TBA_API_KEY_DEFAULT = "YOUR_TBA_READ_API_KEY_HERE"
 
 ## ==================== END CONSTANTS ====================
-
-## ==================== BEGIN MESSAGE CONSTANTS ====================
-# Error messages
-MSG_TEAM_EVENTS_ERROR = "Error fetching team events for %d"
-MSG_TEAM_AVATAR_ERROR = "Error fetching team avatar for %d"
-MSG_TEAM_INFO_ERROR = "Error fetching team info for %s"
-MSG_TEAM_RANKING_ERROR = "Error fetching team ranking for %d"
-MSG_NO_ACTIVE_EVENTS = "No active events for team %d!"
-
-# Info messages
-MSG_CACHE_HIT = "Hit! Displaying cached data."
-MSG_CACHE_MISS = "Miss! Calling TBA API."
-MSG_TEAM_EVENTS_COUNT = "Got %d team events for team: %d"
-MSG_TEAM_RANKING = "Team %d is ranked %d out of %d"
-## ==================== END MESSAGE CONSTANTS ====================
 
 ## ==================== BEGIN HELPER FUNCTIONS ====================
 # Time and date helper functions
@@ -93,17 +73,21 @@ def get_team_info(team_id, tba_api_key):
     team_info_resp = http.get(
         "%s/team/%s" % (TBA_BASE_URL, team_id),
         headers = {"X-TBA-Auth-Key": tba_api_key},
-        ttl_seconds = TEAM_INFO_CACHE_SECS,
     )
 
     # If the request fails, return an error message
     if team_info_resp.status_code != 200:
-        team_info_error = MSG_TEAM_INFO_ERROR % team_id
-        fail("%s - Status code: %s" % (team_info_error, team_info_resp.status_code))
+        return None
 
     # Parse the response JSON
-    team_info = team_info_resp.json()
-    return team_info["team_number"], team_info["nickname"]
+    if len(team_info_resp.body()) > 2 * 1024 * 1024:
+        return None
+    team_info = json.decode(team_info_resp.body(), {})
+    number = team_info.get("team_number") if type(team_info) == "dict" else None
+    nickname = team_info.get("nickname") if type(team_info) == "dict" else None
+    if type(number) != "int" or type(nickname) != "string" or not nickname:
+        return None
+    return number, nickname[:120]
 
 def get_team_events_for_current_year(team_number, tba_api_key):
     """Fetches all events for a given team for the current year.
@@ -121,16 +105,17 @@ def get_team_events_for_current_year(team_number, tba_api_key):
 
     # Make API call to get team events
     team_events_url = "%s/team/frc%d/events/%d/simple" % (TBA_BASE_URL, team_number, get_year())
-    team_events_resp = http.get(team_events_url, headers = {"X-TBA-Auth-Key": tba_api_key}, ttl_seconds = TEAM_INFO_CACHE_SECS)
+    team_events_resp = http.get(team_events_url, headers = {"X-TBA-Auth-Key": tba_api_key})
 
     # If the request fails, return an error message
     if team_events_resp.status_code != 200:
-        team_events_error = MSG_TEAM_EVENTS_ERROR % team_number
-        fail("%s - Status code: %s" % (team_events_error, team_events_resp.status_code))
+        return None
 
     # Parse the response JSON
-    team_events = team_events_resp.json()
-    return team_events
+    if len(team_events_resp.body()) > 2 * 1024 * 1024:
+        return None
+    team_events = json.decode(team_events_resp.body(), [])
+    return team_events if type(team_events) == "list" else None
 
 def get_team_ranking(team_number, event_key, tba_api_key):
     """Fetches team ranking for a specific event from The Blue Alliance API.
@@ -149,31 +134,35 @@ def get_team_ranking(team_number, event_key, tba_api_key):
     team_ranking_resp = http.get(
         "%s/team/frc%d/event/%s/status" % (TBA_BASE_URL, team_number, event_key),
         headers = {"X-TBA-Auth-Key": tba_api_key},
-        ttl_seconds = TEAM_RANK_CACHE_SECS,
     )
 
     # If the request fails, return an error message
     if team_ranking_resp.status_code != 200:
-        team_ranking_error = MSG_TEAM_RANKING_ERROR % team_number
-        fail("%s - Status code: %s" % (team_ranking_error, team_ranking_resp.status_code))
+        return -1, 999
 
     # Parse the team ranking data using intermediate variables.
     # TBA returns qual/ranking/rank as nested objects, but any level can be
     # None (not just missing) when the event hasn't started matches yet.
-    ranking_data = team_ranking_resp.json()
+    if len(team_ranking_resp.body()) > 2 * 1024 * 1024:
+        return -1, 999
+    ranking_data = json.decode(team_ranking_resp.body(), {})
+    if type(ranking_data) != "dict":
+        return -1, 999
     qual_data = ranking_data.get("qual")
-    if not qual_data:
+    if type(qual_data) != "dict":
         return -1, 999
 
     ranking_info = qual_data.get("ranking")
-    if not ranking_info:
+    if type(ranking_info) != "dict":
         return -1, 999
 
     team_ranking = ranking_info.get("rank")
-    if team_ranking == None:
+    if type(team_ranking) != "int" or team_ranking < 0:
         return -1, 999
 
     total_teams = ranking_info.get("num_teams", 999)
+    if type(total_teams) != "int" or total_teams < team_ranking:
+        total_teams = 999
     return team_ranking, total_teams
 
 def build_avatar_url(team_number):
@@ -202,10 +191,9 @@ def get_team_avatar(team_number):
     """
     avatar_url = build_avatar_url(team_number)
 
-    avatar_resp = http.get(avatar_url, ttl_seconds = TEAM_INFO_CACHE_SECS)
+    avatar_resp = http.get(avatar_url)
 
-    if avatar_resp.status_code != 200:
-        print(MSG_TEAM_AVATAR_ERROR % team_number)
+    if avatar_resp.status_code != 200 or len(avatar_resp.body()) > 1024 * 1024:
         return None
 
     return avatar_resp.body()
@@ -224,9 +212,10 @@ def main(config):
     """
 
     # Get team number from the user
-    team_number_input = config.get("team_number") or DEFAULT_TEAM_NUMBER
+    team_number_input = config.get("team_number")
+    if type(team_number_input) != "string" or not team_number_input.isdigit() or len(team_number_input) > 6 or int(team_number_input) <= 0:
+        return message("Add an FRC team number")
     USER_INPUT_TEAM_NUMBER = "frc%s" % team_number_input
-    print("Team number: %s" % USER_INPUT_TEAM_NUMBER)
 
     # Parse the team number (assuming it's valid)
     team_number = int(team_number_input)
@@ -240,15 +229,19 @@ def main(config):
     TBA_API_KEY = config.get("tba_api_key", TBA_API_KEY_DEFAULT)
 
     # Check if we have a valid API key
-    if TBA_API_KEY and TBA_API_KEY != TBA_API_KEY_DEFAULT:
+    if valid_secret(TBA_API_KEY) and TBA_API_KEY != TBA_API_KEY_DEFAULT:
         # API key is valid, proceed with API calls
 
         # Get team info
-        team_number, team_name = get_team_info(USER_INPUT_TEAM_NUMBER, TBA_API_KEY)
+        team_info = get_team_info(USER_INPUT_TEAM_NUMBER, TBA_API_KEY)
+        if not team_info:
+            return message("FRC team unavailable")
+        team_number, team_name = team_info
 
         # Get team events
         team_events = get_team_events_for_current_year(team_number, TBA_API_KEY)
-        print(MSG_TEAM_EVENTS_COUNT % (len(team_events), team_number))
+        if team_events == None:
+            return message("FRC events unavailable")
 
         # Process events if any exist
         # Look for active events and get ranking
@@ -256,18 +249,21 @@ def main(config):
 
         # Check if there are any active events
         for event in team_events:
-            event_start_date = event["start_date"]
-            event_end_date = event["end_date"]
+            if type(event) != "dict":
+                continue
+            event_start_date = event.get("start_date")
+            event_end_date = event.get("end_date")
 
-            if event_start_date <= current_date and current_date <= event_end_date:
-                event_key = event["key"]
+            if type(event_start_date) == "string" and type(event_end_date) == "string" and event_start_date <= current_date and current_date <= event_end_date:
+                event_key = event.get("key")
+                if type(event_key) != "string" or not event_key or len(event_key) > 32:
+                    continue
 
                 # Get ranking for the team's active event
                 team_ranking, total_teams = get_team_ranking(team_number, event_key, TBA_API_KEY)
-                print(MSG_TEAM_RANKING % (team_number, team_ranking, total_teams))
 
                 # Update ranking message
-                team_ranking_msg = "Rank: %d of %d" % (team_ranking, total_teams)
+                team_ranking_msg = "Rank: %d of %d" % (team_ranking, total_teams) if team_ranking >= 0 else DEFAULT_RANKING_MSG
 
                 # Break after finding the first active event
                 # Note: There should never be more than 1 active event
@@ -275,6 +271,9 @@ def main(config):
 
         # Get team avatar - will use default if this fails
         team_avatar = get_team_avatar(team_number)
+
+    else:
+        return message("Add a TBA API key")
 
     # Create widgets with whatever data we have
     # Avatar widget - create a fallback if no avatar is available
@@ -384,5 +383,11 @@ def get_schema():
             ),
         ],
     )
+
+def valid_secret(value):
+    return type(value) == "string" and value and len(value) <= 2048 and "\r" not in value and "\n" not in value
+
+def message(text):
+    return render.Root(child = render.WrappedText(text, color = "#ffcc66"))
 
 ## ==================== END MAIN FUNCTION ====================
