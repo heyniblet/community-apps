@@ -24,23 +24,15 @@ jsonData = False
 
 def main(config):
     synthType = config.get("SynthSelector", DEFAULT_TYPE)
+    if synthType not in ["classic", "fantasy", "all"]:
+        synthType = DEFAULT_TYPE
     jsonData = getJsonData()
-    synth = ""
-    if jsonData != False:
-        if synthType == "classic":
-            synth = parseClassicSynth()
-        if synthType == "fantasy":
-            synth = parseFantasySynth()
-        if synthType == "all":
-            randomNumber = random.number(0, 1)
-            if randomNumber == 0:
-                synth = parseClassicSynth()
-            if randomNumber == 1:
-                synth = parseFantasySynth()
-        synthData = http.get(synth)
-        theSynth = synthData.body()
-    else:
-        theSynth = FAILSAFE_IMAGE
+    kind = synthType if synthType != "all" else ["classic", "fantasy"][random.number(0, 1)]
+    synth = selectSynth(jsonData, kind)
+    synthData = http.get(synth, ttl_seconds = 3600) if synth else None
+    body = synthData.body() if synthData else ""
+    content_type = synthData.headers.get("Content-Type", "").lower() if synthData else ""
+    theSynth = body if synthData and synthData.status_code == 200 and body and len(body) <= 2 * 1024 * 1024 and content_type.startswith("image/") else FAILSAFE_IMAGE
     return render.Root(
         render.Image(src = theSynth),
     )
@@ -48,29 +40,16 @@ def main(config):
 #go and get json data and cache for 10 mins
 def getJsonData():
     res = http.get(jsonUrl, ttl_seconds = 600)
-    if res.status_code != 200:
-        #fail("status %d from %s: %s" % (res.status_code, jsonUrl, res.body()))
-        print("failed to get json data - using failsafe image instead!")
-        return False
-    else:
-        jsonData = res.body()
-        return jsonData
+    body = res.body()
+    return json.decode(body, {}) if res.status_code == 200 and body and len(body) <= 64 * 1024 else {}
 
-def parseClassicSynth():
-    jsonData = getJsonData()
-    jsonFeed = json.decode(jsonData)["classics"]
-    randomIndex = random.number(0, len(jsonFeed) - 1)
-    jsonItem = jsonFeed[randomIndex]
-    classicSynth = jsonItem["url"]
-    return classicSynth
-
-def parseFantasySynth():
-    jsonData = getJsonData()
-    jsonFeed = json.decode(jsonData)["fantasy"]
-    randomIndex = random.number(0, len(jsonFeed) - 1)
-    jsonItem = jsonFeed[randomIndex]
-    fantasySynth = jsonItem["url"]
-    return fantasySynth
+def selectSynth(data, kind):
+    feed = data.get(kind, []) if type(data) == "dict" else []
+    if type(feed) != "list" or not feed:
+        return None
+    item = feed[random.number(0, min(len(feed), 100) - 1)]
+    url = item.get("url") if type(item) == "dict" else None
+    return url if type(url) == "string" and len(url) <= 2048 and url.startswith("https://www.fourontuesday.com/") else None
 
 def get_schema():
     synthoptions = [

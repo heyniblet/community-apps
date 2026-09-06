@@ -5,6 +5,7 @@ Description: The user selects an Indego (Philadelphia BIKE share) station and Ti
 Author: RayPatt
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/bike.png", BIKE_ASSET = "file")
 load("images/ebike.png", EBIKE_ASSET = "file")
@@ -19,23 +20,23 @@ LIGHTNING = LIGHTNING_ASSET.readall()
 url = "https://kiosks.bicycletransit.workers.dev/phl"
 
 def main(config):
-    rep = http.get(url)
-    if rep.status_code != 200:
-        fail("Request failed with status %d", rep.status_code)
-
-    station_no = int(config.get("Station", 1))
-
-    all = rep.json()["features"]
-
-    name = all[(station_no)]["properties"]["name"]
-
-    bikes = rep.json()["features"][station_no]["properties"]["classicBikesAvailable"]
-    ebikes = rep.json()["features"][station_no]["properties"]["electricBikesAvailable"]
-    reward = rep.json()["features"][station_no]["properties"]["rewardBikesAvailable"]
-    if (reward > 0):
-        reward = "+"
-    else:
-        reward = "-"
+    rep = http.get(url, ttl_seconds = 60)
+    body = rep.body()
+    data = json.decode(body, {}) if rep.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
+    features = data.get("features", []) if type(data) == "dict" else []
+    selected = config.get("Station", "1")
+    if type(features) != "list" or type(selected) != "string" or not selected.isdigit():
+        return error_frame()
+    station_no = int(selected)
+    if station_no < 0 or station_no >= len(features) or type(features[station_no]) != "dict":
+        return error_frame()
+    properties = features[station_no].get("properties", {})
+    name = properties.get("name") if type(properties) == "dict" else None
+    bikes = properties.get("classicBikesAvailable") if type(properties) == "dict" else None
+    ebikes = properties.get("electricBikesAvailable") if type(properties) == "dict" else None
+    if type(name) != "string" or type(bikes) not in ["int", "float"] or type(ebikes) not in ["int", "float"]:
+        return error_frame()
+    name = name[:120]
 
     return render.Root(
         child = render.Column(
@@ -61,7 +62,7 @@ def main(config):
                                     ],
                                 ),
                                 render.Column(
-                                    cross_align = "Start",
+                                    cross_align = "start",
                                     children = [
                                         render.Text(" Bikes"),
                                         render.Row(
@@ -81,41 +82,18 @@ def main(config):
     )
 
 def get_schema():
-    rep = http.get(url)
-    if rep.status_code != 200:
-        fail("Request failed with status %d", rep.status_code)
-
-    all = rep.json()["features"]
-
-    tmp = []
-    tmp2 = []
-
-    no_stations = len(all) - 1
-
-    i = 0
-    for _ in range(0, no_stations):
-        tmp.append(all[i]["properties"]["name"])
-        tmp2.append(str(i))
-        i = i + 1
-
-    tmp, tmp2 = zip(*sorted(zip(tmp, tmp2)))
-
-    options = []
-    for idx, i in enumerate(tmp):
-        options.append(
-            schema.Option(display = i, value = tmp2[idx]),
-        )
-
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "Station",
-                name = "Station Name",
-                desc = "The desired station to display",
+                name = "Station Number",
+                desc = "The zero-based station number from the Indego feed. Existing selections remain valid.",
                 icon = "brush",
-                default = options[0].value,
-                options = options,
+                default = "1",
             ),
         ],
     )
+
+def error_frame():
+    return render.Root(child = render.WrappedText(content = "Indego station unavailable", width = 64, color = "#f00"))

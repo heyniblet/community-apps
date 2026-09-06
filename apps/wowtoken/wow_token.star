@@ -4,6 +4,7 @@ Summary: Display WoW Token Price
 Description: Displays the current price of the World of Warcraft token in various regions. Data provided by wowtoken.app.
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/token.png", GOLD_ICON_ASSET = "file")
@@ -11,8 +12,6 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 GOLD_ICON = GOLD_ICON_ASSET.readall()
-
-print("----------------------------------------------------------------------------------------")
 
 WOW_TOKEN_URL = "https://data.wowtoken.app/v2/current/retail.json"
 REGION_LIST = ["us", "eu", "kr", "tw"]
@@ -39,25 +38,23 @@ def get_schema():
 
 def main(config):
     region = config.get("region", "us")
-
-    print("Cache miss")
+    if region not in REGION_LIST:
+        region = "us"
 
     query = http.get(WOW_TOKEN_URL, ttl_seconds = 600)
-    if query.status_code != 200:
-        fail("API request failed with status %d", query.status_code)
-    else:
-        token_price = float(query.json()[region][1])
-        print("Got price " + str(token_price))
-        data_available = True
+    body = query.body()
+    data = json.decode(body, {}) if query.status_code == 200 and body and len(body) <= 16 * 1024 else {}
+    price = data.get(region) if type(data) == "dict" else None
+    if type(price) != "list" or len(price) < 2 or type(price[1]) not in ["int", "float"] or price[1] < 0:
+        return render.Root(child = render.WrappedText(content = "Token price unavailable", width = 64, color = "#f00"))
+    token_price = int(price[1])
 
     display = []
-
-    if data_available:
-        display.append(render.Row(
-            children = [
-                render.Text("{}".format(humanize.comma(token_price))),
-            ],
-        ))
+    display.append(render.Row(
+        children = [
+            render.Text("{}".format(humanize.comma(token_price))),
+        ],
+    ))
 
     return render.Root(
         child = render.Box(

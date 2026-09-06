@@ -1,3 +1,4 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/offline_icon.png", OFFLINE_ICON_ASSET = "file")
 load("images/online_icon.png", ONLINE_ICON_ASSET = "file")
@@ -5,6 +6,7 @@ load("render.star", "render")
 
 OFFLINE_ICON = OFFLINE_ICON_ASSET.readall()
 ONLINE_ICON = ONLINE_ICON_ASSET.readall()
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 def main():
     ICAO = "WIEE"
@@ -18,20 +20,30 @@ def main():
 
     suffixes = ["_DEL", "_GND", "_TWR", "_APP"]
 
-    response = http.get("https://data.vatsim.net/v3/vatsim-data.json")
-    data = response.json()
+    response = http.get("https://data.vatsim.net/v3/vatsim-data.json", ttl_seconds = 60)
+    body = response.body()
+    data = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else {}
+    if type(data) != "dict":
+        data = {}
 
-    for pilot in data["pilots"]:
-        if "flight_plan" in pilot and pilot["flight_plan"]:
-            if "departure" in pilot["flight_plan"] and pilot["flight_plan"]["departure"] == ICAO:
+    pilots = data.get("pilots", [])
+    if type(pilots) != "list":
+        pilots = []
+    for pilot in pilots[:30000]:
+        if type(pilot) == "dict" and type(pilot.get("flight_plan")) == "dict":
+            if pilot["flight_plan"].get("departure") == ICAO:
                 NUM_OF_DEP += 1
-            if "arrival" in pilot["flight_plan"] and pilot["flight_plan"]["arrival"] == ICAO:
+            if pilot["flight_plan"].get("arrival") == ICAO:
                 NUM_OF_ARR += 1
 
-    for controller in data["controllers"]:
-        if ICAO in controller["callsign"]:
+    controllers = data.get("controllers", [])
+    if type(controllers) != "list":
+        controllers = []
+    for controller in controllers[:10000]:
+        callsign = controller.get("callsign", "") if type(controller) == "dict" else ""
+        if type(callsign) == "string" and ICAO in callsign:
             for suffix in suffixes:
-                if suffix in controller["callsign"]:
+                if suffix in callsign:
                     if suffix == "_DEL":
                         DEL_ACTIVE = True
                     elif suffix == "_GND":

@@ -5,7 +5,6 @@ Description: Displays the latest tagline from the top of popular tech news site 
 Author: joevgreathead
 """
 
-load("cache.star", "cache")
 load("html.star", "html")
 load("http.star", "http")
 load("images/new_verge_logo.png", NEW_VERGE_LOGO_ASSET = "file")
@@ -29,27 +28,13 @@ NEW_VERGE_PINK = "#ffc2e7"
 PLACEHOLDER_TEXT = "THE VERGE"
 
 SITE = "https://www.theverge.com"
-CACHE_KEY_TAGLINE = "verge-dot-com-tagline"
-CACHE_KEY_TAGLINE_BACKUP = "verge-dot-com-tagline-backup"
 SELECTOR_TAGLINE = ".duet--recirculation--storystream-header"
 
 def main():
-    tagline_backup = cache.get(CACHE_KEY_TAGLINE_BACKUP)
-
     resp = http.get(SITE, ttl_seconds = 900)
-    resp_body = html(resp.body())
-    tagline = get_tagline(resp_body)
-    if tagline == None or tagline == "":
-        if tagline_backup == None:
-            tagline = PLACEHOLDER_TEXT
-            display = PLACEHOLDER_TEXT
-        else:
-            tagline = tagline_backup
-            display = "* " + tagline_backup
-    else:
-        display = tagline
-
-    cache.set(CACHE_KEY_TAGLINE_BACKUP, tagline, ttl_seconds = 1200)
+    body = resp.body()
+    tagline = get_tagline(html(body)) if resp.status_code == 200 and body and len(body) <= 2 * 1024 * 1024 else PLACEHOLDER_TEXT
+    display = tagline[:300] if type(tagline) == "string" and tagline else PLACEHOLDER_TEXT
 
     return render.Root(
         child = render.Column(
