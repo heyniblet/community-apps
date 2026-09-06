@@ -5,24 +5,18 @@ Description: Displays a new cocktail every hour, on the hour. Cheers to my mom f
 Author: Nicole Brooks
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/error_img.png", ERROR_IMG_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 ERROR_IMG = ERROR_IMG_ASSET.readall()
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
 def main():
-    # Check cache for current hour. UTC
-    hourlyCocktail = checkCache()
-
-    # If cache thing returns None, run "get cocktail" function
-    if hourlyCocktail == None:
-        print("Cache miss, refreshing cocktail")
-        hourlyCocktail = getNewCocktail()
+    hourlyCocktail = getNewCocktail()
 
     if "error" in hourlyCocktail:
         imgSrc = ERROR_IMG
@@ -30,10 +24,16 @@ def main():
         drinkName = hourlyCocktail
 
     else:
-        imgSrc = http.get(hourlyCocktail["strDrinkThumb"] + "/preview").body()
+        image_url = hourlyCocktail.get("strDrinkThumb", "")
+        imgSrc = ERROR_IMG
+        if valid_image_url(image_url):
+            image_response = http.get(image_url + "/small", ttl_seconds = 3600)
+            image_body = image_response.body()
+            image_type = image_response.headers.get("Content-Type", "")
+            if image_response.status_code == 200 and len(image_body) <= MAX_IMAGE_BYTES and image_type.startswith("image/"):
+                imgSrc = image_body
         ingredients = formatIngredients(hourlyCocktail)
         drinkName = hourlyCocktail["strDrink"]
-        print("Displaying Drink: " + drinkName)
 
     # Render
     return render.Root(
@@ -88,50 +88,25 @@ def main():
             ),
     )
 
-# Gets the current cocktail in the cache. Returns None if we need a new one.
-def checkCache():
-    hour = time.now().in_location("UTC").hour
-    lastHourSeen = cache.get("lastHour")
-    if lastHourSeen == None:
-        return None
-    if hour == int(lastHourSeen):
-        print("Cache hit, returning cocktail")
-        data = cache.get("cocktailData")
-        if data == None:
-            return None
-        return json.decode(data)
-    return None
-
-# Stores cocktail and current hour for 75 minutes.
-def updateCache(cocktail):
-    hour = time.now().in_location("UTC").hour
-
-    cache.set("lastHour", str(hour), 75 * 60)
-
-    cache.set("cocktailData", json.encode(cocktail), 75 * 60)
-
 # Gets the updated cocktail from the API.
 def getNewCocktail():
-    response = http.get("https://thecocktaildb.com/api/json/v1/1/random.php")
+    response = http.get("https://thecocktaildb.com/api/json/v1/1/random.php", ttl_seconds = 3600)
+    body = response.body()
 
-    # if the response isn't in json format
-    if "application/json" not in response.headers.get("Content-Type"):
-        print("error: " + str(response))
-        return "error :("
-        # if the API returns an error
-
-    elif response.status_code != 200:
-        print("error: " + str(response.status_code))
+    if response.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
         return "error: " + str(response.status_code)
-        # if the drink doesn't exist
-
-    elif "drinks" not in response.json():
-        print("error: " + str(response))
+    if "application/json" not in response.headers.get("Content-Type", ""):
         return "error :("
 
-    cocktail = response.json()["drinks"][0]
-    print("Top of the hour! New cocktail: " + cocktail["strDrink"])
-    updateCache(cocktail)
+    data = json.decode(body, {})
+    drinks = data.get("drinks", []) if type(data) == "dict" else []
+    if type(drinks) != "list" or not drinks or type(drinks[0]) != "dict":
+        return "error :("
+    cocktail = drinks[0]
+    name = cocktail.get("strDrink")
+    if type(name) != "string" or not name:
+        return "error :("
+    cocktail["strDrink"] = name[:100]
     return cocktail
 
 # Creates ingredients list as a list of strings.
@@ -139,8 +114,9 @@ def formatIngredients(cocktail):
     list = []
     for index in range(1, 16):
         propertyName = "strIngredient" + str(index)
-        if cocktail[propertyName] != None and len(cocktail[propertyName]) > 0:
-            ingWords = cocktail[propertyName].split()
+        ingredient = cocktail.get(propertyName)
+        if type(ingredient) == "string" and ingredient:
+            ingWords = ingredient[:100].split()
             for ind, ing in enumerate(ingWords):
                 if len(ing) > 8 and "-" in ing:
                     ingWords[ind] = ing[0:ing.index("-")] + "\n" + ing[ing.index("-"):]
@@ -179,6 +155,9 @@ def rowHeight(str):
     if len(str) > 16:
         height = 21
     return height
+
+def valid_image_url(value):
+    return type(value) == "string" and len(value) <= 2048 and (value.startswith("https://www.thecocktaildb.com/images/") or value.startswith("https://thecocktaildb.com/images/")) and not any([char in value for char in [" ", "\t", "\r", "\n", "?", "#"]])
 
 # No schema.
 def get_schema():

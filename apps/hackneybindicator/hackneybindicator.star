@@ -5,14 +5,13 @@ Description: Tells you what bins to put out for people who live in the London Bo
 Author: dinosaursrarr
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
-load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 BASE_URL = "https://hackney-bindicator.fly.dev"
-ADDRESS_PATH = "/addresses/"
 COLLECTION_PATH = "/property/"
 
 DATE = "date"
@@ -22,9 +21,6 @@ FILL = "fill"
 TYPE = "Type"
 DISPLAY = "display"
 NAME = "Name"
-
-TOWN_HALL_POSTCODE = "E8 1EA"
-SPURSTOWE_ARMS = "5f898d4790478c0067f8bb7c"
 
 # https://design-system.hackney.gov.uk/developing/colours/
 HACKNEY_GREEN = "#00664f"
@@ -37,9 +33,7 @@ LIGHT_GREEN = "#00b341"
 BEIGE = "#f8e08e"
 MAX_WIDTH = 16
 
-SPACE = re.compile("\\s+")
-POSTCODE = re.compile("^(?P<outer>[A-Z]{1,2}[0-9][A-Z0-9]?) ?(?P<inner>[0-9][A-Z]{2})$")
-HACKNEY_POSTCODES = set(["E1", "E2", "E5", "E8", "E9", "E10", "E15", "E20", "N1", "N4", "N5", "N16"])
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 BIN_TYPES = {
     "food": {
@@ -71,25 +65,35 @@ BIN_TYPES = {
 
 def get_next_collection(property_id):
     resp = http.get(BASE_URL + COLLECTION_PATH + property_id)
-    if resp.status_code != 200:
-        print("Status code {} when fetching collections".format(resp.status_code))
+    body = resp.body()
+    if resp.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
         return None
 
+    data = json.decode(body, {})
+    bins = data.get(BINS, []) if type(data) == "dict" else []
+    if type(bins) != "list":
+        return None
     collections = {}
-    for bin in resp.json()[BINS]:
-        date = time.parse_time(bin["NextCollection"])
+    for bin in bins[:20]:
+        if type(bin) != "dict":
+            continue
+        next_collection = bin.get("NextCollection")
+        if not valid_timestamp(next_collection):
+            continue
+        date = time.parse_time(next_collection)
         if date not in collections:
             collections[date] = []
         bin_type = bin.get(TYPE, "unknown")
+        if bin_type not in BIN_TYPES:
+            bin_type = "unknown"
 
         # The council have changed their garden waste collection service to an opt-in
         # paid service. It looks like they have also changed the API response. My garden
         # waste bin now shows up as "unknown" type, so insert a manual override.
-        if bin_type == "unknown" and bin[NAME] == "GW_Wheeled Bin 140l":
+        if bin_type == "unknown" and bin.get(NAME) == "GW_Wheeled Bin 140l":
             bin_type = "garden"
         collections[date].append(bin_type)
     if not collections:
-        print("No collections found")
         return None
     first_date = sorted(collections.keys())[0]
     collected = sorted(list(set(collections[first_date])))
@@ -197,46 +201,13 @@ def render_collection(date, bins):
     )
 
 def main(config):
-    property_id = config.get("address", SPURSTOWE_ARMS)
+    property_id = config.get("address", "")
+    if not valid_property_id(property_id):
+        return render_error("Configure a Hackney property ID")
     collection = get_next_collection(property_id)
     if not collection:
         return render_error("Could not get collection")
     return render_collection(collection[DATE], collection[BINS])
-
-def get_addresses(postcode):
-    tidy = SPACE.sub(" ", postcode.strip()).upper()
-    match = POSTCODE.match(tidy)
-    if not match:
-        print("Not a valid postcode: ", postcode)
-        return []
-    outer = match[0][1]
-    inner = match[0][2]
-    if outer not in HACKNEY_POSTCODES:
-        print("Postcode area not in Hackney: ", outer)
-        return []
-    canonical = "{} {}".format(outer, inner)
-
-    resp = http.get(BASE_URL + ADDRESS_PATH + canonical)
-    if resp.status_code != 200:
-        print("Status code {} looking up addresses".format(resp.status_code))
-        return []
-    options = [
-        schema.Option(
-            display = item["Name"],
-            value = item["Id"],
-        )
-        for item in resp.json()
-    ]
-    return [
-        schema.Dropdown(
-            id = "address",
-            name = "Address",
-            desc = "Property to check collections for",
-            icon = "house",
-            default = options[0].value,
-            options = options,
-        ),
-    ]
 
 def get_schema():
     return schema.Schema(
@@ -244,14 +215,25 @@ def get_schema():
         fields = [
             schema.Text(
                 id = "postcode",
-                name = "postcode",
-                desc = "Postcode to look up address",
+                name = "Postcode",
+                desc = "Reference postcode. Use the official Hackney collection lookup to choose your address.",
                 icon = "map",
             ),
-            schema.Generated(
+            schema.Text(
                 id = "address",
-                source = "postcode",
-                handler = get_addresses,
+                name = "Property ID",
+                desc = "Property ID returned by https://hackney-bindicator.fly.dev/addresses/POSTCODE (encode the space as %20).",
+                icon = "house",
             ),
         ],
     )
+
+def valid_property_id(value):
+    return type(value) == "string" and len(value) == 24 and all([char.lower() in "0123456789abcdef" for char in value.elems()])
+
+def valid_timestamp(value):
+    if type(value) != "string" or len(value) < 20 or len(value) > 35:
+        return False
+    prefix = value[:19]
+    digits = prefix[:4] + prefix[5:7] + prefix[8:10] + prefix[11:13] + prefix[14:16] + prefix[17:19]
+    return prefix[4] == "-" and prefix[7] == "-" and prefix[10] == "T" and prefix[13] == ":" and prefix[16] == ":" and digits.isdigit() and (value.endswith("Z") or "+" in value[19:] or "-" in value[19:])

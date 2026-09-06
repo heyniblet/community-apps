@@ -5,25 +5,44 @@ Description: Plotting the hashrate of Bitcoin.
 Author: PMK (@pmk)
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
-URL_HASHRATE = "https://mempool.space/api/v1/mining/hashrate"
+URL_HASHRATE = "https://r.jina.ai/https://mempool.space/api/v1/mining/hashrate"
+PERIODS = ["3y", "2y", "1y", "6m", "3m", "1m"]
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_POINTS = 1200
 
 def main(config):
     timeperiod = config.str("timeperiod", "3y")
+    if timeperiod not in PERIODS:
+        timeperiod = "3y"
     show_label = config.bool("showlabel", True)
 
-    response_hashrate = http.get(url = "{}/{}".format(URL_HASHRATE, timeperiod), ttl_seconds = 60 * 60 * 12)
-    if response_hashrate.status_code != 200:
-        fail("Request failed with status %d", response_hashrate.status_code)
-    hashrate = response_hashrate.json()
+    response_hashrate = http.get(url = "{}/{}".format(URL_HASHRATE, timeperiod), ttl_seconds = 60 * 60)
+    body = response_hashrate.body()
+    if response_hashrate.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
+        return error_message("Hashrate unavailable (%d)" % response_hashrate.status_code)
+    json_start = body.find("{")
+    hashrate = json.decode(body[json_start:], {}) if json_start >= 0 else {}
+    if type(hashrate) != "dict" or not positive_number(hashrate.get("currentHashrate")):
+        return error_message("Invalid hashrate data")
 
-    label = "{}EH/s".format(int(int(hashrate["currentHashrate"]) / 10E17 * 10) / 10) if show_label else ""
+    points = []
+    values = hashrate.get("hashrates", [])
+    if type(values) == "list":
+        for item in values[-MAX_POINTS:]:
+            if type(item) == "dict" and positive_number(item.get("timestamp")) and positive_number(item.get("avgHashrate")):
+                points.append((int(item["timestamp"]), int(item["avgHashrate"])))
+    if len(points) < 2:
+        return error_message("No hashrate history")
+
+    label = "{}EH/s".format(int(float(hashrate["currentHashrate"]) / 10E17 * 10) / 10.0) if show_label else ""
 
     plot = render.Plot(
-        data = [(int(h["timestamp"]), int(h["avgHashrate"])) for h in hashrate["hashrates"]],
+        data = points,
         width = 64,
         height = 32,
         color = "#0f0",
@@ -31,7 +50,7 @@ def main(config):
     )
 
     return render.Root(
-        max_age = 60 * 60 * 12,
+        max_age = 60 * 60,
         child = render.Stack(
             children = [
                 plot,
@@ -46,6 +65,12 @@ def main(config):
             ],
         ),
     )
+
+def error_message(text):
+    return render.Root(child = render.WrappedText(content = text, width = 64, color = "#f00"))
+
+def positive_number(value):
+    return type(value) in ["int", "float"] and value > 0
 
 def get_schema():
     options = [
