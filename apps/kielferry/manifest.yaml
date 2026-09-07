@@ -2,12 +2,10 @@
 id: kiel-ferry
 name: Kiel Ferry
 summary: Kiel Ferry Departures
-desc: Next scheduled ferry departure time for any stop and direction in the Kiel harbor ferry system.
+desc: Next scheduled Kiel F1 ferry departure through Transitland's copy of Germany's published GTFS feed. Requires a Transitland v2 API key.
 author: hloeding
 fileName: kiel_ferry.star
 packageName: kielferry
-broken: true
-brokenReason: The community Deutsche Bahn transport.rest backend is retired; the official DB API requires credentials and no renderable NAH.SH realtime feed is published.
 recommendedInterval: 5
 category: transit
 tags:

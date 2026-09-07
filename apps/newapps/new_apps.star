@@ -1,7 +1,7 @@
 """
 Applet: New Apps
-Summary: Lists new Tidbyt apps
-Description: Lists new Tidbyt apps within the last week.
+Summary: Lists new Niblet apps
+Description: Lists new Niblet catalog apps within the last week.
 Author: rs7q5
 """
 #new_apps.star
@@ -14,7 +14,7 @@ load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
-BASE_URL = "https://api.tidbyt.com/v0/apps"
+BASE_URL = "https://cloud.heyniblet.com/v1/catalog/apps"
 FONT = "tom-thumb"
 HEADERS = {"User-Agent": "Niblet/1.0 support@heyniblet.com"}
 
@@ -113,10 +113,10 @@ def get_apps():
         return None
     data = {}
     for app in payload["apps"]:
-        if type(app) != "dict" or type(app.get("id")) != "string" or type(app.get("name")) != "string":
+        if type(app) != "dict" or type(app.get("app_id")) != "string" or type(app.get("name")) != "string":
             continue
-        if app["id"] != "" and app["name"] != "" and len(data) < 5000:
-            data[app["id"]] = app["name"]
+        if app["app_id"] != "" and app["name"] != "" and len(data) < 5000:
+            data[app["app_id"]] = app["name"]
     return data if len(data) > 0 else None
 
 def format_text(x, font):

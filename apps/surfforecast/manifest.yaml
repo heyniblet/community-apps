@@ -1,13 +1,11 @@
 ---
 id: surf-forecast
 name: Surf Forecast
-summary: Daily surf forecast
-desc: Daily surf forecast for any spot on Surfline.
+summary: Daily marine forecast
+desc: Daily wave forecast for any coastal location using Open-Meteo marine data.
 author: smith-kyle
 fileName: surf_forecast.star
 packageName: surfforecast
-broken: true
-brokenReason: Surfline blocks all forecast endpoints with HTTP 403; an approved API integration or operator proxy is required.
 recommendedInterval: 5
 category: weather
 tags:

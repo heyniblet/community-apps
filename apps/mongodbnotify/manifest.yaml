@@ -1,13 +1,11 @@
 ---
 id: mongodb-notify
-name: MongoDB Notify
+name: Webhook Notify
 summary: Message notifications
-desc: Be sure to read the README.md which will walk you through the setup process. This uses MongoDB for notifications. It must be configured. It can be used with Home Assistant to get Notifications to Tidbyt.
+desc: Displays a bounded notification document from a user-hosted HTTPS endpoint. See README.md for the JSON contract.
 author: bsbishop
 fileName: mongodb_notify.star
 packageName: mongodbnotify
-broken: true
-brokenReason: MongoDB Atlas Data API reached end of life on September 30, 2025; the app also accepts arbitrary endpoint hosts and remote render-widget trees, which Niblet cannot execute safely.
 category: smart-home
 tags:
   - smart-home

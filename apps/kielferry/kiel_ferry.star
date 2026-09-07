@@ -11,12 +11,10 @@ Author: hloeding
 
 load("http.star", "http")
 load("images/ferry_icon.png", FERRY_ICON_ASSET = "file")
-load("math.star", "math")
 
 # Required modules
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 FERRY_ICON = FERRY_ICON_ASSET.readall()
 
@@ -53,32 +51,10 @@ FERRY_DIRECTION_IDS = [
 # Default ferry direction ID
 DEFAULT_FERRY_DIRECTION_ID = str(FERRY_DIRECTION_IDS[0])
 
-# Maximum look ahead time (7 days in minutes)
-FERRY_MAX_LOOKAHEAD_MIN = 7 * 24 * 60
-
 # Cache time to live
-FERRY_CACHE_TTL = 30
+FERRY_CACHE_TTL = 60
 
-# Cacke keys
-FERRY_CACHE_DATA_KEY = "next_ferry_data_%s_%s"
-FERRY_CACHE_STATUS_CODE = "next_ferry_query_status_code_%s_%s"
-
-# Clean REST wrapper around the Deutsche Bahn public API
-# See https://github.com/derhuerst/db-rest
-FERRY_QUERY_URL = \
-    "https://v6.db.transport.rest/stops/%s/departures" + \
-    "?direction=%s" + \
-    "&duration=%d" + \
-    "&nationalExpress=false" + \
-    "&national=false" + \
-    "&regionalExpress=false" + \
-    "&regional=false" + \
-    "&suburban=false" + \
-    "&bus=false" + \
-    "&ferry=true" + \
-    "&subway=false" + \
-    "&tram=false" + \
-    "&taxi=false"
+FERRY_QUERY_URL = "https://transit.land/api/v2/rest/stops/f-germany~urban~transport:%s/departures?next=21600&limit=20"
 
 # Function to retrieve next ferry data.
 # Returns a tripple of
@@ -86,13 +62,12 @@ FERRY_QUERY_URL = \
 # - next ferry: Timestamp string or None
 # - status code: Status code of last query
 
-def getNextFerry(ferryStopID, ferryDirectionID):
-    query = FERRY_QUERY_URL % (
-        ferryStopID,
-        ferryDirectionID,
-        FERRY_MAX_LOOKAHEAD_MIN,
+def getNextFerry(ferryStopID, ferryDirection, apiKey):
+    response = http.get(
+        FERRY_QUERY_URL % ferryStopID,
+        headers = {"apikey": apiKey, "Accept": "application/json"},
+        ttl_seconds = FERRY_CACHE_TTL,
     )
-    response = http.get(query, ttl_seconds = FERRY_CACHE_TTL)
 
     # Set query status code.
     queryStatusCode = response.status_code
@@ -101,18 +76,23 @@ def getNextFerry(ferryStopID, ferryDirectionID):
     # or to an empty string to denote
     # no scheduled ferry departure in cache
     # (can't cache None).
-    if queryStatusCode == 200:
-        response = response.json()
-
-        # Check if there is a next ferry
-        # scheduled. If so, extract the
-        # ferry departure time.
-        # If not, set empty string to denote
-        # no ferry departure data in cache
-        if "departures" in response and len(response["departures"]) > 0:
-            nextFerry = response["departures"][0]["when"]
-        else:
-            nextFerry = ""
+    if queryStatusCode == 200 and len(response.body()) <= 1024 * 1024:
+        payload = response.json()
+        stops = payload.get("stops", []) if type(payload) == "dict" else []
+        departures = stops[0].get("departures", []) if stops else []
+        nextFerry = ""
+        for departure in departures:
+            trip = departure.get("trip", {}) if type(departure) == "dict" else {}
+            route = trip.get("route", {}) if type(trip) == "dict" else {}
+            headsign = str(trip.get("trip_headsign") or departure.get("stop_headsign") or "")
+            routeName = str(route.get("route_short_name") or route.get("route_id") or "")
+            if routeName != "F1" and routeName != "4502":
+                continue
+            if ferryDirection not in headsign:
+                continue
+            event = departure.get("departure", {})
+            nextFerry = str(event.get("estimated") or event.get("scheduled") or departure.get("departure_time") or "")[:5]
+            break
     else:
         nextFerry = ""
 
@@ -164,32 +144,6 @@ def renderError(statusCode):
 # ###### Functions to render ferry departure data ######
 # ######################################################
 
-# Format given ferry departure time string as hh:mm
-def formatDepartureTime(nextFerry):
-    departureTime = time.parse_time(nextFerry)
-    return departureTime.format("15:04")
-
-# Format duration from now to given ferry departure
-# time as (a) day of week, if the departure is not
-# today, or (b) as number of minutes, if the departure
-# time is at least 1 minute away, ot (c) as "now"
-# if the departure time is this minute
-def formatWaitDuration(nextFerry):
-    departureTime = time.parse_time(nextFerry)
-    now = time.now()
-    if departureTime.day != now.day or \
-       departureTime.month != now.month or \
-       departureTime.year != now.year:
-        waitDurationStr = departureTime.format("Monday")
-    else:
-        waitDuration = departureTime - now
-        minutes = math.floor(waitDuration.minutes)
-        if minutes > 0:
-            waitDurationStr = "%d min" % minutes
-        else:
-            waitDurationStr = "now"
-    return waitDurationStr
-
 # Get all required ferry departure strings for rendering.
 # Returns a tuple of
 # - The route, consisting of stop and direction
@@ -200,8 +154,8 @@ def getFerryDataStrings(ferryStop, ferryDirection, nextFerry):
     departureTimeStr = "-:-"
     waitDurationStr = "No service"
     if nextFerry != None:
-        departureTimeStr = formatDepartureTime(nextFerry)
-        waitDurationStr = formatWaitDuration(nextFerry)
+        departureTimeStr = nextFerry
+        waitDurationStr = "Scheduled"
     return (route, departureTimeStr, waitDurationStr)
 
 # Render ferry departure data
@@ -272,9 +226,12 @@ def main(config):
         DEFAULT_FERRY_DIRECTION_ID,
     )
     ferryDirection = FERRY_STOP_IDS[int(ferryDirectionID)]
+    apiKey = config.str("api_key")
+    if not apiKey:
+        return renderError(401)
 
     # Retrieve data for next ferry departure
-    valid, nextFerry, statusCode = getNextFerry(ferryStopID, ferryDirectionID)
+    valid, nextFerry, statusCode = getNextFerry(ferryStopID, ferryDirection, apiKey)
 
     # If ferry departure data is valid, render it
     if valid:
@@ -333,6 +290,13 @@ def get_schema():
                 icon = "compass",
                 default = ferryDirectionOptions[0].value,
                 options = ferryDirectionOptions,
+            ),
+            schema.Text(
+                id = "api_key",
+                name = "Transitland API key",
+                desc = "A Transitland v2 API key.",
+                icon = "key",
+                secret = True,
             ),
         ],
     )

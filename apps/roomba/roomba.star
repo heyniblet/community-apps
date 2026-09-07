@@ -205,8 +205,8 @@ WIDTH = 8
 HEIGHT = 16
 HEIGHT_ADJ = 2
 
-def requestStatus(serverIP, serverPort, apiKey):
-    res = http.get("http://%s:%d/status" % (serverIP, serverPort), headers = {"x-api-key": apiKey}, ttl_seconds = REFRESH_TIME)
+def requestStatus(serverURL, apiKey):
+    res = http.get(serverURL.rstrip("/") + "/status", headers = {"x-api-key": apiKey}, ttl_seconds = REFRESH_TIME)
     if res.status_code != 200:
         fail("request failed with status %d", res.status_code)
     res = res.json()
@@ -239,11 +239,10 @@ def main(config):
         color = BLACK,
     )
 
-    serverIP = config.str("serverIP")
-    serverPort = config.str("serverPort")
+    serverURL = config.str("serverURL")
     apiKey = config.str("apiKey")
 
-    if not serverIP or type(int(serverPort)) != "int":
+    if not serverURL:
         data = SAMPLE_DATA
         batPct = random.number(0, 100)
         name = data["name"]
@@ -252,8 +251,9 @@ def main(config):
         phase = ["charge", "run", "new", "resume", "stuck", "dock", "stop", "evac"][random.number(0, 7)]
 
     else:
-        serverPort = int(serverPort)
-        data = requestStatus(serverIP, serverPort, apiKey)
+        if not serverURL.startswith("https://") or any([char in serverURL for char in [" ", "\t", "\r", "\n"]]):
+            fail("Server URL must use HTTPS")
+        data = requestStatus(serverURL, apiKey)
         if data and data["batPct"]:
             batPct = data["batPct"]
             name = data["name"]
@@ -426,21 +426,15 @@ def get_schema():
         version = "1",
         fields = [
             schema.Text(
-                id = "serverIP",
-                name = "Server IP",
-                desc = "Ex: (192.168.1.123)",
-                icon = "gear",
-            ),
-            schema.Text(
-                id = "serverPort",
-                name = "Server Port (optional)",
-                desc = "Ex: 6565",
+                id = "serverURL",
+                name = "HTTPS relay URL",
+                desc = "Public HTTPS URL for the Roomba status relay.",
                 icon = "gear",
             ),
             schema.Text(
                 id = "apiKey",
                 name = "API Key (optional)",
-                desc = "API Key setup in index.js",
+                desc = "Optional API key configured on the relay.",
                 icon = "gear",
                 secret = True,
             ),
