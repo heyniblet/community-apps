@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 pixlet="${PIXLET:-../niblet-cli/niblet}"
 output="$(mktemp -d)"
 trap 'rm -rf "$output"' EXIT
-for source in apps/mhkyscores/mhky_scores.star apps/wikifeatimage/wiki_feat_image.star; do
+for source in apps/mhkyscores/mhky_scores.star apps/nflscores/nfl_scores.star apps/wikifeatimage/wiki_feat_image.star; do
   "$pixlet" lint "$source"
   for scale in 1 2; do
     flags=()
