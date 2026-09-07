@@ -2,7 +2,7 @@
 id: outlook-calendar
 name: Outlook Calendar
 summary: Display Next Meeting
-desc: Shows the date, next meeting and time from your Outlook Calendar.
+desc: Shows upcoming meetings directly from a private Outlook HTTPS iCalendar link; no Microsoft app registration is required.
 author: Matt-Pesce
 fileName: outlook_calendar.star
 packageName: outlookcalendar

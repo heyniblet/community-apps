@@ -2,7 +2,7 @@
 id: meeting-stats
 name: Meeting Stats
 summary: Weekly Meeting Insights
-desc: Analyzes your Outlook calendar and provides a summary of your weekly meeting load.
+desc: Summarizes weekly meeting count and time directly from a private Outlook HTTPS iCalendar link; no Microsoft app registration is required.
 author: Matt-Pesce
 fileName: meeting_stats.star
 packageName: meetingstats
