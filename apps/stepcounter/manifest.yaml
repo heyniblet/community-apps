@@ -2,7 +2,7 @@
 id: step-counter
 name: Step Counter
 summary: Tracks Daily Step Progress
-desc: Fetches your Step Data from Google Fit, Reports progress versus daily goal.
+desc: Displays daily and weekly step progress from a user-owned HTTPS relay, suitable for Health Connect or another fitness source.
 author: Matt-Pesce
 fileName: stepcounter.star
 packageName: stepcounter

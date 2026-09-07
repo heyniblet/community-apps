@@ -2,7 +2,7 @@
 id: netatmo
 name: Netatmo
 summary: Weather from your Netatmo
-desc: Get your current weather from your Netatmo weather station.
+desc: Displays weather from a user-owned HTTPS relay returning Netatmo station data, keeping rotating OAuth tokens outside the app runtime.
 author: danmcclain
 fileName: netatmo.star
 packageName: netatmo

@@ -5,20 +5,13 @@ Description: Displays your Fitbit recent weigh-ins.
 Author: Robert Ison
 """
 
-load("cache.star", "cache")
-load("encoding/base64.star", "base64")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("math.star", "math")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-
-# App Settings
-CACHE_TTL = 60 * 60 * 24  # updates once daily
-FITBIT_TOKEN_URL = "https://api.fitbit.com/oauth2/token"
-FITBIT_DATA_URL = "https://api.fitbit.com/1/user/-/body/%s/date/today/max.json"
-FITBIT_DATA_KEYS = ("weight", "fat", "bmi")
 
 # Fitbit Data Display
 DISPLAY_FONT = "CG-pixel-3x5-mono"
@@ -27,52 +20,27 @@ KILOGRAMS_TO_POUNDS_MULTIPLIER = 2.2
 WEIGHT_COLOR = "#00B0B9"
 WHITE_COLOR = "#FFF"
 
-FITBIT_REFRESH_TOKEN_CACHE_NAME = "fitbit_refresh_token"
-
 # Canvas
 SCREEN_WIDTH = canvas.width()
 SCREEN_HEIGHT = canvas.height()
 
 def main(config):
-    refresh_token = cache.get(FITBIT_REFRESH_TOKEN_CACHE_NAME)
-    auth_code = config.get("auth_code")  # one-time Fitbit authorization code
-    client_id = config.get("client_id")
-    client_secret = config.get("client_secret")
-
-    if not client_id or not client_secret:
+    url = config.str("endpoint_url")
+    token = config.str("relay_token")
+    if not valid_url(url) or not token:
         return []
-
-    access_token = None
-
-    # If we don't have a refresh token yet but we *do* have an auth code,
-    # first exchange the code for access+refresh tokens.
-    if not refresh_token and auth_code:
-        print("Using auth_code flow")
-        access_token, refresh_token = exchange_code_for_tokens(auth_code, client_id, client_secret)
-
-        # Cache refresh token for future runs (30 days TTL)
-        cache.set(FITBIT_REFRESH_TOKEN_CACHE_NAME, refresh_token, ttl_seconds = 30 * 24 * 3600)
-    elif not refresh_token:
-        # No refresh token and no auth code: nothing we can do
-        print("No auth_code or refresh_token; exiting")
-        return []
-
-    # If we didn't just get an access_token from the code exchange,
-    # do the normal refresh flow.
-    if access_token == None:
-        access_token, new_refresh_token = get_access_token(refresh_token, client_id, client_secret)
-
-        # Store new refresh token in cache for future runs (30 days TTL)
-        cache.set(FITBIT_REFRESH_TOKEN_CACHE_NAME, new_refresh_token, ttl_seconds = 30 * 24 * 3600)
-
     period = config.get("period") or "0"
     system = config.get("system") or "imperial"
     secondary_display = config.get("second") or "none"
-
-    # Fetch data
-    weight_json = get_data_from_fitbit(access_token, FITBIT_DATA_URL % "weight")
-    fat_json = get_data_from_fitbit(access_token, FITBIT_DATA_URL % "fat")
-    bmi_json = get_data_from_fitbit(access_token, FITBIT_DATA_URL % "bmi")
+    response = http.get(url, headers = {"Authorization": "Bearer " + token})
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return []
+    data = json.decode(response.body(), {})
+    if type(data) != "dict":
+        return []
+    weight_json = {"body-weight": series(data.get("weight"))}
+    fat_json = {"body-fat": series(data.get("fat"))}
+    bmi_json = {"body-bmi": series(data.get("bmi"))}
 
     # Default values
     current_weight = 0
@@ -185,80 +153,21 @@ def main(config):
         ),
     )
 
-def exchange_code_for_tokens(auth_code, client_id, client_secret):
-    # Build Basic auth header
-    auth_raw = client_id + ":" + client_secret
+def valid_url(value):
+    return type(value) == "string" and value.startswith("https://") and len(value) <= 4096 and not any([char in value for char in [" ", "\r", "\n", "\t"]])
 
-    auth_b64 = base64.encode(auth_raw)
-
-    headers = {
-        "Authorization": "Basic " + auth_b64,
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-
-    # MUST match your Fitbit app redirect URI exactly
-    redirect_uri = "http://localhost/"  # e.g. "https://example.com/fitbit/callback"
-
-    form_body = {
-        "grant_type": "authorization_code",
-        "code": auth_code,
-        "redirect_uri": redirect_uri,
-    }
-
-    res = http.post(
-        url = FITBIT_TOKEN_URL,
-        headers = headers,
-        form_body = form_body,
-        ttl_seconds = 1800,
-    )
-
-    if res.status_code != 200:
-        fail("Fitbit code exchange failed: %d - %s" % (res.status_code, res.body()))
-
-    token_params = res.json()
-
-    # Returns both tokens; caller should cache the refresh_token
-    return token_params["access_token"], token_params["refresh_token"]
-
-def get_access_token(refresh_token, client_id, client_secret):
-    auth_raw = client_id + ":" + client_secret
-    auth_b64 = base64.encode(auth_raw)
-
-    headers = {
-        "Authorization": "Basic " + auth_b64,
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-
-    form_body = {
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-    }
-
-    res = http.post(
-        url = FITBIT_TOKEN_URL,
-        headers = headers,
-        form_body = form_body,
-        ttl_seconds = 1800,
-    )
-
-    if res.status_code != 200:
-        fail("Fitbit token refresh failed: %d - %s" % (res.status_code, res.body()))
-
-    token_params = res.json()
-
-    # Fitbit returns a new refresh_token; you must store it
-    return token_params["access_token"], token_params["refresh_token"]
-
-def get_data_from_fitbit(access_token, data_url):
-    res = http.get(
-        url = data_url,
-        headers = {"Authorization": "Bearer %s" % access_token},
-        ttl_seconds = CACHE_TTL,
-    )
-    if res.status_code == 200:
-        return res.json()
-    else:
-        return None
+def series(value):
+    result = []
+    if type(value) != "list":
+        return result
+    for item in value[:2000]:
+        if type(item) != "dict":
+            continue
+        date = item.get("dateTime")
+        measurement = item.get("value")
+        if type(date) == "string" and len(date) == 10 and date[4] == "-" and date[7] == "-" and date[:4].isdigit() and date[5:7].isdigit() and date[8:].isdigit() and type(measurement) in ["int", "float"]:
+            result.append({"dateTime": date, "value": measurement})
+    return result
 
 def get_starting_value(json_data, period, itemName = "value"):
     for i in json_data:
@@ -366,24 +275,16 @@ def get_schema():
         version = "1",
         fields = [
             schema.Text(
-                id = "client_id",
-                name = "Fitbit Client ID",
-                desc = "Your Fitbit app client ID.",
-                icon = "user",
-                secret = True,
+                id = "endpoint_url",
+                name = "Weight data relay URL",
+                desc = "A user-owned HTTPS endpoint returning weight, fat, and bmi measurement arrays as JSON.",
+                icon = "link",
             ),
             schema.Text(
-                id = "client_secret",
-                name = "Fitbit Client Secret",
-                desc = "Your Fitbit app client secret.",
-                icon = "user",
-                secret = True,
-            ),
-            schema.Text(
-                id = "auth_code",
-                name = "Fitbit Auth Code",
-                desc = "Your Fitbit authorization code.",
-                icon = "user",
+                id = "relay_token",
+                name = "Relay token",
+                desc = "The bearer token required by your relay.",
+                icon = "key",
                 secret = True,
             ),
             schema.Dropdown(

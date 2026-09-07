@@ -13,41 +13,28 @@ load("images/up_deg.png", UP_DEG_ASSET = "file")
 load("images/up_press.png", UP_PRESS_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 
 DOWN_DEG = DOWN_DEG_ASSET.readall()
 DOWN_PRESS = DOWN_PRESS_ASSET.readall()
 UP_DEG = UP_DEG_ASSET.readall()
 UP_PRESS = UP_PRESS_ASSET.readall()
 
-OAUTH2_CLIENT_SECRET = secret.decrypt("AV6+xWcEY+xlza5nc6Vx3IhSZOD+MGdeVROlRBYrpIwypN5EIIncp7hyCiIQMGVnPS0Q1SlVfHZXB92095MTfHew3wzuEJ14ihbjpxbZNQJhuYA+4O3fR4GFjOTy98EfJobFvxLguAtnNE149hITsJeIxyKfnI2yHZFVgg2Y2pYHoHzSqA==")
-CLIENT_ID = "622106585db6d223df25fdf8"
-
 def main(config):
-    refresh_token = config.get("auth")
     fahrenheit = config.bool("fahrenheit")
-
-    if refresh_token:
-        access_token = get_access_token(refresh_token)
-
-        res = http.get(
-            url = "https://api.netatmo.com/api/getstationsdata",
-            headers = {
-                "Accept": "application/json",
-                "Authorization": "Bearer %s" % access_token,
-            },
-        )
-
-        if res.status_code != 200:
-            fail("bad request for station infomation: %s %s" %
-                 (res.status_code, res.body()))
-
-        body = res.json()
+    url = config.str("endpoint_url")
+    token = config.str("relay_token")
+    if valid_url(url) and token:
+        response = http.get(url, headers = {"Authorization": "Bearer " + token})
+        if response.status_code != 200 or len(response.body()) > 512 * 1024:
+            return problem("Relay unavailable")
+        body = json.decode(response.body(), {})
     else:
         body = json.decode(EXAMPLE_DATA)
-
-    indoor_module = body["body"]["devices"][0]
-    outdoor_module = select_outdoor_module(indoor_module["modules"])
+    devices = ((body.get("body") or {}).get("devices") or []) if type(body) == "dict" else []
+    if not devices or not valid_module(devices[0], True):
+        return problem("Invalid station data")
+    indoor_module = devices[0]
+    outdoor_module = select_outdoor_module(indoor_module.get("modules") or [])
 
     rows = [render.Box(height = 3)]
     rows.append(temp_and_humid_row(indoor_module, "In  ", fahrenheit))
@@ -92,11 +79,23 @@ def main(config):
         ),
     )
 
+def valid_url(value):
+    return type(value) == "string" and value.startswith("https://") and len(value) <= 4096 and not any([char in value for char in [" ", "\r", "\n", "\t"]])
+
+def valid_module(module, indoor = False):
+    if type(module) != "dict" or type(module.get("dashboard_data")) != "dict":
+        return False
+    dash = module["dashboard_data"]
+    required = ["Temperature", "Humidity"] + (["Pressure", "CO2", "Noise"] if indoor else [])
+    return all([type(dash.get(key)) in ["int", "float"] for key in required])
+
+def problem(content):
+    return render.Root(child = render.WrappedText(content, font = "tom-thumb", width = 62, align = "center", color = "#ffea00"))
+
 def select_outdoor_module(modules):
-    for m in modules:
-        if "data_type" in m and "type" in m:
-            if m["data_type"] == ["Temperature", "Humidity"] and m["type"] == "NAModule1":
-                return m
+    for m in modules[:32]:
+        if valid_module(m) and m.get("data_type") == ["Temperature", "Humidity"] and m.get("type") == "NAModule1":
+            return m
     return None
 
 def temp_and_humid_row(module, name, fahrenheit):
@@ -129,72 +128,22 @@ def temp_and_humid_row(module, name, fahrenheit):
         ),
     )
 
-def oauth_handler(params):
-    # deserialize oauth2 parameters, see example aboce.
-    params = json.decode(params)
-
-    # exchange parameters and client secret for an access token
-    res = http.post(
-        url = "https://api.netatmo.com/oauth2/token",
-        headers = {
-            "Accept": "application/json",
-        },
-        form_body = dict(
-            params,
-            client_secret = OAUTH2_CLIENT_SECRET,
-            scope = "read_station",
-        ),
-        form_encoding = "application/x-www-form-urlencoded",
-    )
-    if res.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (res.status_code, res.body()))
-
-    token_params = res.json()
-    refresh_token = token_params["refresh_token"]
-
-    return refresh_token
-
-def get_access_token(refresh_token):
-    res = http.post(
-        url = "https://api.netatmo.com/oauth2/token",
-        headers = {
-            "Accept": "application/json",
-        },
-        form_body = dict(
-            refresh_token = refresh_token,
-            client_secret = OAUTH2_CLIENT_SECRET,
-            grant_type = "refresh_token",
-            client_id = CLIENT_ID,
-        ),
-        form_encoding = "application/x-www-form-urlencoded",
-        ttl_seconds = 10500,  # roughly 3h (expires_in is usually 10800)
-    )
-    if res.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (res.status_code, res.body()))
-
-    token_params = res.json()
-    refresh_token = token_params["refresh_token"]
-    access_token = token_params["access_token"]
-
-    return access_token
-
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
-                id = "auth",
-                icon = "cloud",
-                name = "Netatmo",
-                desc = "Connect your Netatmo account.",
-                handler = oauth_handler,
-                client_id = CLIENT_ID,
-                authorization_endpoint = "https://api.netatmo.com/oauth2/authorize",
-                scopes = [
-                    "read_station",
-                ],
+            schema.Text(
+                id = "endpoint_url",
+                icon = "link",
+                name = "Netatmo relay URL",
+                desc = "A user-owned HTTPS endpoint returning the Netatmo getstationsdata JSON response.",
+            ),
+            schema.Text(
+                id = "relay_token",
+                icon = "key",
+                name = "Relay token",
+                desc = "The bearer token required by your relay.",
+                secret = True,
             ),
             schema.Toggle(
                 id = "fahrenheit",

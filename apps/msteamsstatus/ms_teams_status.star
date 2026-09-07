@@ -1,408 +1,123 @@
 """
 Applet: MS Teams Status
 Summary: Show your MS Teams status
-Description: Show your presence and status message from Microsoft Teams on a Tidbyt display.
+Description: Show Microsoft Teams presence from a user-owned HTTPS relay.
 Author: schumatt
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
-load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 
-DEBUG_ON = False
-
-M365PresenceAPIEndpoint = "https://graph.microsoft.com/v1.0/me/presence"
-M365UserAPIEndpoint = "https://graph.microsoft.com/v1.0/me?$select=displayName"
-
-defaultUserDisplayName = "Not Signed In"
-defaultAvailability = "PresenceUnknown"
-defaultActivity = "PresenceUnknown"
-defaultStatusMessage = ""
-
-devClientID = "1"
-devClientSecret = "1"
-defaultTenantID = "common"
-
-prodClientIDHash = "AV6+xWcEmMNAAypNT+S8KqvF4S1iX/kYxlY74g7wRzPxETO/FwSLvbQvq+HA8Ba3MJNj17R4dWvQpdUVRyE7V8OdXSye6BZ6x0928zBg0XLKrxGcdaNc1Hu/vh2DyZvUN8f9UZfXxxjJjhQHoh8Fyck4D+8CobTmOZQyPYNC9oSlLAJNuVwu2j4K"
-prodClientSecretHash = "AV6+xWcEREeHhZwZnwakqNh+IoMKwjJH2zrD81B5e5wb3COjbGjHBMFd9AV4Ss35KPhzTmuRaYkcQt2Yq5munUUhVrP5OB1l0eBa8VdMHPMwGhkKqVxnO2umUROamvf2M9KtsS+Ax4LMY+AfUb7mHZPvlfSDfU6k33HPwMUMW/gS8zYcqolYjgdNkMjaGA=="
-
-TenantID = ""
-prodClientID = secret.decrypt(prodClientIDHash)
-prodClientSecret = secret.decrypt(prodClientSecretHash)
-
-AuthEndpoint = "https://login.microsoftonline.com/" + (TenantID or defaultTenantID) + "/oauth2/v2.0/authorize"
-TokenEndpoint = "https://login.microsoftonline.com/" + (TenantID or defaultTenantID) + "/oauth2/v2.0/token"
-
-availabilityMap = {
-    "Available": {
-        "color": "#0f0",
-        "label": "Available",
-        "icon": "",
-    },
-    "AvailableIdle": {
-        "color": "#ccc",
-        "label": "Available - Idle",
-        "icon": "",
-    },
-    "Away": {
-        "color": "#ff0",
-        "label": "Away",
-        "icon": "",
-    },
-    "BeRightBack": {
-        "color": "#ff0",
-        "label": "Be Right Back",
-        "icon": "",
-    },
-    "Busy": {
-        "color": "#f00",
-        "label": "Busy",
-        "icon": "",
-    },
-    "BusyIdle": {
-        "color": "#f00",
-        "label": "Busy - Idle",
-        "icon": "",
-    },
-    "DoNotDisturb": {
-        "color": "#800000",
-        "label": "Do Not Disturb",
-        "icon": "",
-    },
-    "Offline": {
-        "color": "#888",
-        "label": "Offline",
-        "icon": "",
-    },
-    "PresenceUnknown": {
-        "color": "#0ff",
-        "label": "Unknown",
-        "icon": "",
-    },
+availability_map = {
+    "Available": {"color": "#0f0", "label": "Available"},
+    "AvailableIdle": {"color": "#ccc", "label": "Available - Idle"},
+    "Away": {"color": "#ff0", "label": "Away"},
+    "BeRightBack": {"color": "#ff0", "label": "Be Right Back"},
+    "Busy": {"color": "#f00", "label": "Busy"},
+    "BusyIdle": {"color": "#f00", "label": "Busy - Idle"},
+    "DoNotDisturb": {"color": "#800000", "label": "Do Not Disturb"},
+    "Offline": {"color": "#888", "label": "Offline"},
+    "PresenceUnknown": {"color": "#0ff", "label": "Unknown"},
 }
-activityMap = {
-    "Available": {
-        "presence": "Available",
-    },
-    "Away": {
-        "presence": "Away",
-    },
-    "BeRightBack": {
-        "presence": "BeRightBack",
-    },
-    "Busy": {
-        "presence": "Busy",
-    },
-    "DoNotDisturb": {
-        "presence": "DoNotDisturb",
-    },
-    "InACall": {
-        "presence": "Busy",
-        "label": "In a Call",
-        "color": "#f00",
-    },
-    "InAConferenceCall": {
-        "presence": "Busy",
-        "label": "In a Conference Call",
-        "color": "#f00",
-    },
-    "Inactive": {
-        "presence": "Offline",
-    },
-    "InAMeeting": {
-        "presence": "Busy",
-        "label": "In a Meeting",
-    },
-    "Offline": {
-        "presence": "Offline",
-    },
-    "OffWork": {
-        "presence": "Offline",
-        "label": "Off Work",
-    },
-    "OutOfOffice": {
-        "presence": "Offline",
-        "label": "Out of Office",
-        "color": "#cd00cd",
-    },
-    "PresenceUnknown": {
-        "presence": "PresenceUnknown",
-    },
-    "Presenting": {
-        "presence": "DoNotDisturb",
-        "label": "Presenting",
-    },
-    "UrgentInterruptionsOnly": {
-        "presence": "DoNotDisturb",
-    },
+activity_map = {
+    "Available": {"presence": "Available"},
+    "Away": {"presence": "Away"},
+    "BeRightBack": {"presence": "BeRightBack"},
+    "Busy": {"presence": "Busy"},
+    "DoNotDisturb": {"presence": "DoNotDisturb"},
+    "InACall": {"presence": "Busy", "label": "In a Call", "color": "#f00"},
+    "InAConferenceCall": {"presence": "Busy", "label": "In a Conference Call", "color": "#f00"},
+    "Inactive": {"presence": "Offline"},
+    "InAMeeting": {"presence": "Busy", "label": "In a Meeting"},
+    "Offline": {"presence": "Offline"},
+    "OffWork": {"presence": "Offline", "label": "Off Work"},
+    "OutOfOffice": {"presence": "Offline", "label": "Out of Office", "color": "#cd00cd"},
+    "PresenceUnknown": {"presence": "PresenceUnknown"},
+    "Presenting": {"presence": "DoNotDisturb", "label": "Presenting"},
+    "UrgentInterruptionsOnly": {"presence": "DoNotDisturb"},
 }
 
 def main(config):
-    if DEBUG_ON:
-        print("ENTERING main: " + str(config))
+    url = config.str("endpoint_url")
+    token = config.str("relay_token")
+    if not valid_url(url) or not token:
+        return render_teams_status("Microsoft Teams", "PresenceUnknown", "PresenceUnknown", "Add your HTTPS relay URL", False)
+    response = http.get(url, headers = {"Authorization": "Bearer " + token})
+    if response.status_code != 200 or len(response.body()) > 128 * 1024:
+        return render_teams_status("Microsoft Teams", "PresenceUnknown", "PresenceUnknown", "Relay unavailable", False)
+    data = json.decode(response.body(), {})
+    if type(data) != "dict":
+        return render_teams_status("Microsoft Teams", "PresenceUnknown", "PresenceUnknown", "Invalid relay response", False)
+    name = text(data.get("displayName"), "Microsoft Teams", 100)
+    availability = text(data.get("availability"), "PresenceUnknown", 40)
+    activity = text(data.get("activity"), "PresenceUnknown", 40)
+    message = text(data.get("statusMessage"), "", 300)
+    return render_teams_status(name, availability, activity, message, data.get("isOutOfOffice") == True)
 
-    #if prodClientID:
-    #    RunningClientID = prodClientID
-    #else:
-    #    RunningClientID = config.get("client_id")
+def valid_url(value):
+    return type(value) == "string" and value.startswith("https://") and len(value) <= 4096 and not any([char in value for char in [" ", "\r", "\n", "\t"]])
 
-    #if prodClientSecret:
-    #    RunningClientSecret = prodClientSecret
-    #else:
-    #    RunningClientSecret = config.get("client_secret")
+def text(value, fallback, limit):
+    return value[:limit] if type(value) == "string" and value else fallback
 
-    #if TenantID:
-    #    RunningTenantID = TenantID
-    #else:
-    #    RunningTenantID = config.get("tenant_id") or defaultTenantID
-
-    userDisplayName = defaultUserDisplayName
-    availability = defaultAvailability
-    activity = defaultActivity
-    statusMessage = defaultStatusMessage
-    isOutOfOffice = False
-
-    msft_access_token = refresh_msft_access_token(config)
-    if (msft_access_token != None):
-        statusMessage = "Authenticated"
-        # print("We have an access token! Proceed!")
-
+def render_teams_status(name, availability, activity, message, out_of_office):
+    if activity in activity_map and activity_map[activity]["presence"] in availability_map:
+        status = activity_map[activity]
+        presence = availability_map[status["presence"]]
+        label = status.get("label", presence["label"])
+        color = status.get("color", presence["color"])
+        dot_color = presence["color"]
+    elif availability in availability_map:
+        label = availability_map[availability]["label"]
+        color = availability_map[availability]["color"]
+        dot_color = color
     else:
-        statusMessage = "Please authenticate to your Microsoft 365 account"
-        return render_teams_status(userDisplayName, availability, defaultActivity, statusMessage, False)
-
-    M365APIHeaders = {
-        "Authorization": "Bearer " + msft_access_token,
-    }
-
-    UserInfoQuery = http.get(M365UserAPIEndpoint, headers = M365APIHeaders)
-    if UserInfoQuery.status_code != 200:
-        #statusMessage = "Retrieve user information failed with error " +
-        # print(UserInfoQuery.json())
-        return render_teams_status("Error " + str(UserInfoQuery.status_code), "", "", get_api_error(UserInfoQuery), False)
-    else:
-        userDisplayName = UserInfoQuery.json().get("displayName") or defaultUserDisplayName
-
-    UserPresenceQuery = http.get(M365PresenceAPIEndpoint, headers = M365APIHeaders)
-    if UserPresenceQuery.status_code != 200:
-        #statusMessage = "Retrieve user information failed with error " +
-        # print(UserPresenceQuery.json())
-        return render_teams_status("Error " + str(UserPresenceQuery.status_code), "", "", get_api_error(UserPresenceQuery), False)
-    else:
-        presence = UserPresenceQuery.json()
-        availability = presence.get("availability") or defaultAvailability
-        activity = presence.get("activity") or defaultActivity
-        statusMessage = ((presence.get("statusMessage") or {}).get("message") or {}).get("content") or ""
-        isOutOfOffice = (presence.get("outOfOfficeSettings") or {}).get("isOutOfOffice") or False
-
-    return render_teams_status(userDisplayName, availability, activity, statusMessage, isOutOfOffice)
-
-def get_api_error(response):
-    error = response.json().get("error") or {}
-    return (error.get("code") or "API error") + " -- " + (error.get("message") or "Request failed")
-
-def render_teams_status(userDisplayName, availability, activity, statusMessage, isOutOfOffice):
-    if availability == "":
-        availability = "PresenceUnknown"
-    if activity == "":
-        activity = "PresenceUnknown"
-
-    if (activity in activityMap) and (availability in availabilityMap):
-        if "label" in activityMap[activity]:
-            statusLabel = activityMap[activity]["label"]
-        else:
-            statusLabel = availabilityMap[activityMap[activity]["presence"]]["label"]
-
-        if "color" in activityMap[activity]:
-            statusColor = activityMap[activity]["color"]
-        else:
-            statusColor = availabilityMap[activityMap[activity]["presence"]]["color"]
-
-        #dotColor = availabilityMap[availability]["color"]
-        dotColor = availabilityMap[activityMap[activity]["presence"]]["color"]
-    else:
-        statusLabel = "Invalid"
-        statusColor = "#ff4f00"
-        dotColor = "#ff4f00"
-        if (activity not in activityMap):
-            statusLabel = statusLabel + " Activity (" + activity + ")"
-        if (availability not in availabilityMap):
-            statusLabel = statusLabel + " Availability (" + availability + ")"
-
-    if isOutOfOffice:
-        dotColor = activityMap["OutOfOffice"]["color"]
-        statusLabel = statusLabel + " / " + activityMap["OutOfOffice"]["label"]
+        label = "Unknown"
+        color = "#ff4f00"
+        dot_color = color
+    if out_of_office:
+        dot_color = "#cd00cd"
+        label += " / Out of Office"
 
     return render.Root(
         delay = 1,
-        #max_age = 5,
         child = render.Row(
             children = [
-                render.Padding(
-                    child =
-                        render.Box(
-                            width = 5,
-                            color = statusColor,
-                        ),
-                    pad = (0, 0, 1, 0),
-                ),
+                render.Padding(child = render.Box(width = 5, color = color), pad = (0, 0, 1, 0)),
                 render.Column(
                     children = [
-                        render.Marquee(
-                            child = render.Text(
-                                content = userDisplayName,
-                            ),
-                            width = 59,
-                            offset_start = 59,
-                            offset_end = 59,
-                        ),
+                        render.Marquee(child = render.Text(name), width = 59, offset_start = 59, offset_end = 59),
                         render.Row(
                             children = [
-                                render.Padding(
-                                    child = render.Circle(
-                                        diameter = 6,
-                                        color = dotColor,
-                                    ),
-                                    pad = (0, 1, 1, 2),
-                                    color = "#000",
-                                ),
-                                render.Marquee(
-                                    width = 51,
-                                    child = render.Text(
-                                        content = statusLabel,
-                                        color = statusColor,
-                                    ),
-                                    offset_start = 0,
-                                ),
+                                render.Padding(child = render.Circle(diameter = 6, color = dot_color), pad = (0, 1, 1, 2), color = "#000"),
+                                render.Marquee(width = 51, child = render.Text(label, color = color), offset_start = 0),
                             ],
                         ),
-                        render.Marquee(
-                            child = render.WrappedText(
-                                content = statusMessage,
-                                font = "CG-pixel-3x5-mono",
-                                linespacing = 2,
-                            ),
-                            scroll_direction = "vertical",
-                            height = 15,
-                            align = "center",
-                            offset_start = 0,
-                        ),
+                        render.Marquee(child = render.WrappedText(message, font = "CG-pixel-3x5-mono", linespacing = 2), scroll_direction = "vertical", height = 15, align = "center", offset_start = 0),
                     ],
                 ),
             ],
         ),
     )
 
-def refresh_msft_access_token(config):
-    if DEBUG_ON:
-        print("ENTERING refresh_msft_access_token")
-
-    # Use refresh token to collect access token
-    msft_refresh_token = config.get("auth")
-    #print(" - Check refresh token. Config.auth returned " + str(config.get("auth")))
-
-    if msft_refresh_token:
-        #print (" -- Attempt to retrieve cached access token for refresh token " + str(msft_refresh_token))
-        msft_access_token = cache.get(msft_refresh_token)
-        #print (" -- Retrieved cached access token: " + str(cache.get(msft_refresh_token)))
-
-    else:
-        #print(" -- Missing refresh token")
-        #print("RETURNING refresh_msft_access_token: None")
-        return None
-
-    if msft_access_token:
-        #print ("RETURNING refresh_msft_access_token: " + str(msft_access_token))
-        return msft_access_token
-    else:
-        #print (" -- Missing access token. Obtain new.")
-        headers = {
-            "Content-type": "application/x-www-form-urlencoded",
-        }
-        body = (
-            "client_id=" + humanize.url_encode(prodClientID or devClientID) +
-            "&scope=offline_access%20User.read%20Presence.Read" +
-            "&refresh_token=" + humanize.url_encode(msft_refresh_token) +
-            "&grant_type=refresh_token" +
-            "&client_secret=" + humanize.url_encode(prodClientSecret or devClientSecret)
-        )
-        response = http.post(url = TokenEndpoint, headers = headers, body = body)
-
-        #print (" --- Obtain access token returned " + str(response.status_code))
-        if response.status_code != 200:
-            fail("Refresh of Access Token failed with Status Code: %d - %s" % (response.status_code, response.body()))
-
-        response_json = response.json()
-
-        access_token = response_json.get("access_token")
-        if not access_token:
-            fail("Refresh response did not include an access token")
-        cache.set(msft_refresh_token, access_token, ttl_seconds = int(response_json.get("expires_in") or 300) - 30)
-
-        #print (" -- Cached token for " + str(int(response_json["expires_in"] - 30)) + " seconds")
-        #print ("RETURNING refresh_msft_access_token: " + response_json["access_token"])
-        return access_token
-
-def oauth_handler(params):
-    if DEBUG_ON:
-        print("ENTERING oauth_handler")
-
-    params = json.decode(params)
-
-    headers = {
-        "Content-type": "application/x-www-form-urlencoded",
-    }
-    body = (
-        "client_id=" + humanize.url_encode(params["client_id"]) +
-        "&scope=offline_access%20User.read%20Presence.Read" +
-        "&code=" + humanize.url_encode(params["code"]) +
-        "&redirect_uri=" + humanize.url_encode(params["redirect_uri"]) +
-        "&grant_type=authorization_code" +
-        "&client_secret=" + humanize.url_encode(prodClientSecret or devClientSecret)  # Provide runtime a default secret
-    )
-    response = http.post(url = TokenEndpoint, headers = headers, body = body)
-
-    if response.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (response.status_code, response.body()))
-
-    response_json = response.json()
-
-    refresh_token = response_json.get("refresh_token")
-    access_token = response_json.get("access_token")
-    if not refresh_token or not access_token:
-        fail("Token response did not include refresh and access tokens")
-    cache.set(
-        refresh_token,
-        access_token,
-        ttl_seconds = int(response_json["expires_in"]) - 30,
-    )
-    if DEBUG_ON:
-        print("RETURNING oauth_handler: token received")
-
-    return refresh_token
-
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
-                id = "auth",
-                name = "Account",
-                desc = "Connect your Microsoft 365 account",
-                icon = "windows",
-                handler = oauth_handler,
-                client_id = (prodClientID or devClientID),
-                authorization_endpoint = AuthEndpoint,
-                scopes = [
-                    "Presence.Read",
-                    "User.Read",
-                    "offline_access",
-                ],
+            schema.Text(
+                id = "endpoint_url",
+                name = "Teams relay URL",
+                desc = "A user-owned HTTPS endpoint returning displayName, availability, activity, statusMessage, and isOutOfOffice as JSON.",
+                icon = "link",
+            ),
+            schema.Text(
+                id = "relay_token",
+                name = "Relay token",
+                desc = "The bearer token required by your relay.",
+                icon = "key",
+                secret = True,
             ),
         ],
     )

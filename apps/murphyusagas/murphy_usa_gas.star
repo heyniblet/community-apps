@@ -9,52 +9,21 @@ Author: jvivona
 
 load("encoding/json.star", "json")
 load("http.star", "http")
-load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
-
-VERSION = 23215
-
-# 20240802 - added code to handle widget mode and give single static screen
-
-# #######################################################
-# #####           Demo / Test Data                 ######
-# #######################################################
-DEFAULT_LOCATION = """
-{
-    "lat": "33.6809",
-    "lng": "-84.4171",
-    "description": "Atlanta, GA, USA",
-	"locality": "Atlanta",
-	"timezone": "America/New_York"
-}
-"""
 
 DEFAULT_CONFIG = {
-    "station": "2796",
-    "timezone": "America/New_York",
     "price_color": "white",
 }
-
-# #######################################################
-# #####           Constants                        ######
-# #######################################################
-API_STATION_SEARCH = "https://service.murphydriverewards.com/api/store"
-API_STATION_DETAILS = "https://service.murphydriverewards.com/api/store/detail/{}"
-API_STATION_SEARCH_PAGESIZE = 10
-API_STATION_SEARCH_RANGE = 20
-API_STATION_CACHE_KEY = "stations&lat={}&lng={}"
-API_STATION_LIST_TTL = 86400
-API_STATION_DETAILS_TTL = 3600
-DEBUG = False
 
 # #######################################################
 # #####           Where all the magic happens      ######
 # #######################################################
 def main(config):
     widgetMode = config.bool("$widget")
-    gas_data = get_gas_data(config)
+    gas_data = get_gas_data(config.str("endpoint_url"), config.str("relay_token"))
+    if gas_data == None:
+        return render.Root(child = render.WrappedText("Add a Murphy gas relay URL", font = "tom-thumb", width = 62, align = "center", color = "#ffea00"))
 
     labels, prices = get_price_display(gas_data, config)
 
@@ -113,12 +82,18 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
-                id = "station_by_loc",
-                name = "Station",
-                desc = "A list of stations by location",
-                icon = "locationDot",
-                handler = get_stations,
+            schema.Text(
+                id = "endpoint_url",
+                name = "Station relay URL",
+                desc = "A user-owned HTTPS endpoint returning station, storeNum, openText, closeText, isOpen, regular, premium, and diesel as JSON.",
+                icon = "link",
+            ),
+            schema.Text(
+                id = "relay_token",
+                name = "Relay token",
+                desc = "The bearer token required by your relay.",
+                icon = "key",
+                secret = True,
             ),
             schema.Dropdown(
                 id = "price_color",
@@ -131,81 +106,19 @@ def get_schema():
         ],
     )
 
-def get_stations(location):
-    loc = json.decode(location) if location else json.decode(str(DEFAULT_LOCATION))
-    lat = humanize.float("#.##", float(loc["lat"]))
-    lng = humanize.float("#.##", float(loc["lng"]))
-
-    http_response = http.post(url = API_STATION_SEARCH, json_body = {"pagesize": API_STATION_SEARCH_PAGESIZE, "range": API_STATION_SEARCH_RANGE, "latitude": lat, "longitude": lng}, ttl_seconds = API_STATION_LIST_TTL)
-    if http_response.status_code != 200:
-        fail("Station list request failed with status {} and result {}".format(http_response.status_code, http_response.body()))
-    stations = http_response.json()["data"]
-
-    if stations["totalCount"] > 0:
-        return [
-            schema.Option(
-                display = station["address"] + " " + station["city"] + " " + station["state"],
-                value = str(int(station["id"])),
-            )
-            for station in stations["stores"]
-        ]
-    else:
-        return [
-            schema.Option(
-                display = "No Station within {} miles".format(API_STATION_SEARCH_RANGE),
-                value = "0",
-            ),
-        ]
-
-def get_station_details(url):
-    http_data = http.get(url, ttl_seconds = API_STATION_DETAILS_TTL)
-    if http_data.status_code != 200:
-        fail("HTTP request failed with status {} for URL {}".format(http_data.status_code, url))
-    station_details = http_data.body()
-
-    return json.decode(station_details)["data"]
-
-def get_gas_data(config):
-    station_id = DEFAULT_CONFIG["station"]
-    station_config = config.get("station_by_loc")
-    if station_config:
-        station_id = int(json.decode(station_config)["value"])
-
-    station_data = get_station_details(API_STATION_DETAILS.format(station_id))
-
-    # determine what day today is in local time and get dayname in lowercase
-    today_dow = time.now().in_location(time.tz()).format("Monday").lower()
-
-    gas_data = {}
-
-    gas_data["station"] = "{} #{} - {} ({}, {})".format(station_data.get("chainName", "ERROR"), station_data.get("storeNumber", "ERROR"), station_data.get("address", ""), station_data.get("city", ""), station_data.get("state", ""))
-    gas_data["storeNum"] = "Murphy #{}".format(station_data.get("storeNumber", "ERROR"))
-    gas_data["openText"] = station_data[today_dow + "Open"][:-1].lower()
-    gas_data["closeText"] = station_data[today_dow + "Close"][:-1].lower()
-
-    gas_data["isOpen"] = False
-
-    # determine if we are open or closed - feed supplies data in UTC - so we don't need to do any localization
-    currdatetime = time.now().in_location("UTC")
-    for schedule in station_data["schedules"]:
-        if time.parse_time(schedule["openTime"]) <= currdatetime:
-            if time.parse_time(schedule["closeTime"]) > currdatetime:
-                gas_data["isOpen"] = True
-
-    gas_data["regular"] = ""
-    gas_data["premium"] = ""
-    gas_data["diesel"] = ""
-
-    for price in station_data["gasPrices"]:
-        if price["isPrimary"]:
-            if price["fuelType"] == "Regular":
-                gas_data["regular"] = price["price"]
-            elif price["fuelType"] == "Premium":
-                gas_data["premium"] = price["price"]
-            elif price["fuelType"] == "Diesel":
-                gas_data["diesel"] = price["price"]
-
-    return gas_data
+def get_gas_data(url, token):
+    if type(url) != "string" or not url.startswith("https://") or len(url) > 4096 or any([char in url for char in [" ", "\r", "\n", "\t"]]) or not token:
+        return None
+    response = http.get(url, headers = {"Authorization": "Bearer " + token})
+    if response.status_code != 200 or len(response.body()) > 128 * 1024:
+        return None
+    data = json.decode(response.body(), {})
+    if type(data) != "dict" or type(data.get("isOpen")) != "bool":
+        return None
+    for key in ["station", "storeNum", "openText", "closeText", "regular", "premium", "diesel"]:
+        if type(data.get(key)) != "string" or len(data[key]) > 200:
+            return None
+    return data
 
 def get_price_display(gas_data, config):
     labels = []
