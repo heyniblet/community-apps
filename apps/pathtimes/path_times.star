@@ -104,7 +104,7 @@ def main(config):
         return render.Root(child = render.Text("Invalid PATH settings", font = FONT))
 
     # Fetch PATH train data
-    url = "https://panynj.gov/bin/portauthority/ridepath.json"
+    url = "https://www.panynj.gov/bin/portauthority/ridepath.json"
     response = http.get(url, ttl_seconds = 30)
     body = response.body()
 

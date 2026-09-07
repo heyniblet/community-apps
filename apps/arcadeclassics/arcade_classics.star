@@ -75,7 +75,8 @@ SPEED_ADJUST = {
 def main(config):
     animation = config.str("animation", PACMAN_ANIMATION)
     if animation == RANDOM_ANIMATION:
-        animation = ANIMATION_LIST.values()[random.number(0, len(ANIMATION_LIST) - 1)]
+        animations = [value for value in ANIMATION_LIST.values() if value != RANDOM_ANIMATION]
+        animation = animations[random.number(0, len(animations) - 1)]
 
     speed = int(config.str("speed", DEFAULT_SPEED))
     if speed < 0:
