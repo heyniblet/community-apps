@@ -363,48 +363,6 @@ def main(config):
         child = displaycomplete,
     )
 
-def more_options(time_format):
-    if time_format != "No clock":
-        return [
-            schema.Dropdown(
-                id = "clock_position",
-                name = "Clock Position",
-                desc = "Specify the positioning of the clock when only the clock is shown.",
-                icon = "up-down",
-                default = "Center",
-                options = [
-                    schema.Option(
-                        display = "Top",
-                        value = "Top",
-                    ),
-                    schema.Option(
-                        display = "Center",
-                        value = "Center",
-                    ),
-                    schema.Option(
-                        display = "Bottom",
-                        value = "Bottom",
-                    ),
-                ],
-            ),
-            schema.Toggle(
-                id = "blink_time",
-                name = "Blinking Time Separator",
-                desc = "Whether to blink the colon between hours and minutes.",
-                icon = "asterisk",
-                default = False,
-            ),
-            schema.Toggle(
-                id = "has_shadow",
-                name = "Shadow",
-                desc = "Whether clock has drop-shadow.",
-                icon = "umbrella-beach",
-                default = False,
-            ),
-        ]
-    else:
-        return []
-
 def get_schema():
     langs = [
         schema.Option(
@@ -452,10 +410,40 @@ def get_schema():
                     for format in TIME_FORMATS
                 ],
             ),
-            schema.Generated(
-                id = "generated",
-                source = "time_format",
-                handler = more_options,
+            schema.Dropdown(
+                id = "clock_position",
+                name = "Clock Position",
+                desc = "Specify the positioning of the clock when only the clock is shown.",
+                icon = "arrowsUpDown",
+                default = "Center",
+                options = [
+                    schema.Option(
+                        display = "Top",
+                        value = "Top",
+                    ),
+                    schema.Option(
+                        display = "Center",
+                        value = "Center",
+                    ),
+                    schema.Option(
+                        display = "Bottom",
+                        value = "Bottom",
+                    ),
+                ],
+            ),
+            schema.Toggle(
+                id = "blink_time",
+                name = "Blinking Time Separator",
+                desc = "Whether to blink the colon between hours and minutes.",
+                icon = "asterisk",
+                default = False,
+            ),
+            schema.Toggle(
+                id = "has_shadow",
+                name = "Shadow",
+                desc = "Whether clock has drop-shadow.",
+                icon = "umbrellaBeach",
+                default = False,
             ),
         ],
     )
