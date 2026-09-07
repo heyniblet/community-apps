@@ -149,9 +149,9 @@ def main(config):
     loc = json.decode(location)
     timezone = loc["timezone"]
     now = time.now().in_location(timezone)
-    datePast = now - time.parse_duration("%dh" % 1 * 24)
-    dateFuture = now + time.parse_duration("%dh" % 6 * 24)
-    league = {LEAGUE: API + "?limit=300" + (selectedTeam == "all" and " " or "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
+    datePast = now - time.parse_duration("24h")
+    dateFuture = now + time.parse_duration("144h")
+    league = {LEAGUE: API + "?limit=300" + ("" if selectedTeam == "all" else "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
     scores = get_scores(league, selectedTeam)
     if len(scores) == 0:
         return render.Root(
@@ -159,6 +159,13 @@ def main(config):
                 child = render.Text("No Games", color = "#F00"),
             ),
         )
+
+    # Niblet displays at most 15 seconds per render. Rotate bounded pages so a
+    # cold render does not download logos for games it cannot display.
+    page_size = max(1, min(3, 15 // max(1, int(rotationSpeed))))
+    if len(scores) > page_size:
+        start = (now.unix // 60 * page_size) % len(scores)
+        scores = (scores + scores)[start:start + page_size]
 
     if len(scores) > 0:
         for i, s in enumerate(scores):
@@ -1149,8 +1156,7 @@ def get_logoType(team, logo):
         logo = get_cachable_data(usealt, 36000)
     else:
         logo = logo.replace("500/", "500-dark/")
-        logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=", 36000)
-        logo = get_cachable_data(logo + "&h=50&w=50")
+        logo = get_cachable_data(logo, 36000)
     return logo
 
 def get_logoSize(team):
@@ -1180,7 +1186,7 @@ def get_date_column(displayTop, now, scoreNumber, rotationSpeed, textColor, bord
             timeBox += LEAGUE_DISPLAY_OFFSET
             statusBox -= LEAGUE_DISPLAY_OFFSET
         else:
-            now = now + time.parse_duration("%ds" % int(scoreNumber) * int(rotationSpeed))
+            now = now + time.parse_duration("%ds" % (int(scoreNumber) * int(rotationSpeed)))
             theTime = now.format("3:04")
             if len(str(theTime)) > 4:
                 timeBox += 4
@@ -1242,7 +1248,8 @@ def get_logo_column(showRanking, team, Logo, LogoSize, Rank, ScoreColor, textFon
 def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
     res = http.get(url = url, ttl_seconds = ttl_seconds)
     if res.status_code != 200:
-        print("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        print("score request failed with status code: %d" % res.status_code)
         return None
 
-    return res.body()
+    body = res.body()
+    return body if len(body) <= 2 * 1024 * 1024 else None
