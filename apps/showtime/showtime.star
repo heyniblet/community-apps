@@ -363,6 +363,10 @@ def get_schema():
     ]
 
     region_options = get_region_options()
+    market_options = []
+    for region in sorted(MARKETS.keys()):
+        for market in sorted(MARKETS[region], key = lambda item: item["Market"]):
+            market_options.append(schema.Option(display = "%s — %s" % (region, market["Market"]), value = str(market["ID"])))
 
     return schema.Schema(
         version = "1",
@@ -418,10 +422,13 @@ def get_schema():
                 options = get_region_options(),
                 default = region_options[0].value,
             ),
-            schema.Generated(
-                id = "market_id",
-                source = "region",
-                handler = get_market_ids,
+            schema.Dropdown(
+                id = "mymarket",
+                name = "Market",
+                desc = "Choose your Ticketmaster market.",
+                icon = "locationDot",
+                options = market_options,
+                default = market_options[0].value,
             ),
         ],
     )

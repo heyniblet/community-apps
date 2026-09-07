@@ -73,12 +73,17 @@ def searchStop(pattern):
     return (sorted(options1, key = key) + sorted(options2, key = key))[:25]
 
 def get_schema():
-    stop = schema.Typeahead(
+    stop_options = [
+        schema.Option(value = stop_id, display = name)
+        for stop_id, name in sorted(Stops.items(), key = lambda item: item[1])
+    ]
+    stop = schema.Dropdown(
         id = "stop",
         name = "Stop",
         desc = "Set MVV stop to show departures for.",
         icon = "magnifyingGlass",
-        handler = searchStop,
+        options = stop_options,
+        default = stop_options[0].value,
     )
 
     line = schema.Text(
@@ -392,7 +397,7 @@ def main(config):
     now = time.now()
     if stop:
         selection = json.decode(stop, None)
-        stop = selection.get("value") if type(selection) == "dict" else None
+        stop = selection.get("value") if type(selection) == "dict" else stop
         if stop not in Stops:
             stop = None
     if stop:

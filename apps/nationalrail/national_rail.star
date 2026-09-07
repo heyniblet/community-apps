@@ -2852,24 +2852,9 @@ def render_train(train, display_mode):
     return render_compact_train(scheduled, expected, destination)
 
 def main(config):
-    origin_station = STATIONS["KGX"]
-    if ORIGIN_STATION in config:
-        selection = json.decode(config[ORIGIN_STATION])
-        if type(selection) == "dict" and type(selection.get("value")) == "string":
-            selected_station = json.decode(selection["value"])
-            if type(selected_station) == "dict" and selected_station.get("crs") in STATIONS:
-                origin_station = STATIONS[selected_station["crs"]]
-
-    filter_crs = ""
-    destination_station = config.get(DESTINATION_STATION)
-    if destination_station:
-        selection = json.decode(destination_station)
-        if type(selection) == "dict":
-            destination_station_value = selection.get("value")
-            if type(destination_station_value) == "string" and destination_station_value != NO_DESTINATION:
-                selected_station = json.decode(destination_station_value)
-                if type(selected_station) == "dict" and selected_station.get("crs") in STATIONS:
-                    filter_crs = selected_station["crs"]
+    origin_station = station_from_config(config.get(ORIGIN_STATION), STATIONS["KGX"])
+    destination_station = station_from_config(config.get(DESTINATION_STATION), None)
+    filter_crs = destination_station["crs"] if destination_station else ""
 
     display_mode = config.get(DISPLAY_MODE) or DISPLAY_DETAILED
     if display_mode == DISPLAY_DETAILED:
@@ -2905,6 +2890,20 @@ def main(config):
 def distance(station, location):
     return math.pow(station["lat"] - float(location["lat"]), 2) + math.pow(station["lng"] - float(location["lng"]), 2)
 
+def station_from_config(value, fallback):
+    if not value:
+        return fallback
+    selection = json.decode(value, None) if type(value) == "string" else value
+    if type(selection) != "dict":
+        return fallback
+    if type(selection.get("value")) == "string" and selection["value"] != NO_DESTINATION:
+        selection = json.decode(selection["value"], None)
+    if type(selection) == "dict" and selection.get("crs") in STATIONS:
+        return STATIONS[selection["crs"]]
+    if type(selection) == "dict" and selection.get("lat") != None and selection.get("lng") != None:
+        return sorted(STATIONS.values(), key = lambda station: distance(station, selection))[0]
+    return fallback
+
 def list_stations(location):
     location = json.decode(location)
     return [
@@ -2923,19 +2922,17 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Location(
                 id = ORIGIN_STATION,
                 name = "Origin",
-                desc = "Station to look up departure times for",
-                icon = "train",
-                handler = list_stations,
+                desc = "Choose a place near the departure station",
+                icon = "locationDot",
             ),
-            schema.LocationBased(
+            schema.Location(
                 id = DESTINATION_STATION,
                 name = "Destination",
-                desc = "Only show trains going to this station (optional)",
-                icon = "train",
-                handler = list_filter_stations,
+                desc = "Optionally choose a place near the destination station",
+                icon = "locationDot",
             ),
             schema.Dropdown(
                 id = DISPLAY_MODE,
