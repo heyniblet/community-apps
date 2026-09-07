@@ -5,7 +5,7 @@ Description: Shows next upcoming UFC event with date and time.
 Author: Stephen So
 """
 
-load("html.star", "html")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/icon.png", ICON_ASSET = "file")
 load("render.star", "render")
@@ -13,49 +13,25 @@ load("time.star", "time")
 
 ICON = ICON_ASSET.readall()
 
-now = time.now()
-nowyear = now.year
-url = "https://www.espn.com/mma/schedule/_/year/" + str(nowyear)
-
-def main():
-    rep = http.get(url, ttl_seconds = 3600)
-
-    if rep.status_code != 200:
-        fail("get failed with status %d", rep.status_code)
-
-    doc = html(rep.body())
-
-    def check_year():
-        title_element = doc.find(".Table__Title")
-        if title_element:
-            return title_element.text()
-        else:
-            return None
-
-    if check_year() == "Past Results":
-        nowyear_plus_one = nowyear + 1
-
-        url1 = "https://www.espn.com/mma/schedule/_/year/" + str(nowyear_plus_one)
-        rep1 = http.get(url1, ttl_seconds = 3600)
-
-        if rep1.status_code != 200:
-            fail("get failed with status %d", rep1.status_code)
-
-        doc = html(rep1.body())
-
-    def check_event(i = 1):
-        check = doc.find("tbody").children().find("a").eq(i)
-        if "UFC" in check.text():
-            return check
-        else:
-            i += 1
-            return check_event(i)
-
-    event_node = check_event()
-    event = event_node.text()
-
-    date = event_node.parent().siblings().eq(0).text()
-    time = event_node.parent().siblings().eq(1).text()
+def main(config):
+    now = time.now().in_location(config.get("$tz", "UTC"))
+    end = now + time.parse_duration("2160h")
+    url = "https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard?dates=" + now.format("20060102") + "-" + end.format("20060102") + "&limit=100"
+    response = http.get(url, ttl_seconds = 3600)
+    if response.status_code != 200:
+        fail("UFC schedule request failed: %d" % response.status_code)
+    upcoming = []
+    for item in json.decode(response.body()).get("events", []):
+        if "UFC" not in item.get("name", ""):
+            continue
+        starts = time.parse_time(item["date"], format = "2006-01-02T15:04Z").in_location(config.get("$tz", "UTC"))
+        if starts >= now:
+            upcoming.append((starts, item["name"]))
+    if not upcoming:
+        return render.Root(child = render.WrappedText(content = "No UFC event scheduled", align = "center"))
+    starts, event = sorted(upcoming)[0]
+    date = starts.format("Jan 2")
+    event_time = starts.format("3:04 PM")
 
     return render.Root(
         child = render.Column(
@@ -76,7 +52,7 @@ def main():
                                         align = "center",
                                     ),
                                     render.WrappedText(
-                                        content = time,
+                                        content = event_time,
                                         align = "center",
                                     ),
                                 ],

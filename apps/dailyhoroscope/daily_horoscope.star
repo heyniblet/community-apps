@@ -1,14 +1,13 @@
 """
 Applet: Daily Horoscope
 Summary: See your daily horoscope
-Description: Displays the daily horoscope for a specific sign from USA Today.
+Description: Displays the daily horoscope for a specific sign from Astrology.com via the Ohmanda API.
 Author: frame-shift
 
 Version 1.3
 """
 
 load("encoding/json.star", "json")
-load("html.star", "html")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/aquarius.webp", AQUARIUS_ICON_ASSET = "file")
@@ -135,25 +134,14 @@ def main(config):
     if not re.match(r"^#[0-9A-Fa-f]{6}$", sign_color):
         sign_color = DEFAULT_COLOR
 
-    # Fetch horoscope data
-    horoscope_url = "https://play.usatoday.com/horoscopes/daily/" + zodiac  # Updates daily at 09:00 UTC
-    scope_response = http.get(horoscope_url, ttl_seconds = TTL)
-
-    if scope_response.status_code != 200 or len(scope_response.body()) > 512 * 1024:
-        return render_error("Could not reach source")
-
-    scope_html = html(scope_response.body())
-    json_extract = scope_html.find("script").filter("#__NEXT_DATA__").text()
-    scope_json = json.decode(json_extract, None) if len(json_extract) <= 256 * 1024 else None
-    page_props = scope_json.get("props", {}).get("pageProps", {}) if type(scope_json) == "dict" and type(scope_json.get("props")) == "dict" else {}
-    state = page_props.get("dehydratedState", {}) if type(page_props) == "dict" else {}
-    queries = state.get("queries", []) if type(state) == "dict" else []
-    query = queries[0] if type(queries) == "list" and queries and type(queries[0]) == "dict" else {}
-    query_state = query.get("state", {}) if type(query) == "dict" else {}
-    data = query_state.get("data", {}) if type(query_state) == "dict" else {}
-    daily = data.get("horoscopesDaily", {}) if type(data) == "dict" else {}
-    horoscopes = daily.get("horoscopes", []) if type(daily) == "dict" else []
-    horoscope_data = horoscopes[0] if type(horoscopes) == "list" and horoscopes and type(horoscopes[0]) == "dict" else {}
+    # Public daily feed: https://ohmanda.com/api/horoscope
+    horoscope_url = "https://ohmanda.com/api/horoscope/" + zodiac + "/"
+    scope_response = http.get(horoscope_url, headers = {"User-Agent": "Niblet (https://heyniblet.com)"}, ttl_seconds = TTL)
+    if scope_response.status_code != 200 or len(scope_response.body()) > 32 * 1024:
+        fail("Could not reach horoscope source")
+    horoscope_data = json.decode(scope_response.body(), None)
+    if type(horoscope_data) != "dict" or horoscope_data.get("sign") != zodiac:
+        fail("Invalid horoscope response")
 
     # Parse date that horoscope was written
     date_extracted = horoscope_data.get("date")

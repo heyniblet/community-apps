@@ -193,8 +193,14 @@ def main(config):
     now = time.now().in_location(timezone)
     datePast = now - time.parse_duration("%dh" % 1 * 24)
     dateFuture = now + time.parse_duration("%dh" % 6 * 24)
-    league = {LEAGUE: apiURL + (selectedTeam == "all" and " " or "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
+    league = {LEAGUE: apiURL + ("" if selectedTeam == "all" else "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
     scores = get_scores(league, selectedTeam)
+
+    # Rotate through the games without exceeding the render time budget.
+    page_size = max(1, min(3, 15 // max(1, int(rotationSpeed))))
+    if len(scores) > page_size:
+        start = (now.unix // 60 * page_size) % len(scores)
+        scores = (scores + scores)[start:start + page_size]
 
     if len(scores) > 0:
         for i, s in enumerate(scores):
@@ -2430,8 +2436,14 @@ def get_scores(urls, team):
     allscores = []
     gameCount = 0
     for i, s in urls.items():
-        data = get_cachable_data(s)
-        decodedata = json.decode(data)
+        response = http.get(url = s, ttl_seconds = CACHE_TTL_SECONDS)
+
+        # ESPN returns 404 when an off-season date range has no games.
+        if response.status_code == 404 and "&dates=" in s:
+            continue
+        if response.status_code != 200:
+            fail("Scoreboard request failed: %d" % response.status_code)
+        decodedata = json.decode(response.body())
         allscores.extend(decodedata["events"])
         if team != "all" and team != "":
             newScores = []
