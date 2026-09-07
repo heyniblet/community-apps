@@ -298,6 +298,23 @@ def main(config):
             hacks.append(([_[0], _[1], _[2]]))
         hack = int(config.get("hack"))
 
+    elif config.get("show") and config.get("show") != "__legacy__":
+        # The catalog schema exposes one bounded dropdown instead of 265
+        # individual toggles. Older installations without `show` keep using
+        # their existing group and hack_* values below.
+        hacks = []
+        for _ in HACKS:
+            if config.get("show") == _[0]:
+                hacks.append([_[0], _[1], _[2]])
+
+        if len(hacks) == 0:
+            return render.Root(
+                child = render.WrappedText(
+                    content = "XScreenSaver: Unknown animation.",
+                    align = "left",
+                ),
+            )
+
     elif config.get("hackname"):
         # ...by name on the command-line, always render it
         hacks = []
@@ -440,59 +457,32 @@ def main(config):
         ),
     )
 
-def group_test(group):
-    # Build a dropdown for all the hacks in the current group
+def animation_picker():
+    # Keep the schema under Cloud's field limit while retaining every hack.
 
-    hacks = []
+    hacks = [schema.Option(display = "Default mix", value = "__legacy__")]
     for _ in HACKS:
-        if group in _[5]:
-            hacks.append(
-                schema.Option(
-                    display = _[1],
-                    value = _[0],
-                ),
-            )
+        hacks.append(
+            schema.Option(
+                display = _[1],
+                value = _[0],
+            ),
+        )
 
     return [
         schema.Dropdown(
             id = "show",
             name = "Animation",
             desc = "Select an animation to run.",
-            icon = "ballotCheck",
+            icon = "display",
             options = hacks,
-            default = hacks[0].value,
+            default = "__legacy__",
         ),
     ]
 
-def group_real(group):
-    # Build toggles for all the hacks in the current group
-
-    toggles = []
-    for _ in HACKS:
-        if group in _[5]:
-            toggles.append(
-                schema.Toggle(
-                    id = "hack_" + _[0],
-                    name = _[1],
-                    desc = _[3],
-                    icon = "display",
-                    default = _[4],
-                ),
-            )
-    return toggles
-
 def get_schema():
-    # Build a list of all the groups
-    groups = []
-    for _ in ["All", "Default", "Classics", "Colorful", "Jarring", "Mathematical", "Nerdy", "Soothing", "Weird"]:
-        groups.append(
-            schema.Option(
-                display = _,
-                value = _,
-            ),
-        )
-
-    # The collection of settable options, starting with whether to show the hack's name
+    # Existing group and hack_* values remain readable by main(), but a single
+    # dropdown keeps new configuration within Cloud's 256-field limit.
     fields = [
         schema.Toggle(
             id = "name",
@@ -503,30 +493,7 @@ def get_schema():
         ),
     ]
 
-    # If we're in test mode...
-    if TEST:
-        fields += [
-            schema.Dropdown(
-                id = "group",
-                name = "Group",
-                desc = "Select the animations from a pre-defined group.",
-                icon = "layerGroup",
-                options = groups,
-                default = GROUP_DEFAULT,
-            ),
-        ] + group_test("All")
-
-    else:
-        fields += [
-            schema.Dropdown(
-                id = "group",
-                name = "Group",
-                desc = "Select the animations from a pre-defined group.",
-                icon = "layerGroup",
-                options = groups,
-                default = GROUP_DEFAULT,
-            ),
-        ] + group_real("All")
+    fields += animation_picker()
 
     # And hand the options to the system
     return schema.Schema(

@@ -17,22 +17,23 @@ load("time.star", "time")
 CSV_LOCS = {
     0: "date",
     1: "1MONTH",
-    3: "2MONTH",
-    4: "3MONTH",
-    6: "6MONTH",
-    7: "1YEAR",
-    8: "2YEAR",
-    9: "3YEAR",
-    10: "5YEAR",
-    11: "7YEAR",
-    12: "10YEAR",
-    13: "20YEAR",
-    14: "30YEAR",
+    2: "3MONTH",
+    3: "6MONTH",
+    4: "1YEAR",
+    5: "2YEAR",
+    6: "3YEAR",
+    7: "5YEAR",
+    8: "7YEAR",
+    9: "10YEAR",
+    10: "20YEAR",
+    11: "30YEAR",
 }
+
+FRED_SERIES = "DGS1MO,DGS3MO,DGS6MO,DGS1,DGS2,DGS3,DGS5,DGS7,DGS10,DGS20,DGS30"
 
 ZOOMS = {
     "All": "0",
-    "Short (1-12m)": "1,2,3,6,12",
+    "Short (1-12m)": "1,3,6,12",
     "Medium (1-7y)": "12,24,36,60,84",
     "Long (7-30y)": "84,120,240,360",
 }
@@ -53,7 +54,6 @@ COLOR_VECTORS = {
 
 X_AXIS = {
     "1MONTH": 1.0,
-    "2MONTH": 2.0,
     "3MONTH": 3.0,
     "6MONTH": 6.0,
     "1YEAR": 12.0,
@@ -96,7 +96,7 @@ def main(config):
     now = time.now().in_location(timezone)
     year = now.year
     month = now.month
-    cache_id = "%s/v2/%s/%s" % ("us-yield-curve", year, month)
+    cache_id = "%s/v3/%s/%s" % ("us-yield-curve", year, month)
     color_choice = config.get("graph_color", "Blue")
     color_vector = COLOR_VECTORS[color_choice]
     zoom = config.get("zoom", "0")
@@ -110,25 +110,46 @@ def main(config):
     updated_date = None
     dates = cache.get(cache_id)
     if not dates:
-        period = "%d%s" % (year, ("0" + str(month))[-2:])
-        url = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/all/%s?field_tdr_date_value_month=%s&type=daily_treasury_yield_curve&page&_format=csv" % (period, period)
-        print("Getting latest data from treasury.gov, %s" % url)
+        start_date = "%d-%s-01" % (year, ("0" + str(month))[-2:])
+        starts = ",".join([start_date for _ in range(11)])
+        url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=%s&cosd=%s" % (FRED_SERIES, starts)
+        print("Getting latest Treasury data from FRED")
         response = http.get(url, headers = {"User-Agent": "tronbyt-us-yield-curve/1.0 (https://github.com/tronbyt/apps)"})
-        if response.status_code != 200:
-            fail("Treasury request failed: %d", response.status_code)
-        rows = csv.read_all(response.body())[1:]
+        if response.status_code != 200 or len(response.body()) > 65536:
+            return render.Root(
+                child = render.WrappedText(
+                    content = "Treasury data unavailable",
+                    align = "center",
+                ),
+            )
+        rows = csv.read_all(response.body())[1:32]
+        if not rows:
+            return render.Root(
+                child = render.WrappedText(
+                    content = "Treasury data unavailable",
+                    align = "center",
+                ),
+            )
         dates = []
         min_yield, max_yield = 0.0, 0.0
-        for items in reversed(rows):
-            this = {CSV_LOCS[i]: value for i, value in enumerate(items) if i in CSV_LOCS.keys()}
+        for items in rows:
+            this = {"date": items[0]}
             yields = []
-            for key in this.keys():
-                if key != "date":
-                    this[key] = float(this[key])
-                    yields.append(this[key])
-            max_yield = max(max_yield, max(yields))
-            min_yield = min(min_yield, min(yields))
-            dates.append(this)
+            for i, value in enumerate(items):
+                if i != 0 and i in CSV_LOCS and value and value != ".":
+                    this[CSV_LOCS[i]] = float(value)
+                    yields.append(this[CSV_LOCS[i]])
+            if yields:
+                max_yield = max(max_yield, max(yields))
+                min_yield = min(min_yield, min(yields))
+                dates.append(this)
+        if not dates:
+            return render.Root(
+                child = render.WrappedText(
+                    content = "Treasury data unavailable",
+                    align = "center",
+                ),
+            )
         updated_date = dates[-1]["date"]
 
         cache.set(cache_id, json.encode(dates), ttl_seconds = 60 * 60 * 12)
