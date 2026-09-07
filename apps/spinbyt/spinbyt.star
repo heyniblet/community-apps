@@ -18,16 +18,16 @@ DEFAULT_URL = "https://gbfs.spin.pm/api/gbfs/v2_3/%s/free_bike_status"
 
 DEFAULT_LOCATION = """
 {
-	"lat": "40.46049905272754",
-	"lng": "-79.95109706964388",
-	"description": "600 Grant St, Pittsburgh, PA, USA",
-	"locality": "Pittsburgh",
-	"place_id": "ChIJCSF8lBZEwokRhngABHRcdoI",
+	"lat": "39.2904",
+	"lng": "-76.6122",
+	"description": "Baltimore, MD, USA",
+	"locality": "Baltimore",
+	"place_id": "spin-baltimore",
 	"timezone": "America/New_York"
 }
 """
 
-DEFAULT_CITY = "pittsburgh"
+DEFAULT_CITY = "baltimore"
 
 def main(config):
     # City from configuration:
@@ -147,10 +147,6 @@ def main(config):
 def get_schema():
     city_options = [
         schema.Option(
-            display = "Pittsburgh",
-            value = "pittsburgh",
-        ),
-        schema.Option(
             display = "Washington, D.C.",
             value = "washington_dc",
         ),
@@ -165,10 +161,6 @@ def get_schema():
         schema.Option(
             display = "Chicago",
             value = "chicago",
-        ),
-        schema.Option(
-            display = "Omaha",
-            value = "omaha",
         ),
     ]
 

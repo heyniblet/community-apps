@@ -9,16 +9,17 @@ load("http.star", "http")
 load("render.star", "render")
 
 DEFAULT_WHO = "world"
-QUOTEURL = "https://www.xboxplaydates.us/playdatesQuotes/randomquote"
+QUOTEURL = "https://www.drivebird.com/api/quotes/today"
 
 def main():
-    rep = http.get(QUOTEURL)
+    rep = http.get(QUOTEURL, ttl_seconds = 3600)
     if rep.status_code != 200:
         fail("Something happened trying to get the quote. %d", rep.status_code)
 
-    quoteId = rep.json()["id"]
-    quote = rep.json()["quote"]
-    attribution = rep.json()["attribution"]
+    payload = rep.json().get("data", {})
+    quoteId = payload["id"]
+    quote = payload["quote"]
+    attribution = payload.get("author") or "Xbox Playdates"
 
     return render.Root(
         child = render.Column(

@@ -7,8 +7,6 @@ author: PalmettoBling
 fileName: xboxplaydates.star
 packageName: xboxplaydates
 recommendedInterval: 5
-broken: true
-brokenReason: The Xbox Playdates site and random-quote API are offline and the domain no longer resolves.
 category: entertainment
 tags:
   - gaming

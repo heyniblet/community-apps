@@ -6,8 +6,6 @@ desc: App that shows the nearest Spin scooter, its battery level, and number of 
 author: zachlucas
 fileName: spinbyt.star
 packageName: spinbyt
-broken: true
-brokenReason: Spin's public GBFS free-bike feed was retired and now returns 404; no replacement Spin feed is published.
 category: transit
 tags:
   - utility

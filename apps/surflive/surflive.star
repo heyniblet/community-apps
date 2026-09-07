@@ -34,9 +34,13 @@ DEFAULT_SPOT_ID = "5842041f4e65fad6a7708841"
 
 def main(config):
     if config.get("spot"):
-        spot = json.decode(config.get("spot"))
-        spot_name = spot["display"]
-        spot_id = spot["value"]
+        spot = json.decode(config.get("spot"), None)
+        if type(spot) == "dict":
+            spot_name = spot.get("display", DEFAULT_SPOT_NAME)
+            spot_id = spot.get("value", DEFAULT_SPOT_ID)
+        else:
+            spot_name = DEFAULT_SPOT_NAME
+            spot_id = config.get("spot")
     else:
         spot_name = DEFAULT_SPOT_NAME
         spot_id = DEFAULT_SPOT_ID
@@ -63,10 +67,10 @@ def main(config):
         ]
 
     # skip render if waves are smaller than specified in config min_height
-    if config.bool("use_wave_height"):
+    if conditions != None and config.bool("use_wave_height"):
         if conditions["wave"]["max"] < int(config.get("min_height", "0")):
             return []
-    elif conditions["wave"]["swell_height"] < int(config.get("min_height", "0")):
+    elif conditions != None and conditions["wave"]["swell_height"] < int(config.get("min_height", "0")):
         return []
 
     return render.Root(

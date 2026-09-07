@@ -5,8 +5,6 @@ summary: Today's Culver's flavor
 desc: Get today's flavor at Culver's Frozen Custard.
 author: Josiah Winslow
 recommendedInterval: 30
-broken: true
-brokenReason: Culver's locator API currently returns a bot-challenge page instead of JSON, and no supported replacement feed is published.
 category: lifestyle
 tags:
   - lifestyle
