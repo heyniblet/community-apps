@@ -11,7 +11,6 @@ load("schema.star", "schema")
 
 # Uses https://fred.stlouisfed.org/docs/api/fred/series_observations.html API schema
 FRED_API_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
-CACHE_DURATION = 7200  # get new data every 2 hours
 
 # Mapping of series IDs to their display names
 SERIES_NAMES = {
@@ -46,7 +45,7 @@ def main(config):
         "sort_order": "desc",
     }
 
-    response = http.get(url = FRED_API_BASE_URL, params = params, ttl_seconds = CACHE_DURATION)
+    response = http.get(url = FRED_API_BASE_URL, params = params)
     if response.status_code != 200:
         return render.Root(child = render.Text("API failure."))
 

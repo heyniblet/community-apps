@@ -38,7 +38,7 @@ def get_time_components(duration_seconds):
     return components[:2]
 
 def main(config):
-    timezone = config.get("timezone") or "America/New_York"
+    timezone = time.tz()
 
     # Default values
     DEFAULT_EVENT = "HELLO WORLD"  # Changed to uppercase
@@ -46,8 +46,9 @@ def main(config):
 
     # Get configuration values and convert event name to uppercase
     event_name = config.str("event_name", DEFAULT_EVENT).upper()
-    event_time = time.parse_time(config.str("event_time", DEFAULT_TIME))
-    now = time.now().in_location("America/New_York")
+    event_time_str = config.str("event_time", DEFAULT_TIME)
+    event_time = time.parse_time(event_time_str, format = "2006-01-02T15:04", location = timezone) if len(event_time_str) == 16 else time.parse_time(event_time_str).in_location(timezone)
+    now = time.now().in_location(timezone)
 
     # Calculate time difference in seconds
     time_diff = event_time.unix - now.unix

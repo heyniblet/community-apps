@@ -6,7 +6,6 @@ desc: Uses AirLabs or OpenSky to find the flight overhead a location.
 author: gsthnz
 fileName: flight_overhead.star
 packageName: flightoverhead
-broken: true
 recommendedInterval: 5
 category: transit
 tags:

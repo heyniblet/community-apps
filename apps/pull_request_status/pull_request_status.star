@@ -1,4 +1,4 @@
-load("encoding/base64.star", "base64")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/closed_icon_36165f4e.png", CLOSED_ICON_36165f4e_ASSET = "file")
 load("images/merged_icon_f460a18e.png", MERGED_ICON_f460a18e_ASSET = "file")
@@ -8,6 +8,7 @@ load("schema.star", "schema")
 
 TIDBYT_HEIGHT = 32
 TIDBYT_WIDTH = 64
+MAX_RESPONSE_BYTES = 262144
 
 CLOSED_ICON = CLOSED_ICON_36165f4e_ASSET.readall()
 MERGED_ICON = MERGED_ICON_f460a18e_ASSET.readall()
@@ -19,22 +20,38 @@ def read_repo_pr_label_setup(config):
         pr = config.get("pr_" + str(i))
         if pr:
             entry = pr.split(" ")
-            if len(entry) >= 3:
-                repo_pr_label_setup.append(entry[:3])
+            if len(entry) >= 3 and valid_repo(entry[0]) and entry[1].isdigit() and int(entry[1]) > 0:
+                repo_pr_label_setup.append([entry[0], entry[1], " ".join(entry[2:])])
     return repo_pr_label_setup
+
+def valid_repo(repo):
+    parts = repo.split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1] or len(repo) > 201:
+        return False
+    for char in repo.elems():
+        if not (char.isalnum() or char in "-._/"):
+            return False
+    return True
 
 # returns "merged" or "closed" or "open"
 def get_pr_status(repo, pr):
     api_url = "https://api.github.com/repos/" + repo + "/pulls/" + str(pr)
 
-    response = http.get(api_url, ttl_seconds = 180)
+    response = http.get(api_url, ttl_seconds = 300, headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Niblet-Community-App",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    body = response.body()
 
     # Parse the response JSON
-    if response.status_code == 200:
-        pr_data = response.json()
-        if pr_data["merged_at"] != None:
+    if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES:
+        pr_data = json.decode(body, None)
+        if type(pr_data) != "dict":
+            return None
+        if pr_data.get("merged_at") != None:
             return "merged"
-        elif pr_data["state"] == "closed":
+        elif pr_data.get("state") == "closed":
             return "closed"
         else:
             return "open"
@@ -59,7 +76,7 @@ def main(config):
     elements_to_display = [[label, get_status_icon(status)] for repo, pr, label, status in repo_pr_status_list]
 
     if len(elements_to_display) == 0:
-        return []
+        return render_message("Add: owner/repo PR label")
 
     # hide_after = config.str("hide_after")
 
@@ -98,7 +115,7 @@ def main(config):
                                 width = 62 - image_height,
                             ),
                             (render.Image(
-                                src = base64.decode(status_icon),
+                                src = status_icon,
                                 height = image_height,
                             ) if status_icon else render.Text(
                                 "?",
@@ -116,6 +133,9 @@ def main(config):
             pad = (1, 0, 1, 0),
         ),
     )
+
+def render_message(message):
+    return render.Root(child = render.Box(child = render.WrappedText(message, align = "center")))
 
 # HIDE_AFTER_OPTIONS = [
 #     "never",
@@ -149,19 +169,19 @@ def get_schema():
             schema.Text(
                 id = "pr_0",
                 name = "Repository and Pull Request 1",
-                desc = "First Repository and Pull Request (seperate repo id, pr and labelwith space)",
+                desc = "Use: owner/repository PR-number label",
                 icon = "git",
             ),
             schema.Text(
                 id = "pr_1",
                 name = "Repository and Pull Request 2",
-                desc = "Second Repository and Pull Request (seperate repo id, pr and label with space)",
+                desc = "Use: owner/repository PR-number label",
                 icon = "git",
             ),
             schema.Text(
                 id = "pr_2",
                 name = "Repository and Pull Request 3",
-                desc = "Third Repository and Pull Request (seperate repo id, pr and label with space)",
+                desc = "Use: owner/repository PR-number label",
                 icon = "git",
             ),
         ],

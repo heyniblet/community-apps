@@ -2,13 +2,11 @@
 id: slippistats
 name: SlippiStats
 summary: Displays stats from SSBM
-desc: Takes stats from SSBM replays uploaded to chartslp.com and shows you stats about your play.
+desc: Shows wins, losses, win rate, and main character from a Slippi ranked profile.
 author: Tyler Barron
 fileName: slippistats.star
 packageName: slippistats
 recommendedInterval: 5
-broken: true
-brokenReason: Backend server (chart-slp-server.herokuapp.com) is down (404)
 category: gaming
 tags:
   - retro

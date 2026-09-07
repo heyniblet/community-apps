@@ -31,7 +31,7 @@ def main(config):
             headers = {"x-api-key": lambda_api_key},
             json_body = {"ics_url": ics_url, "tz": timezone},
         )
-        next_event = response.json()
+        next_event = response.json() if response.status_code == 200 else {"has_next_event": False}
     else:
         next_event = {
             "has_next_event": True,
@@ -137,6 +137,7 @@ def get_schema():
                 desc = "The URL of the iCalendar file.",
                 icon = "calendar",
                 default = DEFAULT_ICS_URL,
+                secret = True,
             ),
             schema.Text(
                 id = "title",

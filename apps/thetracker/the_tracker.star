@@ -40,11 +40,12 @@ load("images/potted_plant.png", POTTED_PLANT_ASSET = "file")
 load("images/storefront.png", STOREFRONT_ASSET = "file")
 load("images/the_letter_p.png", THE_LETTER_P_ASSET = "file")
 load("images/usd.png", USD_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
 CACHE_TTL = 300
-DEFAULT_CODE = "n1bmw0og"  # Updated to a sample ilo.so counter ID
+DEFAULT_CODE = ""
 DEFAULT_COLOR = "#1DA1F2"
 DEFAULT_LAYOUT = "Number"
 DEFAULT_FONT = "tb-8"
@@ -105,7 +106,7 @@ def main(config):
     code = config.str("code", DEFAULT_CODE).strip()
 
     # If the Counter ID is blank, show an error message
-    if code == "":
+    if not re.match("^[A-Za-z0-9_-]{1,80}$", code):
         return render.Root(
             render.WrappedText(
                 content = "Error: Counter ID is blank.",
@@ -115,7 +116,6 @@ def main(config):
     # Load user settings from Tidbyt app, or grab defaults
     layout = config.str("layout", DEFAULT_LAYOUT)
     color = config.str("color", DEFAULT_COLOR)
-    code = config.str("code", DEFAULT_CODE)
     banner = config.str("banner", DEFAULT_BANNER)
     font = config.str("font", DEFAULT_FONT)
     icon_id = config.str("icon", DEFAULT_ICON)
@@ -132,7 +132,8 @@ def main(config):
     if response.status_code != 200:
         data = {}
     else:
-        data = json.decode(response.body())
+        body = response.body()
+        data = json.decode(body, {}) if body and len(body) <= 64 * 1024 else {}
 
     if "count" in data:
         # Extract the count value as an integer
@@ -156,7 +157,6 @@ def main(config):
         body_content = formatted_count
 
     else:
-        print("Error: 'count' key missing in API response")
         body_content = "Error"
 
     # Use the final content
@@ -167,8 +167,6 @@ def main(config):
         final_content = "no ID"
     elif body_content == "No counter":
         final_content = "bad ID"
-
-    print(final_content)
 
     # Top & bottom layout
     if layout == "Top":

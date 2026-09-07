@@ -1,6 +1,4 @@
-load("cache.star", "cache")
 load("color.star", "color")
-load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
@@ -90,26 +88,10 @@ def login(username, password):
 
         if rep.status_code == 200:
             data = rep.json()
-            token = data.get("access") or data.get("access_token")
-            if token:
+            token = data.get("access") or data.get("access_token") if type(data) == "dict" else None
+            if type(token) == "string" and len(token) <= 4096:
                 return {"token": token}
 
-    return None
-
-def get_user_id_from_token(token):
-    parts = token.split(".")
-    if len(parts) < 2:
-        return None
-    payload = parts[1].replace("-", "+").replace("_", "/")
-    pad_len = (4 - (len(payload) % 4)) % 4
-    payload += "=" * pad_len
-    decoded = base64.decode(payload)
-    if not decoded:
-        return None
-    data = json.decode(decoded)
-    user_id = data.get("user_id")
-    if user_id:
-        return str(user_id)
     return None
 
 def normalize_game_name(name):
@@ -131,81 +113,78 @@ def normalize_game_name(name):
     return n.replace("&", "\\u0026")
 
 def get_personal_scores(auth):
-    # Use a chunk of token as cache key suffix
-    cache_key = "stern_personal_scores_v10_" + auth["token"][:15]
-    cached_data = cache.get(cache_key)
-    if cached_data:
-        return json.decode(cached_data)
-
     token = auth["token"]
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Authorization": "Bearer " + token,
     }
 
-    user_id = get_user_id_from_token(token)
-
-    # Fallback to user_registered_machines endpoint if user_id was not in token
-    if not user_id:
-        m_rep = http.get("https://api.prd.sternpinball.io/api/v1/portal/user_registered_machines/?group_type=home", headers = headers)
-        if m_rep.status_code == 200:
-            m_data = m_rep.json()
-            user_id = str(m_data.get("user", {}).get("id", ""))
-
-    if not user_id:
-        return []
-
-    # Map titles to model type from user registered home machines if available
+    # Fetch the user ID and registered machine types in one request.
+    user_id = ""
     user_models_by_title = {}
-    m_rep = http.get("https://api.prd.sternpinball.io/api/v1/portal/user_registered_machines/?group_type=home", headers = headers, ttl_seconds = 3600)
+    m_rep = http.get("https://api.prd.sternpinball.io/api/v1/portal/user_registered_machines/", headers = headers, params = {"group_type": "home"})
     if m_rep.status_code == 200:
         m_data = m_rep.json()
-        machines = m_data.get("user", {}).get("machines", [])
+        user = m_data.get("user") if type(m_data) == "dict" else None
+        user_id = numeric_id(user.get("id")) if type(user) == "dict" else ""
+        machines = user.get("machines") if type(user) == "dict" else None
+        machines = machines[:20] if type(machines) == "list" else []
         for m in machines:
+            if type(m) != "dict":
+                continue
             model_info = m.get("model") or {}
-            m_type = model_info.get("type", "pro")
+            model_info = model_info if type(model_info) == "dict" else {}
+            m_type = str(model_info.get("type") or "pro").lower()
+            m_type = m_type if m_type in ["pro", "premium", "limited"] else "best"
             title_info = model_info.get("title") or {}
-            title_name = title_info.get("name", "")
+            title_info = title_info if type(title_info) == "dict" else {}
+            title_name = str(title_info.get("name") or "")[:100]
             if title_name:
-                user_models_by_title[title_name] = m_type.lower()
+                user_models_by_title[title_name] = m_type
+
+    if len(user_id) > 20 or not user_id.isdigit():
+        return []
 
     # Fetch game titles list
     titles_url = "https://api.prd.sternpinball.io/api/v1/portal/game_titles/"
-    titles_rep = http.get(titles_url, headers = headers, ttl_seconds = 86400)
+    titles_rep = http.get(titles_url, headers = headers)
     if titles_rep.status_code != 200:
         return []
     titles = titles_rep.json()
+    titles = titles[:64] if type(titles) == "list" else []
 
     # Fetch global games list to extract logo URLs
     games_url = "https://insider.sternpinball.com/games?_rsc=1"
-    games_cache_key = "stern_games_metadata_html"
-    games_body = cache.get(games_cache_key)
-    if not games_body:
-        g_rep = http.get(games_url, ttl_seconds = 86400)
-        if g_rep.status_code == 200:
-            games_body = g_rep.body()
-            cache.set(games_cache_key, games_body, ttl_seconds = 86400)
+    games_body = ""
+    g_rep = http.get(games_url, ttl_seconds = 86400)
+    if g_rep.status_code == 200:
+        games_body = g_rep.body()
 
     results = []
     for t in titles:
-        game_name = t.get("name", "")
+        if type(t) != "dict":
+            continue
+        game_name = str(t.get("name") or "")[:100]
         pk = t.get("pk")
-        if not pk:
+        clean_pk = numeric_id(pk)
+        if not clean_pk:
             continue
 
-        stat_url = "https://api.prd.sternpinball.io/api/v1/portal/user_title_stats/?user_id=" + user_id + "&title_id=" + str(pk)
-        stat_rep = http.get(stat_url, headers = headers, ttl_seconds = 300)
+        stat_url = "https://api.prd.sternpinball.io/api/v1/portal/user_title_stats/"
+        stat_rep = http.get(stat_url, headers = headers, params = {"user_id": user_id, "title_id": clean_pk})
         if stat_rep.status_code != 200:
             continue
 
         stat_data = stat_rep.json()
-        max_score = stat_data.get("max_score", 0)
-        if not max_score or max_score <= 0:
+        if type(stat_data) != "dict":
+            continue
+        max_score = number(stat_data.get("max_score"))
+        if max_score <= 0:
             continue
 
         percentile = stat_data.get("score_percentile")
         percent_str = ""
-        if percentile != None and percentile > 0:
+        if type(percentile) in ["int", "float"] and percentile > 0 and percentile <= 100:
             top_pct = 100 - int(percentile)
             if top_pct <= 0:
                 top_pct = 1
@@ -250,7 +229,7 @@ def get_personal_scores(auth):
 
         game_scores = [{
             "model": m_type,
-            "score": int(max_score),
+            "score": max_score,
             "percent": percent_str,
         }]
 
@@ -263,7 +242,6 @@ def get_personal_scores(auth):
             "mid_c": mid_color(c1, c2),
         })
 
-    cache.set(cache_key, json.encode(results), ttl_seconds = 300)
     return results
 
 def main(config):
@@ -271,9 +249,10 @@ def main(config):
     password = config.get("password")
     game_filter = config.get("game_filter", "all")
     highest_only = config.bool("highest_only")
-    max_games = int(config.get("max_games", "3"))
+    max_games_config = config.get("max_games", "3")
+    max_games = int(max_games_config) if max_games_config in ["1", "2", "3", "5"] else 3
 
-    if not username or not password:
+    if type(username) != "string" or type(password) != "string" or not username or not password or len(username) > 254 or len(password) > 1024:
         return render.Root(
             child = render.WrappedText("Configure Stern username & password"),
         )
@@ -316,7 +295,7 @@ def main(config):
             scores = [highest]
 
         banner_child = None
-        if logo_url:
+        if logo_url.startswith("https://stern-wagtail-1.s3.amazonaws.com/"):
             logo_rep = http.get(logo_url, ttl_seconds = 3600)
             if logo_rep.status_code == 200:
                 banner_child = render.Image(src = logo_rep.body(), width = canvas.width())
@@ -364,7 +343,6 @@ def main(config):
     # If no content, just skip
     if not all_content:
         return None
-    print("Rendering total elements:", len(all_content))
     return render.Root(
         delay = 80,
         child = render.Marquee(
@@ -373,6 +351,20 @@ def main(config):
             child = render.Column(children = all_content),
         ),
     )
+
+def number(value):
+    if type(value) in ["int", "float"] and value >= 0:
+        return int(value)
+    if type(value) == "string" and len(value) <= 24 and value.isdigit():
+        return int(value)
+    return 0
+
+def numeric_id(value):
+    if type(value) in ["int", "float"] and value >= 0 and int(value) == value:
+        return str(int(value))
+    if type(value) == "string" and len(value) <= 20 and value.isdigit():
+        return value
+    return ""
 
 def get_schema():
     return schema.Schema(

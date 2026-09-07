@@ -5,6 +5,7 @@ Description: Display track details and artwork from any Home Assistant media_pla
 Author: drudge, gabe565
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/default_cover.png", DEFAULT_COVER_ASSET = "file")
 load("images/default_cover_2x.png", DEFAULT_COVER_2X_ASSET = "file")
@@ -19,19 +20,24 @@ SCROLL_TOGETHER = "together"
 SCROLL_SEPARATE = "separate"
 SCROLL_DISABLED = "disabled"
 DEFAULT_SCROLL = SCROLL_TOGETHER
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
 def get_entity_status(ha_server, entity_id, token):
-    if not ha_server or not entity_id or not token:
+    if not ha_server or not valid_entity(entity_id) or not valid_token(token):
         return None
 
     rep = http.get("%s/api/states/%s" % (ha_server, entity_id), headers = {
         "Authorization": "Bearer %s" % token,
-    }, ttl_seconds = 10)
-    if rep.status_code != 200:
-        print("HTTP request failed with status", rep.status_code)
+    })
+    body = rep.body()
+    if rep.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
         return None
 
-    return rep.json()
+    value = json.decode(body, {})
+    if type(value) != "dict" or type(value.get("state")) != "string" or type(value.get("attributes")) != "dict":
+        return None
+    return value
 
 def render_text_widget(content, width, color = "", font = "", scroll = DEFAULT_SCROLL):
     text = render.Text(
@@ -68,17 +74,17 @@ def get_title_color(app_name):
     return APP_COLORS.get(app_name, "#009cc4")
 
 def get_app_name(attributes):
-    media_content_id = attributes.get("media_content_id", "")
+    media_content_id = safe_text(attributes.get("media_content_id"))
     if media_content_id.startswith("spotify:"):
         return "Spotify"
 
-    app_name = attributes.get("app_name") or attributes.get("source")
+    app_name = safe_text(attributes.get("app_name")) or safe_text(attributes.get("source"))
     if app_name:
         return app_name
 
-    app_id = attributes.get("app_id")
+    app_id = safe_text(attributes.get("app_id"))
     if not app_id:
-        return attributes.get("friendly_name", "")
+        return safe_text(attributes.get("friendly_name"))
 
     APP_ID_FULL_MAP = {
         "com.apple.TVAirPlay": "AirPlay",
@@ -100,7 +106,7 @@ def get_app_name(attributes):
     return APP_ID_SUFFIX_MAP.get(name, name)
 
 def main(config):
-    ha_server = config.get("homeassistant_server")
+    ha_server = normalized_url(config.get("homeassistant_server"))
     entity_id = config.get("entity_id")
     token = config.get("auth")
     entity_status = get_entity_status(ha_server, entity_id, token)
@@ -119,28 +125,33 @@ def main(config):
     scale = 2 if canvas.is2x() else 1
     font = "terminus-18" if scale == 2 else "tb-8"
 
-    media_title = attributes.get("media_title")
+    media_title = safe_text(attributes.get("media_title"))
 
     media_image = None
     show_art = config.bool("show_art", True)
     if show_art:
-        url = attributes.get("entity_picture")
+        picture = attributes.get("entity_picture")
+        url = ""
+        if type(picture) == "string" and picture.startswith("/") and len(picture) <= 2048:
+            url = ha_server + picture
+        elif type(picture) == "string" and picture.startswith(ha_server + "/") and len(picture) <= 2048:
+            url = picture
         if url:
-            if url.startswith("/"):
-                url = ha_server.rstrip("/") + url
-            res = http.get(url, ttl_seconds = 600)
-            if res.status_code == 200:
-                media_image = res.body()
+            res = http.get(url, headers = {"Authorization": "Bearer %s" % token})
+            body = res.body()
+            image_type = res.headers.get("Content-Type", "")
+            if res.status_code == 200 and len(body) <= MAX_IMAGE_BYTES and image_type.startswith("image/"):
+                media_image = body
         if not media_image:
             media_image = DEFAULT_IMAGE_2X if scale >= 2 else DEFAULT_IMAGE
 
-    media_content_type = attributes.get("media_content_type")
-    media_artist = attributes.get("media_artist")
-    friendly_name = attributes.get("friendly_name", "")
+    media_content_type = safe_text(attributes.get("media_content_type"))
+    media_artist = safe_text(attributes.get("media_artist"))
+    friendly_name = safe_text(attributes.get("friendly_name", ""))
     app_name = get_app_name(attributes)
     media_artist = media_artist or friendly_name
     media_title = media_title or app_name
-    media_album_name = attributes.get("media_album_name", app_name)
+    media_album_name = safe_text(attributes.get("media_album_name")) or app_name
 
     line2 = media_album_name
     line1 = media_artist if line2 != media_artist else ""
@@ -200,7 +211,7 @@ def get_schema():
             schema.Text(
                 id = "homeassistant_server",
                 name = "Home Assistant Server",
-                desc = "Home Assistant base URL (e.g. http://homeassistant:8123). Supports https.",
+                desc = "Public HTTPS root URL, such as a Home Assistant Cloud remote URL.",
                 icon = "server",
             ),
             schema.Text(
@@ -253,3 +264,21 @@ def get_schema():
             ),
         ],
     )
+
+def normalized_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://") or any([char in value for char in [" ", "\t", "\r", "\n", "?", "#"]]):
+        return ""
+    parts = value.split("/", 3)
+    host = parts[2].lower() if len(parts) >= 3 else ""
+    if not host or "@" in host or ":" in host:
+        return ""
+    return value.rstrip("/")
+
+def valid_entity(value):
+    return type(value) == "string" and len(value) >= 3 and len(value) <= 128 and "." in value and all([char.isalnum() or char in "._-" for char in value.elems()])
+
+def valid_token(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 4096 and not any([char in value for char in ["\r", "\n"]])
+
+def safe_text(value):
+    return value[:200] if type(value) == "string" else ""

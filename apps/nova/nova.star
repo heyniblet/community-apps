@@ -16,7 +16,9 @@ NOWPLAYING_PREFIX_URL = "https://np.tritondigital.com/public/nowplaying?mountNam
 NOWPLAYING_SUFFIX_URL = "&numberToFetch=1&eventType=track&request.preventCache=1687472073814"
 
 def main(config):
-    StationSelection = config.get("station", "NOVA_919")
+    StationSelection = config.str("station", "NOVA_919")
+    if StationSelection not in ["NOVA_919", "NOVA_1069", "NOVA_100", "NOVA_937", "NOVA_969"]:
+        StationSelection = "NOVA_919"
     NOWPLAYING_URL = NOWPLAYING_PREFIX_URL + StationSelection + NOWPLAYING_SUFFIX_URL
 
     feed = get_cachable_data(NOWPLAYING_URL, CACHE_TIMEOUT)
@@ -25,11 +27,11 @@ def main(config):
     artist = ""
     songtitle = ""
 
-    if len(heading) == 6:
+    if len(heading) >= 6:
         artist = heading[4]
-    elif len(heading) == 5:
+    elif len(heading) >= 4:
         artist = heading[3]
-    songtitle = heading[2]
+    songtitle = heading[2] if len(heading) >= 3 else "Unavailable"
 
     return render.Root(
         delay = 100,
@@ -91,9 +93,12 @@ def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
 
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        fail("Nova request failed with status code: %d" % res.status_code)
 
-    return res.body()
+    body = res.body()
+    if not body or len(body) > 262144:
+        fail("Nova returned an invalid response")
+    return body
 
 StationOptions = [
     schema.Option(

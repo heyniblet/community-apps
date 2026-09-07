@@ -4,7 +4,7 @@ Display your latest Bird Buddy feeder visitors on your Tidbyt display!
 
 ![Bird Buddy App Demo](bird_buddy.webp)
 
-🐦 **Real Bird Species Icons** - Shows actual bird illustrations from Bird Buddy's API
+🐦 Shows the latest visitor name with a built-in bird icon.
 
 ## Setup
 
@@ -29,6 +29,11 @@ The app connects to Bird Buddy's GraphQL API to:
 2. **Fetch your feeders** and recent activity
 3. **Display the latest visitor** with species name and timestamp
 4. **Cache data** to reduce API calls and improve performance
+
+This community integration uses Bird Buddy's undocumented app GraphQL API,
+following the open-source PyBirdBuddy client. It is not an official Bird Buddy
+developer API and may change without notice. Niblet sends credentials only to
+Bird Buddy's fixed HTTPS API host.
 
 ## Troubleshooting
 

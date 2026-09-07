@@ -10,6 +10,7 @@ Author: Robert Ison
 # Pulls down data every hour starting 30 minutes after sunset until 30 minutes befor sunrise
 # Pulls down the expected evening sky during the day -- when it is sunny, there are no 'visible planets' so we'll display what you can expect in the evening.
 
+load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")  #Used to figure out timezone
 load("http.star", "http")  #for calling to astronomyapi.com
 load("humanize.star", "humanize")  #for easy reading numbers and times
@@ -26,7 +27,6 @@ load("schema.star", "schema")
 load("sunrise.star", "sunrise")  #to calcuate day/night and when planets will be visible
 load("time.star", "time")  #Used to display time and calcuate lenght of TTL cache
 
-app_hash = "M2IxYmY2OWUtZWIzMS00NTM0LTkyOWItMmRiMDlhMWVkYjI5OmZhN2YxOTM2M2I2N2QzZDNiYjEzNmNkMDhjMzM3YmUzZTQwMjE3ODg1MjIzY2QyYTNiNzFkZDlhYzU1YzBkODdkOWE0YjFiODkwMWUxN2JkZDU3YmZjOTBmZWI4NmE5MjdlMTBjNjZhYWFkYzFhMjE1NjdiOGYxNTUxOGNmMDU1ZGMwOTFhNzg5Nzc5M2FhNDE5OTUyMDAzNTUyY2U2ZWQ5NWUxNDZmMjkxZWQ0M2RhYzNjNGRmMjNmYTc5NTU2OTQ0MGVlNWY1N2NhOTJmYjNmYTg4OWYxOWFlNWQxMzU2"
 time_display_format = "3:04 PM"
 application_delimiter = ":"
 
@@ -79,6 +79,11 @@ def main(config):
 
     #settings:
     system = config.get("system") or "metric"
+    app_id = (config.str("astronomy_app_id") or "").strip()
+    app_secret = (config.str("astronomy_app_secret") or "").strip()
+    if not app_id or not app_secret:
+        return render.Root(child = render.WrappedText("Add AstronomyAPI credentials", align = "center"))
+    app_hash = base64.encode(app_id + ":" + app_secret)
     hide_quiet = config.get("hide_quiet")
     location = json.decode(config.get("location", default_location))
 
@@ -116,7 +121,7 @@ def main(config):
     location["lat"] = str((math.round(float(location["lat"]) * 10)) * math.pow(10, -1))
 
     if planet == "all":
-        return get_summary_of_night_sky(location, check_offset)
+        return get_summary_of_night_sky(location, check_offset, app_hash)
     else:
         visibility_disclaimer = ""
         is_inner_planet = planet == "mercury" or planet == "venus"
@@ -152,7 +157,9 @@ def main(config):
         row2 = ""
 
         # JSon Data holding all planetary positioning data
-        position_json = get_all_planet_information(location, check_offset, cache_ttl_seconds)
+        position_json = get_all_planet_information(location, check_offset, cache_ttl_seconds, app_hash)
+        if type(position_json) != "dict" or type(position_json.get("data")) != "dict":
+            return render.Root(child = render.WrappedText("Astronomy data unavailable", align = "center"))
         planet_element = get_planet_element(planet, position_json)
 
         # pull data from json dataset
@@ -201,7 +208,7 @@ def get_planet_element(planet, position_json):
     #this should never happen
     return 0
 
-def get_all_planet_information(location, check_offset, cache_ttl_seconds):
+def get_all_planet_information(location, check_offset, cache_ttl_seconds, app_hash):
     """ Gets the information on a particular planet based on location and time
 
     Args:
@@ -216,7 +223,7 @@ def get_all_planet_information(location, check_offset, cache_ttl_seconds):
     # Check now or include an offset
     check_time = get_local_time(location, check_offset)
 
-    position_json = get_all_body_positions(location, check_time, cache_ttl_seconds)
+    position_json = get_all_body_positions(location, check_time, app_hash, cache_ttl_seconds)
 
     return position_json
 
@@ -374,7 +381,7 @@ def concatenate(items):
 
     return return_value
 
-def get_summary_of_night_sky(location, check_offset):
+def get_summary_of_night_sky(location, check_offset, app_hash):
     """ Gets a summary of the entire night sky
 
     Args:
@@ -396,7 +403,9 @@ def get_summary_of_night_sky(location, check_offset):
     for object in object_list:
         if (object == "venus" or object == "mercury"):
             cache_ttl_seconds = 15 * 60
-        position_json = get_all_planet_information(location, check_offset, cache_ttl_seconds)
+        position_json = get_all_planet_information(location, check_offset, cache_ttl_seconds, app_hash)
+        if type(position_json) != "dict" or type(position_json.get("data")) != "dict":
+            return render.Root(child = render.WrappedText("Astronomy data unavailable", align = "center"))
         planet_element = get_planet_element(object, position_json)
         altitude = position_json["data"]["table"]["rows"][planet_element]["cells"][0]["position"]["horizontal"]["altitude"]["degrees"]
         altitude = math.floor(float(altitude))
@@ -598,7 +607,7 @@ def get_readable_large_number(number):
 
     return returnval
 
-def get_all_body_positions(location, check_time, ttl_seconds = 3600):
+def get_all_body_positions(location, check_time, app_hash, ttl_seconds = 3600):
     """ Gets the JSon Data from astronomyapi
 
     Args:
@@ -632,10 +641,9 @@ def get_all_body_positions(location, check_time, ttl_seconds = 3600):
         ttl_seconds = int(ttl_seconds),
     )
 
-    if res.status_code == 200:
-        return res.json()
-    else:
-        return None
+    body = res.body()
+    data = json.decode(body, {}) if res.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
+    return data if type(data) == "dict" else None
 
 def two_character_time_date_part(number):
     """ Returns two characters to represent an hour/minute/second needed when puttin together a timestamp 03:01:04
@@ -701,6 +709,19 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
+            schema.Text(
+                id = "astronomy_app_id",
+                name = "AstronomyAPI application ID",
+                desc = "Application ID from astronomyapi.com.",
+                icon = "key",
+            ),
+            schema.Text(
+                id = "astronomy_app_secret",
+                name = "AstronomyAPI application secret",
+                desc = "Application secret from astronomyapi.com.",
+                icon = "key",
+                secret = True,
+            ),
             schema.Dropdown(
                 id = "planet",
                 name = "Planet",

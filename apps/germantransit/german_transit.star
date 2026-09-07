@@ -12,7 +12,6 @@ load("http.star", "http")
 load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 #Constants for the VRN API
 VRN_API_BASE_URL = "https://www.vrn.de/mngvrn/"
@@ -23,10 +22,10 @@ LOCATION_SEARCH_PREFIX = "XML_STOPFINDER_REQUEST?"
 ORANGE = "#FFA500"
 WHITE = "#FFFFFF"
 GREEN = "#0AE300"
-RED = "E33954"
+RED = "#E33954"
 PURPLE = "#B40DF7"
-BLUE = "0093E6"
-GRAY = "8E949E"
+BLUE = "#0093E6"
+GRAY = "#8E949E"
 FONT = "tb-8"
 MINUTES_TO_DEPARTURE_COLOR_THRESHOLD = 5  #if the time until departure is less than this, we'll color it orange
 MAX_DEPATURES_PER_FRAME = 2  #maximum number of departures to display per frame
@@ -70,19 +69,13 @@ PRODUCT_CLASS_BUS = [5, 6, 7]
 PRODUCT_CLASS_REGIONAL = [13]
 PRODUCT_CLASS_ICE = [14, 15, 16]
 
-#Time-related constants
-BERLIN_TIMEZONE = "Europe/Berlin"
-
 #Departure Board API Tuning Parameters
 MAX_DEPARTURES = 8  #maximum number of departures to fetch
 MAX_MINUTES_IN_FUTURE = "59"  #limit to departures in the next hour
-DEPARTURES_TTL_CACHE_LENGTH_SECONDS = 300  #cache the departure board for 5 minutes
-ICON_TTL_CACHE_LENGTH_SECONDS = 604800  #cache the modality icon for one week
 JSON_FORMAT = "json"
 
 #Station Lookup API Tuning Parameters
-MAX_STATIONS_TO_FETCH = "10"  #maximum number of stations to fetch
-STATIONS_TTL_CACHE_LENGTH_SECONDS = 604800  #cache the station lookup for one week
+MAX_STATIONS_TO_FETCH = 10  #maximum number of stations to fetch
 
 #Strings displayed to the end user
 MINUTES_ABBREVIATION = "m"
@@ -94,15 +87,13 @@ def main(config):
     if not config:
         return get_error_message("No configuration provided")
 
-    #Parse the station data. The "value" field is a stringified JSON object holding the station-id and station-name
-    station = config.get(CONFIG_STATION)
-    if not station:
+    station_id = configured_station_id(config.get(CONFIG_STATION))
+    if not config.get(CONFIG_STATION):
         #Print preview results until user selects a station
         departures = get_preview()
         return get_root_element(departures)
-
-    data = json.decode(json.decode(station)[CONFIG_STATION_VALUE])
-    station_id = data[CONFIG_STATION_ID]
+    if not valid_station_id(station_id):
+        return get_error_message("Invalid station")
 
     #Pull product class configurations from the schema
     show_u_bahn = config.bool(CONFIG_SHOW_U_BAHN, True)
@@ -115,7 +106,10 @@ def main(config):
     product_list = parse_class_configs(show_u_bahn, show_s_bahn, show_tram, show_bus, show_regional, show_ice)
 
     #Pull the departure time offset from the schema
-    offset_minutes = int(config.get(CONFIG_DEPARTURE_TIME_OFFSET))
+    offset_value = config.get(CONFIG_DEPARTURE_TIME_OFFSET, "0")
+    if type(offset_value) != "string" or not offset_value.isdigit():
+        return get_error_message("Invalid departure time offset selected")
+    offset_minutes = int(offset_value)
     if not offset_minutes in CONFIG_DEPARTURE_TIME_OFFSET_VALUES:
         return get_error_message("Invalid departure time offset selected")
 
@@ -225,7 +219,10 @@ def render_departures_frame(departures):
 #url: the url of the icon svg
 #Returns the xml string
 def load_image(url):
-    img = http.get(url, ttl_seconds = ICON_TTL_CACHE_LENGTH_SECONDS).body()
+    response = http.get(url)
+    img = response.body()
+    if response.status_code != 200 or len(img) > 256 * 1024 or "<svg" not in img:
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\"><rect width=\"14\" height=\"14\" fill=\"#444\"/></svg>"
     img = img.replace("0664ab", "000000")
     return img.replace("#032D57", WHITE)
 
@@ -314,32 +311,19 @@ def get_station_departures(station_id, included_mots, departure_offset_minutes):
     if departure_offset_minutes > 0:  #we only need to add the time parameter if we're not looking for immediate departures - it defautls to now
         params["timeOffset"] = str(departure_offset_minutes)
 
-    resp = execute_http_get(departure_req, params, DEPARTURES_TTL_CACHE_LENGTH_SECONDS)
-    return parse_departures_json(resp)
+    payload = execute_http_get(departure_req, params)
+    return parse_departures_json(payload)
 
 #Executes an HTTP GET request to the specified VRN API endpoint.  Fails the app if the request fails
 #vrn_api_prefix_params: the prefix for the VRN API endpoint
 #request_params: the parameters to pass to the VRN API
 #ttl_seconds: the time-to-live for the cache
 #Returns the response from the VRN API
-def execute_http_get(vrn_api_prefix_params, request_params, ttl_seconds):
-    http_response = http.get(VRN_API_BASE_URL + "/" + vrn_api_prefix_params, params = request_params, ttl_seconds = ttl_seconds)
-    check_http_status_code(http_response, vrn_api_prefix_params)
-    return http_response
-
-#Rounds the minutes of a time or duration object to the nearest minute
-#minutes: the minutes to round
-#seconds: the seconds to round
-#Returns the rounded minutes
-def get_rounded_minutes(minutes, seconds):
-    minutes = math.floor(minutes)
-    minutes += 1 if seconds > 30 else 0  #round up if we're more than 30 seconds into the next minute
-    return minutes
-
-#Gets the current time in Berlin
-#Returns the current time in Berlin as a time object
-def get_time_now_in_berlin():
-    return time.now().in_location(BERLIN_TIMEZONE)
+def execute_http_get(vrn_api_prefix_params, request_params):
+    http_response = http.get(VRN_API_BASE_URL + vrn_api_prefix_params, params = request_params)
+    if http_response.status_code != 200 or len(http_response.body()) > 2 * 1024 * 1024:
+        return {}
+    return json.decode(http_response.body(), {})
 
 #Gets the modality classes to show from the schema
 #show_u_bahn: whether to show U-Bahn departures
@@ -371,32 +355,28 @@ def parse_class_configs(show_u_bahn, show_s_bahn, show_tram, show_bus, show_regi
             product.append(id)
     return product
 
-#Fails the app if the HTTP request fails
-#resp: the response object from the HTTP request
-#api_name_invoked: the name of the API that was invoked
-def check_http_status_code(resp, api_name_invoked):
-    if resp.status_code != 200:
-        print(api_name_invoked + " request failed with status _" + str(resp.status_code))
-
 #DEPARTUREBOARD RESPONSE PARSING FUNCTIONS
 
 #Parses the JSON response from the VRN departure board API
 #http_response: the JSON response from the VRN departure board API
 #Returns a list of dictionaries, each representing a departure. See parse_departure for the structure of each dictionary
-def parse_departures_json(http_response):
+def parse_departures_json(payload):
     departures_data = []  #parse out all departures, return them in a list
 
-    #no departures found. Check this separately because http_response.json()["departureList"] will throw an error if there are no departures
-    if not http_response.json()["departureList"]:
+    if type(payload) != "dict":
         return departures_data
 
-    #if there is only one departure, convert to list for parsing
-    departure_list = http_response.json()["departureList"]
+    departure_list = payload.get("departureList", [])
+    if not departure_list:
+        return departures_data
     if type(departure_list) == "dict":
-        departure_list = [departure_list["departure"]]
+        departure = departure_list.get("departure")
+        departure_list = [departure] if type(departure) == "dict" else []
+    if type(departure_list) != "list":
+        return departures_data
 
     #parse the departure list
-    for departures in departure_list:
+    for departures in departure_list[:MAX_DEPARTURES]:
         parsed_departure = parse_departure(departures)
         if parsed_departure:  #don't add None departures
             departures_data.append(parsed_departure)
@@ -413,11 +393,15 @@ def parse_departures_json(http_response):
 #- DEPARTURE_DATA_LINE: the line number of the train
 #- DEPARTURE_DATA_LINE_COLOR: the color of the line number text
 def parse_departure(departure_json):
+    if type(departure_json) != "dict":
+        return None
     time_until_departure = get_minutes_until_departure(departure_json)
     if not check_time_until_departure_valid_for_board(time_until_departure):  #don't show invalid departures
         return None
 
     product_at_stop = departure_json.get("servingLine")  #internal structure in the JSON response that holds more data about the product
+    if type(product_at_stop) != "dict" or type(product_at_stop.get("direction")) != "string":
+        return None
     return {
         DEPARTURE_DATA_DIRECTION: parse_station_name(product_at_stop.get("direction")),
         DEPARTURE_DATA_TIME_UNTIL_DEPARTURE: time_until_departure,
@@ -441,7 +425,9 @@ def check_time_until_departure_valid_for_board(time_until_departure):
 #product_at_stop: the JSON object representing the product at the stop
 #Returns the icon of modality
 def parse_icon(product_at_stop):
-    product_type = int(product_at_stop.get("motType"))
+    product_type = safe_int(product_at_stop.get("motType"))
+    if product_type == None:
+        return load_image(REGIONAL_ICON)
     if product_type in PRODUCT_CLASS_S_BAHN:
         return load_image(S_BAHN_ICON)
     if product_type in PRODUCT_CLASS_U_BAHN:
@@ -461,17 +447,17 @@ def parse_icon(product_at_stop):
 #Returns the line number or ICE train name
 def parse_line(product_at_stop):
     line = product_at_stop.get("symbol")
-    if line:
-        return line
+    if type(line) == "string" and line:
+        return line[:16]
     else:
         name = product_at_stop.get("trainNum")
-        return "I" + name  #ICE trains don't have line numbers, so we'll use the number instead
+        return "I" + name if type(name) == "string" else "?"  #ICE trains don't have line numbers, so we'll use the number instead
 
 #Fetch the color to display for the modality
 #product_at_stop: the JSON object representing the product at the stop
 #Returns the color of the line number text
 def parse_color(product_at_stop):
-    product_type = int(product_at_stop.get("motType"))
+    product_type = safe_int(product_at_stop.get("motType"))
     if product_type in PRODUCT_CLASS_S_BAHN:
         return GREEN
     if product_type in PRODUCT_CLASS_U_BAHN:
@@ -498,24 +484,8 @@ def get_time_color(time_until_departure):
 #departure_json: the JSON object representing a single departure from the VRN API
 #Returns the rounded number of minutes until the train departs, or None if the departure time is in the past. Will return 0 if the departure is less than 30 seconds in the future,
 def get_minutes_until_departure(departure_json):
-    if not departure_json.get("realDateTime"):
-        departure_rt = departure_json.get("dateTime")
-    else:
-        departure_rt = departure_json.get("realDateTime")
-
-    year = departure_rt["year"]
-    month = departure_rt["month"]
-    day = departure_rt["day"]
-    hour = departure_rt["hour"]
-    minute = departure_rt["minute"]
-
-    now = get_time_now_in_berlin()
-    departure_time_object = time.time(year = int(year), month = int(month), day = int(day), hour = int(hour), minute = int(minute), location = BERLIN_TIMEZONE)
-
-    if now > departure_time_object:  #we don't care about past departures
-        return None
-    date_diff = departure_time_object - now  #subtracting two time objects gives us a Duration object representing the difference
-    return get_rounded_minutes(date_diff.minutes, date_diff.seconds)
+    countdown = safe_int(departure_json.get("countdown"))
+    return countdown if countdown != None and countdown >= 0 else None
 
 #Sorts the departures by time until departure
 #departures: the list of departures to sort
@@ -531,12 +501,11 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Location(
                 id = CONFIG_STATION,
                 name = "Station",
-                desc = "A list of stations based on a location.",
+                desc = "Use the nearest station to this location.",
                 icon = "train",
-                handler = get_stations,
             ),
             schema.Dropdown(
                 id = CONFIG_DEPARTURE_TIME_OFFSET,
@@ -598,38 +567,37 @@ def get_departure_time_offset_options():
         options.append(schema.Option(display = str(minutes), value = str(minutes)))
     return options
 
-#Given a location as provided by the LocationBased schema, returns a list of stations near that location for selection by the user
-#location: a JSON object representing a location, as provided by the LocationBased schema
-#Returns a list of schema.Option objects representing the stations near the location
-def get_stations(location):
-    found_stations = []
-
-    stations_json = fetch_stations(json.decode(location))
-    if not stations_json:
-        return found_stations
-    for station in stations_json["stopFinder"]["itdOdvAssignedStops"]:
-        station_id = station.get("stopID")
-        if not station_id:  #the ID is critical for later operations. If we don't have one, throw this stop out
-            continue
-        station_name = station.get("nameWithPlace")
-        if not station_name:  #How will a user know what station they're selecting if it doesn't have a name?
-            continue
-        option = schema.Option(
-            display = station.get("nameWithPlace"),
-            value = json.encode({CONFIG_STATION_ID: station_id, CONFIG_STATION_NAME: station_name}),
-        )
-        found_stations.append(option)
-        if len(found_stations) == MAX_STATIONS_TO_FETCH:
-            break
-
-    return found_stations
+def configured_station_id(value):
+    if valid_station_id(value):
+        return value
+    selection = json.decode(value, {}) if type(value) == "string" else {}
+    if type(selection) != "dict":
+        return None
+    selected = selection.get(CONFIG_STATION_VALUE)
+    selected = json.decode(selected, {}) if type(selected) == "string" else {}
+    station_id = selected.get(CONFIG_STATION_ID) if type(selected) == "dict" else None
+    if valid_station_id(station_id):
+        return station_id
+    stations_json = fetch_stations(selection)
+    stations = stations_json.get("stopFinder", {}).get("itdOdvAssignedStops", []) if type(stations_json) == "dict" else []
+    if type(stations) != "list":
+        return None
+    for station in stations[:MAX_STATIONS_TO_FETCH]:
+        station_id = station.get("stopID") if type(station) == "dict" else None
+        if valid_station_id(station_id):
+            return station_id
+    return None
 
 #Fetches the stations near a location from the VRN API
 #location: a JSON object representing a location, as provided by the LocationBased schema
 #Returns the JSON response from the VRN API
 def fetch_stations(location):
-    truncated_lat = math.round(1000.0 * float(location["lat"])) / 1000.0  # Truncate to 3dp for better caching and to protect user privacy
-    truncated_lng = math.round(1000.0 * float(location["lng"])) / 1000.0  # Means to the nearest ~110 metres.
+    lat = coordinate(location.get("lat"), -90, 90) if type(location) == "dict" else None
+    lng = coordinate(location.get("lng"), -180, 180) if type(location) == "dict" else None
+    if lat == None or lng == None:
+        return None
+    truncated_lat = math.round(1000.0 * lat) / 1000.0  # Truncate to 3dp for better caching and to protect user privacy
+    truncated_lng = math.round(1000.0 * lng) / 1000.0  # Means to the nearest ~110 metres.
     params = {
         "type_sf": "coord",
         "name_sf": "coord:" + str(truncated_lng) + ":" + str(truncated_lat) + ":WGS84[dd.ddddd]",
@@ -638,11 +606,35 @@ def fetch_stations(location):
         "coordOutputFormat": "EPSG:4326",
         "locationServerActive": "1",
     }
-    resp = execute_http_get(LOCATION_SEARCH_PREFIX, params, STATIONS_TTL_CACHE_LENGTH_SECONDS)
-    if not resp.json().get("stopFinder"):
+    payload = execute_http_get(LOCATION_SEARCH_PREFIX, params)
+    if type(payload) != "dict" or type(payload.get("stopFinder")) != "dict":
         return None
 
-    return resp.json()
+    return payload
+
+def valid_station_id(value):
+    return type(value) == "string" and value and len(value) <= 128 and all([char.isalnum() or char in ":-_" for char in value.codepoints()])
+
+def safe_int(value):
+    if type(value) == "int":
+        return value
+    if type(value) == "string" and value.isdigit() and len(value) <= 8:
+        return int(value)
+    return None
+
+def coordinate(value, minimum, maximum):
+    if type(value) in ["int", "float"]:
+        number = float(value)
+    elif type(value) == "string":
+        value = value.strip()
+        unsigned = value[1:] if value.startswith("-") or value.startswith("+") else value
+        parts = unsigned.split(".")
+        if not unsigned or len(value) > 20 or len(parts) > 2 or not all([part.isdigit() for part in parts]):
+            return None
+        number = float(value)
+    else:
+        return None
+    return number if minimum <= number and number <= maximum else None
 
 def get_preview():
     return [

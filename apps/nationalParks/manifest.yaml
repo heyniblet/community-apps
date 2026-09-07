@@ -1,12 +1,12 @@
 ---
 id: national-parks
 name: National Parks
-summary: National park info and pics
-desc: Displays interesting facts and pictures of various national parks in the United States.
+summary: National park information
+desc: Displays authoritative National Park Service information about U.S. parks. No claim to original U.S. Government works.
 author: hklim1
 fileName: national_parks.star
 packageName: nationalparks
-recommendedInterval: 5
+recommendedInterval: 60
 category: entertainment
 tags:
   - nature

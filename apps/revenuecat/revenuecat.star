@@ -649,10 +649,11 @@ def get_schema():
                 icon = "key",
                 secret = True,
             ),
-            schema.Generated(
-                id = "project_generated",
-                source = "api_key",
-                handler = project_schema,
+            schema.Text(
+                id = "project_id",
+                name = "Project ID",
+                desc = "RevenueCat project ID to display.",
+                icon = "folder",
             ),
             schema.Text(
                 id = "display_name",

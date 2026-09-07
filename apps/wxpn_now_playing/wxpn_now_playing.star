@@ -73,7 +73,9 @@ def get_now_playing(url):
     resp = http.get(url)
     if resp.status_code != 200:
         return None
-    return json.decode(resp.body())
+    body = resp.body()
+    data = json.decode(body, {}) if body and len(body) <= 256 * 1024 else {}
+    return data if type(data) == "dict" else None
 
 def parse_track_info(stream_title):
     """Parse artist and title from stream title"""
@@ -82,8 +84,8 @@ def parse_track_info(stream_title):
 
     parts = stream_title.split(" - ", 1)
     return {
-        "artist": parts[0].strip(),
-        "title": parts[1].strip(),
+        "artist": parts[0].strip()[:100],
+        "title": parts[1].strip()[:100],
     }
 
 def get_album_art(artist, title):
@@ -99,13 +101,19 @@ def get_album_art(artist, title):
     if resp.status_code != 200:
         return None
 
-    data = json.decode(resp.body())
-    if data["resultCount"] > 0 and "artworkUrl30" in data["results"][0]:
+    body = resp.body()
+    data = json.decode(body, {}) if body and len(body) <= 512 * 1024 else {}
+    results = data.get("results", []) if type(data) == "dict" else []
+    if type(results) == "list" and results and type(results[0]) == "dict" and "artworkUrl30" in results[0]:
         # Fetch the actual image data
-        image_url = data["results"][0]["artworkUrl30"]
+        image_url = results[0]["artworkUrl30"]
+        if not image_url.startswith("https://is") or ".mzstatic.com/" not in image_url[:80]:
+            return None
         image_resp = http.get(image_url)
-        if image_resp.status_code == 200:
-            return image_resp.body()
+        image_body = image_resp.body()
+        content_type = image_resp.headers.get("Content-Type", image_resp.headers.get("content-type", ""))
+        if image_resp.status_code == 200 and len(image_body) <= 2 * 1024 * 1024 and content_type.startswith("image/"):
+            return image_body
 
     return None
 

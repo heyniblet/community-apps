@@ -30,12 +30,17 @@ MATCH_CACHE = 600  # 10 min
 LIVE_CACHE = 30  # 30 secs
 DEFAULT_TIMEZONE = "Australia/Adelaide"
 DEFAULT_TEAM = "500011"
+NRL_HEADERS = {"accept": "application/json", "user-agent": "Mozilla/5.0 (compatible; Niblet/1.0; +https://heyniblet.com)"}
 
 def main(config):
-    RotationSpeed = config.get("speed", "3")
-    ViewSelection = config.get("View", "Live")
-    TeamListSelection = config.get("TeamList", DEFAULT_TEAM)
-    UpcomingSelection = config.get("Upcoming", "Record")
+    RotationSpeed = config.str("speed", "3")
+    ViewSelection = config.str("View", "Live")
+    TeamListSelection = config.str("TeamList", DEFAULT_TEAM)
+    UpcomingSelection = config.str("Upcoming", "Record")
+    RotationSpeed = RotationSpeed if RotationSpeed in ["2", "3", "4", "5"] else "3"
+    ViewSelection = ViewSelection if ViewSelection in ["All", "Live", "Team"] else "Live"
+    UpcomingSelection = UpcomingSelection if UpcomingSelection in ["Record", "Ladder", "Odds"] else "Record"
+    TeamListSelection = TeamListSelection if TeamListSelection in [option.value for option in TeamOptions] else DEFAULT_TEAM
 
     timezone = time.tz()
     now = time.now().in_location(timezone)
@@ -46,13 +51,21 @@ def main(config):
     LadderData = get_cachable_data(LADDER_URL, LADDER_CACHE)
     LadderJSON = json.decode(LadderData)
 
-    RoundNumber = str(MatchesJSON["selectedRoundId"])
+    fixtures = MatchesJSON.get("fixtures", []) if type(MatchesJSON) == "dict" else []
+    positions = LadderJSON.get("positions", []) if type(LadderJSON) == "dict" else []
+    if type(fixtures) != "list" or not fixtures or type(positions) != "list":
+        return render_status("NRL data unavailable")
+
+    RoundNumber = str(MatchesJSON.get("selectedRoundId", ""))
 
     LIVE_URL = MATCHES_URL + "&round=" + RoundNumber
     LiveData = get_cachable_data(LIVE_URL, LIVE_CACHE)
     LiveJSON = json.decode(LiveData)
+    live_fixtures = LiveJSON.get("fixtures", []) if type(LiveJSON) == "dict" else []
+    if type(live_fixtures) != "list" or len(live_fixtures) < len(fixtures):
+        LiveJSON = MatchesJSON
 
-    Fixtures = len(MatchesJSON["fixtures"])
+    Fixtures = len(fixtures)
     ScoreFont = "CG-pixel-4x5-mono"
     ScoreWidth = 40
 
@@ -415,35 +428,24 @@ def get_schema():
                 default = UpcomingOptions[0].value,
                 options = UpcomingOptions,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "View",
-                handler = MoreOptions,
-            ),
-        ],
-    )
-
-def MoreOptions(View):
-    if View == "Team":
-        return [
             schema.Dropdown(
                 id = "TeamList",
                 name = "Teams",
-                desc = "Choose your team",
+                desc = "Choose your team when using Specific Team view",
                 icon = "football",
                 default = TeamOptions[0].value,
                 options = TeamOptions,
             ),
-        ]
-    else:
-        return None
+        ],
+    )
 
 def getRecord(Team, JSON):
     Win = ""
     Draw = ""
     Loss = ""
 
-    for x in range(0, 17, 1):
+    positions = JSON.get("positions", []) if type(JSON) == "dict" else []
+    for x in range(0, min(17, len(positions)), 1):
         if Team == JSON["positions"][x]["teamNickname"]:
             Win = JSON["positions"][x]["stats"]["wins"]
             Draw = JSON["positions"][x]["stats"]["drawn"]
@@ -579,12 +581,18 @@ def getTeamName(team_id):
     return None
 
 def get_cachable_data(url, timeout):
-    res = http.get(url = url, ttl_seconds = timeout)
+    res = http.get(url = url, ttl_seconds = timeout, headers = NRL_HEADERS)
 
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        fail("NRL request failed with status code: %d" % res.status_code)
 
-    return res.body()
+    body = res.body()
+    if not body or len(body) > 1048576:
+        fail("NRL returned an invalid response")
+    return body
+
+def render_status(message):
+    return render.Root(child = render.WrappedText(content = message, font = "tom-thumb", color = "#fff"))
 
 RotationOptions = [
     schema.Option(

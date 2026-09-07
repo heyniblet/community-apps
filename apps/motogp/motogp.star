@@ -12,6 +12,7 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 # API
+SEASONS_URL = "https://api.pulselive.motogp.com/motogp/v1/results/seasons"
 CATEGORIES_URL = "https://api.pulselive.motogp.com/motogp/v1/results/categories?seasonUuid={season_id}"
 CALENDAR_URL = "https://api.pulselive.motogp.com/motogp/v1/events?seasonYear={year}"
 STANDINGS_URL = "https://api.pulselive.motogp.com/motogp/v1/results/standings?seasonUuid={season_id}&categoryUuid={category_id}"
@@ -43,11 +44,6 @@ SESSION_KIND_TO_STR = {
     "Q2": "Qualifying 2",
     "SPR": "Sprint Race",
     "RAC": "Race",
-}
-
-SEASONS_YEAR_ID = {
-    2024: "dd12382e-1d9f-46ee-a5f7-c5104db28e43",
-    2025: "ae6c6f0d-c652-44f8-94aa-420fc5b3dab4",
 }
 
 def main(config):
@@ -204,7 +200,14 @@ def fetch_calendar(year):
     return data
 
 def fetch_standings(year):
-    season_id = SEASONS_YEAR_ID[int(year)]
+    seasons = get_cachable_data(SEASONS_URL, 3 * ONE_DAY)
+    season_id = None
+    for season in seasons:
+        if season["year"] == int(year):
+            season_id = season["id"]
+            break
+    if not season_id:
+        fail("No MotoGP season found for %s" % year)
 
     # categories list changes only once per year, a 3 day cache is good enough
     categories = get_cachable_data(CATEGORIES_URL.format(season_id = season_id), 3 * ONE_DAY)

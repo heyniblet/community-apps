@@ -29,7 +29,7 @@ def main(config):
     if not (show_births or show_deaths or show_events):
         show_events = True  # You cannot ask for nothing!
 
-    title = config.str("title") or DEFAULT_TITLE
+    title = (config.str("title") or DEFAULT_TITLE)[:80]
 
     # What is today?
     date = humanize.time_format("MMMM_dd", time.now())
@@ -71,7 +71,10 @@ def get_raw_day_data(day_name):
             cache.set(cache_key, json.encode(error_data), ttl_seconds = 30)
             return error_data
 
-        body = json.decode(page.body())
+        raw = page.body()
+        body = json.decode(raw, {}) if raw and len(raw) <= 2 * 1024 * 1024 else {}
+        if type(body) != "dict" or type(body.get("query")) != "dict" or type(body["query"].get("pages")) != "dict" or not body["query"]["pages"]:
+            return [("Events", "*", "There was an error parsing event data")]
         content = body["query"]["pages"]
         page = content[content.keys()[0]]
         extract = page["extract"]

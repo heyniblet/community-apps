@@ -17,11 +17,17 @@ NOWPLAYING_SUFFIX_URL = "&numberToFetch=1&eventType=track&request.preventCache=1
 
 def main(config):
     StationSelection = config.get("station", "SMOOTH_ADELAIDE")
+    if StationSelection not in [option.value for option in StationOptions]:
+        StationSelection = StationOptions[0].value
     NOWPLAYING_URL = NOWPLAYING_PREFIX_URL + StationSelection + NOWPLAYING_SUFFIX_URL
 
     feed = get_cachable_data(NOWPLAYING_URL, CACHE_TIMEOUT)
+    if feed == None:
+        return error_frame()
     rss = xpath.loads(feed)
     heading = rss.query_all("//nowplaying-info-list/nowplaying-info/property name")
+    if len(heading) < 3:
+        return error_frame()
     artist = ""
     songtitle = ""
 
@@ -30,7 +36,8 @@ def main(config):
     elif len(heading) == 5:
         artist = heading[3]
 
-    songtitle = heading[2]
+    songtitle = heading[2][:200]
+    artist = artist[:200]
 
     return render.Root(
         delay = 100,
@@ -90,11 +97,12 @@ def get_schema():
 
 def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
+    body = res.body()
+    required = ["<nowplaying-info-list>", "<nowplaying-info", "<property"]
+    return body if res.status_code == 200 and body and len(body) <= 64 * 1024 and all([part in body for part in required]) else None
 
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
+def error_frame():
+    return render.Root(child = render.WrappedText(content = "Now playing unavailable", width = 64, color = "#f00"))
 
 StationOptions = [
     schema.Option(

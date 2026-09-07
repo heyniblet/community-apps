@@ -5,6 +5,7 @@ Description: Displays trophies for Clash of Clans.
 Author: Brandon Marks
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/archer_logo.jpg", ARCHER_LOGO_ASSET = "file")
 load("images/barbarian_logo.jpg", BARBARIAN_LOGO_ASSET = "file")
@@ -23,13 +24,23 @@ TROPHY_ICON = TROPHY_ICON_ASSET.readall()
 WIZARD_LOGO = WIZARD_LOGO_ASSET.readall()
 
 CLASH_URL = "https://cocproxy.royaleapi.dev/v1/players/%23"
+MAX_RESPONSE_BYTES = 256 * 1024
+
+def safe_player_id(value):
+    value = str(value or "").replace("#", "").upper()
+    if not value or len(value) > 20:
+        return ""
+    for char in value.elems():
+        if char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+            return ""
+    return value
 
 def main(config):
-    playerID = config.get("PlayerID", "")
+    playerID = safe_player_id(config.get("PlayerID"))
     pictureChoice = config.get("pictureChoice", "Barbarian")
     nameScrollActive = config.bool("nameScrollActive", "False")
 
-    decrypted_Token = config.get("clash_of_clans_api_key") or "No_Key"
+    decrypted_Token = str(config.get("clash_of_clans_api_key") or "")[:512]
 
     #to be displayed in case of error
     trophy_Count = 0
@@ -37,27 +48,23 @@ def main(config):
     player_Name = "N/A"
 
     #send request for data
-    if (playerID != "" and decrypted_Token != "No_Key"):
+    if playerID and decrypted_Token:
         headers_clash = {
-            "Authorization": decrypted_Token,
+            "Authorization": decrypted_Token if decrypted_Token.startswith("Bearer ") else "Bearer " + decrypted_Token,
         }
 
         fullURL = CLASH_URL + playerID
-        rep = http.get(fullURL, ttl_seconds = 200, headers = headers_clash)
-        if rep.status_code != 200:
-            print("\n\nClash API request failed with status %d", rep.status_code)
-
-            # print("Printing below\n")
-            # print(rep)
-            # print('\n\nHere is the token\n')
-            # print(decrypted_Token)
+        rep = http.get(fullURL, headers = headers_clash)
+        body = rep.body()
+        data = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+        if type(data) != "dict" or type(data.get("trophies")) != "int" or type(data.get("townHallLevel")) != "int":
             player_Name = "Not Found"
-            nameScrollActive = "True"
+            nameScrollActive = True
 
         else:
-            trophy_Count = rep.json()["trophies"]
-            player_Name = rep.json()["name"]
-            townHallLevel = rep.json()["townHallLevel"]
+            trophy_Count = max(0, data["trophies"])
+            player_Name = str(data.get("name") or "N/A")[:120]
+            townHallLevel = max(0, data["townHallLevel"])
 
     ##handles all rendering of images, delegates to functions for each item
     return render.Root(
@@ -165,7 +172,7 @@ def get_schema():
             schema.Text(
                 id = "clash_of_clans_api_key",
                 name = "Clash of Clans API Key",
-                desc = "Your Clash of Clans API key. See https://developer.clashofclans.com/ for details.",
+                desc = "Your Clash of Clans API key. Whitelist RoyaleAPI's documented proxy IP, then paste the token with or without the Bearer prefix. See https://docs.royaleapi.com/proxy.html.",
                 icon = "key",
                 secret = True,
             ),

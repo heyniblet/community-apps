@@ -1,3 +1,4 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("math.star", "math")
 load("random.star", "random")
@@ -17,14 +18,15 @@ def main(config):
         quote = "Nature does not hurry, yet everything is accomplished."
         author = "Lao Tzu - " + str(rep.status_code)
     else:
-        data = rep.json()
+        body = rep.body()
+        data = json.decode(body, []) if body and len(body) <= 256 * 1024 else []
         if not data or len(data) == 0:
             quote = "The void is silent today."
             author = "Unknown"
         else:
-            quote_data = data[0]
-            quote = quote_data.get("q", "No quote available")
-            author = quote_data.get("a", "Unknown")
+            quote_data = data[0] if type(data[0]) == "dict" else {}
+            quote = str(quote_data.get("q", "No quote available"))[:500]
+            author = str(quote_data.get("a", "Unknown"))[:100]
 
     font = config.str("font", DEFAULT_FONT)
     random_colors = config.bool("random_colors", False)

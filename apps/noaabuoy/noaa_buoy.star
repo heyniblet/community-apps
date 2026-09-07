@@ -12,9 +12,8 @@ load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-load("xpath.star", "xpath")
 
-print_debug = True
+print_debug = False
 
 default_location = """
 {
@@ -55,7 +54,7 @@ def swell_over_threshold(thresh, units, data, use_wind_swell):  # assuming thres
         height = data.get("WVHT", "0")
     if thresh == "" or float(thresh) == 0.0:
         return True
-    elif units == "m":
+    elif units == "meters":
         height = float(height) / 3.281
         height = int(height * 10)
         height = height / 10.0
@@ -121,7 +120,10 @@ def fetch_spec_data(buoy_id, use_wind_swell = False, days = 5):
         debug_print("Failed to fetch spec data: " + str(resp.status_code))
         return None
 
-    lines = resp.body().split("\n")
+    body = resp.body()
+    if not body or len(body) > 2000000:
+        return None
+    lines = body.split("\n")
     data_points = []
 
     # Get current time for filtering
@@ -378,6 +380,8 @@ def fetch_data(buoy_id, last_data):
             return data
 
     html = resp.body()
+    if not html or len(html) > 512000:
+        return {"name": buoy_id, "error": "Invalid response"}
     data["name"] = buoy_id  # fallback, no name in desktop page
 
     # Extract station name from page title if available
@@ -583,11 +587,10 @@ def main(config):
 
     if buoy_id == "none" or buoy_id == "":  # if manual input is empty load from local selection
         local_selection = config.get("local_buoy_id", '{"display": "Station 51213 - South Lanai", "value": "51213"}')  # default is Waimea
-        local_selection = json.decode(local_selection)
-        if "value" in local_selection:
-            buoy_id = local_selection["value"]
-        else:
-            buoy_id = "51213"
+        legacy_ids = re.findall('"value"\\s*:\\s*"([^"]+)"', local_selection) if type(local_selection) == "string" else []
+        buoy_id = legacy_ids[0][0] if len(legacy_ids) > 0 else local_selection
+    if type(buoy_id) != "string" or len(re.findall("^[A-Za-z0-9_-]{1,12}$", buoy_id)) == 0:
+        return render.Root(child = render.Text("Invalid buoy ID", color = "#FF0000"))
 
     buoy_name = config.get("buoy_name", "")
     h_unit_pref = config.get("h_units", "feet")
@@ -595,7 +598,7 @@ def main(config):
     min_size = config.get("min_size", "0")
 
     # ensure we have a valid numer for min_size
-    if len(re.findall("[0-9]+", min_size)) <= 0:
+    if type(min_size) != "string" or len(re.findall("^[0-9]+[.]?[0-9]*$", min_size)) == 0:
         min_size = "0"
 
     # CACHING FOR MAIN DATA OBJECT
@@ -627,6 +630,8 @@ def main(config):
 
                 # Custom cacheing determines if we have very stale data. Can't use http cache
                 cache.set(cache_key + "_usecache", '{"usecache":"true"}', ttl_seconds = 600)  # 10 minutes
+        else:
+            data = {"name": buoy_id, "error": "No Data"}
 
     if buoy_name == "" and "name" in data:
         debug_print("setting buoy_name to : " + data["name"])
@@ -818,7 +823,7 @@ def main(config):
             gust = "g" + str(gust)
 
         atemp = ""
-        if "ATMP" in data and config.get("display_temps") == "true":  # we have some room at the bottom for wtmp if desired
+        if "ATMP" in data and config.bool("display_temps", True):  # we have some room at the bottom for wtmp if desired
             at = data["ATMP"]
             if (t_unit_pref == "C"):
                 at = FtoC(at)
@@ -1190,38 +1195,6 @@ def main(config):
                 ),
             )
 
-def get_stations(location):
-    station_options = list()
-
-    #https://www.ndbc.noaa.gov/rss/ndbc_obs_search.php?lat=20.8911&lon=-156.5047
-    loc = json.decode(location)  # See example location above.
-    url = "https://www.ndbc.noaa.gov/rss/ndbc_obs_search.php?lat=%s&lon=%s" % (loc["lat"], loc["lng"])
-
-    #debug_print(url)
-    resp = http.get(url)
-    if resp.status_code != 200:
-        return []
-    else:
-        # channel/item/title
-        # parse Station KLIH1 - 1615680 - KAHULUI, KAHULUI HARBOR, HI
-
-        rss_titles = xpath.loads(resp.body()).query_all("/rss/channel/item/title")
-
-        #debug_print(rss_titles)
-        for rss_title in rss_titles:
-            matches = re.match(r"Station\ (\w+) \-\s+(.+)$", rss_title)
-
-            #debug_print(matches)
-            if len(matches) > 0:
-                #debug_print(matches[0][1] + " : " ,matches[0][0] )#+ matches[2])
-                station_options.append(
-                    schema.Option(
-                        display = matches[0][0],
-                        value = matches[0][1],
-                    ),
-                )
-    return station_options
-
 def get_schema():
     h_unit_options = [
         schema.Option(display = "feet", value = "feet"),
@@ -1236,12 +1209,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Text(
                 id = "local_buoy_id",
-                name = "Local Buoy",
+                name = "Legacy Local Buoy",
                 icon = "monument",
-                desc = "Location Based Buoys",
-                handler = get_stations,
+                desc = "Existing location selection; new users should enter a NOAA station below",
+                default = '{"display": "Station 51213 - South Lanai", "value": "51213"}',
             ),
             schema.Text(
                 id = "buoy_id",

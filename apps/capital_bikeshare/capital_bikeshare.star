@@ -5,50 +5,56 @@ Description: Reports the number of eBikes and normal bikes available at a given 
 Author: abrahamrowe
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
+STATION_INFORMATION_URL = "https://gbfs.lyft.com/gbfs/2.3/dca-cabi/en/station_information.json"
+STATION_STATUS_URL = "https://gbfs.lyft.com/gbfs/2.3/dca-cabi/en/station_status.json"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_STATIONS = 2500
+
+def get_stations(url):
+    response = http.get(url, ttl_seconds = 60)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return []
+    data = json.decode(body, None)
+    if type(data) != "dict" or type(data.get("data")) != "dict" or type(data["data"].get("stations")) != "list":
+        return []
+    return data["data"]["stations"][:MAX_STATIONS]
+
+def render_error(message):
+    return render.Root(child = render.WrappedText(message, align = "center", width = 64))
+
 def main(config):
     defaultStationName = "Montello Ave & Holbrook Terr NE"
-    stationName = config.str("bikeShareName", defaultStationName)
-    stationID = "c645ddde-0156-47ab-9616-3121f541a6f0"
-    stationInformationURL = "https://gbfs.capitalbikeshare.com/gbfs/en/station_information.json"
-    stationStatusURL = "https://gbfs.lyft.com/gbfs/1.1/dca-cabi/en/station_status.json"
-
-    stationInformation = http.get(stationInformationURL, ttl_seconds = 240)  # cache for 4 minutes
-    if stationInformation.status_code != 200:
-        fail("Capital Bikeshare request failed with status %d", stationInformation.status_code)
-
-    # for development purposes: check if result was served from cache or not
-    if stationInformation.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling Capital Bikeshare API.")
-
-    stationStatus = http.get(stationStatusURL, ttl_seconds = 240)  # cache for 4 minutes
-
-    if stationStatus.status_code != 200:
-        fail("Capital Bikeshare request failed with status %d", stationInformation.status_code)
-
-    # for development purposes: check if result was served from cache or not
-    if stationStatus.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling Capital Bikeshare API.")
+    stationName = config.str("bikeShareName", defaultStationName)[:160]
+    stationID = ""
 
     # identify the correct station_id
-
-    for item in stationInformation.json()["data"]["stations"]:
-        if item["name"] == stationName:
-            stationID = item["station_id"]
+    for item in get_stations(STATION_INFORMATION_URL):
+        if type(item) == "dict" and item.get("name") == stationName:
+            stationID = str(item.get("station_id") or "")
+            break
+    if not stationID:
+        return render_error("Station not found")
 
     numberBikes = 0
     numberEBikes = 0
-    for item in stationStatus.json()["data"]["stations"]:
-        if item["station_id"] == stationID:
-            numberBikes = item["num_bikes_available"]
-            numberEBikes = item["num_ebikes_available"]
+    stationFound = False
+    for item in get_stations(STATION_STATUS_URL):
+        if type(item) == "dict" and str(item.get("station_id") or "") == stationID:
+            total = item.get("num_bikes_available")
+            electric = item.get("num_ebikes_available")
+            if type(total) == "int" and type(electric) == "int":
+                numberEBikes = max(0, electric)
+                numberBikes = max(0, total - numberEBikes)
+                stationFound = True
+            break
+    if not stationFound:
+        return render_error("Status unavailable")
 
     return render.Root(
         child = render.Column(

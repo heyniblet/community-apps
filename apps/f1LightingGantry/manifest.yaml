@@ -4,9 +4,9 @@ name: F1 Lighting Gantry
 summary: F1 Starting Lights
 desc: Displays starting light countdown to a race.
 author: Robert Ison
-fileName: f1LightingGantry.star
+fileName: f1lightinggantry.star
 packageName: f1LightingGantry
-recommendedInterval: 1
+recommendedInterval: 0
 supports2x: true
 category: sports
 tags:

@@ -22,27 +22,38 @@ def main(config):
     nowISO = now.format("2006-01-02T15:04:05Z")
     #2024-04-15T13:19:00Z
 
-    OCTOPUS_AGILE_URL = "https://api.octopus.energy/v1/products/" + config.str("PROD_CODE", DEFAULT_PROD_CODE) + "/electricity-tariffs/" + config.str("TARIFF_CODE", DEFAULT_TARIFF_CODE) + "/standard-unit-rates/?period_from=" + nowISO
+    product_code = config.str("PROD_CODE", DEFAULT_PROD_CODE)
+    tariff_code = config.str("TARIFF_CODE", DEFAULT_TARIFF_CODE)
+    if not valid_code(product_code) or not valid_code(tariff_code):
+        product_code = DEFAULT_PROD_CODE
+        tariff_code = DEFAULT_TARIFF_CODE
+    OCTOPUS_AGILE_URL = "https://api.octopus.energy/v1/products/" + product_code + "/electricity-tariffs/" + tariff_code + "/standard-unit-rates/?period_from=" + nowISO
 
-    octo = http.get(OCTOPUS_AGILE_URL)
+    octo = http.get(OCTOPUS_AGILE_URL, ttl_seconds = 1800)
 
     if octo.status_code != 200:
-        fail(nowISO + octo.body())
+        fail("Octopus Energy request failed with status %d" % octo.status_code)
 
+    body = octo.body()
+    if not body or len(body) > 1048576:
+        fail("Octopus Energy returned an invalid response")
     data = octo.json()
-    count = data["count"]
-    count = int(count) - 1
-    nextRate = data["results"][count]["value_inc_vat"]
+    results = data.get("results", []) if type(data) == "dict" else []
+    if type(results) != "list" or not results or type(results[-1]) != "dict" or type(results[-1].get("value_inc_vat")) not in ["int", "float"]:
+        fail("Octopus Energy returned no current rate")
+    nextRate = results[-1]["value_inc_vat"]
+
+    plunge = threshold(config.str("PLUNGE_NUMBER", "1"), 1)
+    good = threshold(config.str("GOOD_NUMBER", "4"), 4)
+    bad = threshold(config.str("BAD_NUMBER", "17"), 17)
 
     color = "#FFF"
 
-    if nextRate < int(config.str("PLUNGE_NUMBER", "1")):
+    if nextRate < plunge:
         color = config.str("PLUNGE_COLOUR", "#A3BE8C")
-
-    if nextRate < int(config.str("GOOD_NUMBER", "4")):
+    elif nextRate < good:
         color = config.str("GOOD_COLOUR", "#81A1C1")
-
-    if nextRate > int(config.str("BAD_NUMBER", "17")):
+    elif nextRate > bad:
         color = config.str("BAD_COLOUR", "#BF616A")
 
     return render.Root(
@@ -66,6 +77,14 @@ def main(config):
             ),
         ),
     )
+
+def valid_code(value):
+    return value and len(value) <= 80 and all([char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for char in value.codepoints()])
+
+def threshold(value, fallback):
+    value = value.strip()
+    unsigned = value[1:] if value.startswith("-") else value
+    return int(value) if unsigned and len(value) <= 8 and unsigned.isdigit() else fallback
 
 def get_schema():
     return schema.Schema(

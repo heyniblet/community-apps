@@ -10,6 +10,7 @@ Author: tomzorz
 # TODO:
 # - add error return to meta
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("math.star", "math")
 load("render.star", "render")
@@ -22,8 +23,7 @@ load("time.star", "time")
 
 DEFAULT_STOP_ID = "F00189"
 
-CACHE_TIMEOUT = 60  # will display inaccurate on-time performance if not 60 seconds.
-WEEK_CACHE_TIMEOUT = 60 * 60 * 24 * 7
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 # https://editor.swagger.io/?url=https://opendata.bkk.hu/docs/futar-openapi.yaml
 # https://futar.bkk.hu/stop/BKK_F04039?routeIds=%7CBKK_3420
@@ -42,98 +42,86 @@ def to_hex(i):
         hex = "0" + hex
     return hex
 
-def get_meta(api_key, trip_id):
-    url = (
-        "https://futar.bkk.hu/api/query/v1/ws/otp/api/where/trip-details.json?key=" +
-        api_key +
-        "&version=3&includeReferences=true&tripId=" +
-        trip_id
-    )
-    print(url)
-    rep = http.get(url, headers = request_headers, ttl_seconds = WEEK_CACHE_TIMEOUT)
-    if rep.status_code != 200:
-        fail("BKK API request failed with status %d", rep.status_code)
-    trip_data = rep.json()
-    if "vehicle" in trip_data["data"]["entry"]:
-        cached_route = trip_data["data"]["entry"]["vehicle"]["routeId"]
-        cached_color = trip_data["data"]["entry"]["vehicle"]["style"]["icon"]["color"]
-        cached_color2 = trip_data["data"]["entry"]["vehicle"]["style"]["icon"]["secondaryColor"]
-    else:
-        # ref_key = trip_data["data"]["references"]["routes"].keys()[0]
-        trip_key = trip_data["data"]["references"]["trips"].keys()[0]
-        print("trips: " + str(len(trip_data["data"]["references"]["trips"].keys())))
-        ref_key = trip_data["data"]["references"]["trips"][trip_key]["routeId"]
-        cached_route = trip_data["data"]["references"]["routes"][ref_key]["id"]
-        cached_color = trip_data["data"]["references"]["routes"][ref_key]["style"]["vehicleIcon"]["color"]
-        cached_color2 = trip_data["data"]["references"]["routes"][ref_key]["style"]["vehicleIcon"]["secondaryColor"]
-    print("Cached route id " + cached_route)
-    print("Cached route color " + cached_color)
-    print("Cached route color 2 " + cached_color2)
+def safe_hex(value, fallback):
+    value = str(value or "").lstrip("#").lower()
+    if len(value) != 6:
+        return fallback
+    for char in value.elems():
+        if char not in "0123456789abcdef":
+            return fallback
+    return value
 
-    route_id = cached_route
-
-    url = (
-        "https://futar.bkk.hu/api/query/v1/ws/otp/api/where/route-details.json?key=" +
-        api_key +
-        "&version=3&includeReferences=true&routeId=" +
-        route_id
-    )
-    rep = http.get(url, headers = request_headers, ttl_seconds = WEEK_CACHE_TIMEOUT)
-    if rep.status_code != 200:
-        fail("BKK API request failed with status %d", rep.status_code)
-    route_data = rep.json()
-    cached_short_name = route_data["data"]["entry"]["shortName"]
-
-    print("Cached short name " + cached_short_name)
-
+def get_meta(references, trip_id):
+    trips = references.get("trips", {}) if type(references) == "dict" else {}
+    routes = references.get("routes", {}) if type(references) == "dict" else {}
+    trip = trips.get(trip_id, {}) if type(trips) == "dict" else {}
+    route = routes.get(trip.get("routeId"), {}) if type(routes) == "dict" and type(trip) == "dict" else {}
+    style = route.get("style", {}) if type(route) == "dict" else {}
+    icon = style.get("vehicleIcon", {}) if type(style) == "dict" else {}
     return {
-        "name": cached_short_name,
-        "color": cached_color,
-        "secondaryColor": cached_color2,
+        "name": str(route.get("shortName") or "?")[:12] if type(route) == "dict" else "?",
+        "color": safe_hex(icon.get("color") if type(icon) == "dict" else None, "303030"),
+        "secondaryColor": safe_hex(icon.get("secondaryColor") if type(icon) == "dict" else None, "ffffff"),
     }
 
+def render_error(message):
+    return render.Root(child = render.WrappedText(content = message, width = 62, align = "center", color = "#ff6666"))
+
 def main(config):
-    API_KEY = config.get("api_key")
+    API_KEY = (config.get("api_key") or "").strip()
 
     if API_KEY == None or API_KEY == "":
-        return render.Root(child = render.Text(content = "No API Key provided."))
+        return render_error("Add a BKK API key")
 
-    config_stop = "BKK_" + config.get("stop_id", DEFAULT_STOP_ID)
+    stop_id = (config.get("stop_id", DEFAULT_STOP_ID) or DEFAULT_STOP_ID).strip()[:32]
+    config_stop = stop_id if stop_id.startswith("BKK_") else "BKK_" + stop_id
 
     timezone = config.get("timezone") or "Europe/Budapest"
+    if not time.is_valid_timezone(timezone):
+        timezone = "Europe/Budapest"
     now = time.now().in_location(timezone)
 
     # today_date = now.format("20060102")
     epoch = now.unix
 
-    print("Calling BKK API.")  # TODO remove debug
-    url = (
-        "https://futar.bkk.hu/api/query/v1/ws/otp/api/where/arrivals-and-departures-for-stop.json?key=" +
-        API_KEY +
-        "&version=3&includeReferences=true&stopId=" +
-        config_stop +
-        "&onlyDepartures=true&limit=50&minutesBefore=0&minutesAfter=60"
+    url = "https://futar.bkk.hu/api/query/v1/ws/otp/api/where/arrivals-and-departures-for-stop.json"
+    rep = http.get(
+        url,
+        headers = request_headers,
+        params = {
+            "key": API_KEY,
+            "version": "3",
+            "includeReferences": "true",
+            "stopId": config_stop,
+            "onlyDepartures": "true",
+            "limit": "8",
+            "minutesBefore": "0",
+            "minutesAfter": "60",
+        },
     )
-    print(url)  # TODO remove debug
-    rep = http.get(url, headers = request_headers, ttl_seconds = CACHE_TIMEOUT)
     if rep.status_code != 200:
-        fail("BKK API request failed with status %d", rep.status_code)
-    stop_data = rep.json()
-
-    # print(stop_data) # TODO remove debug
+        return render_error("BKK API unavailable ({})".format(rep.status_code))
+    body = rep.body()
+    stop_data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    data = stop_data.get("data", {}) if type(stop_data) == "dict" else {}
+    entry = data.get("entry", {}) if type(data) == "dict" else {}
+    references = data.get("references", {}) if type(data) == "dict" else {}
+    stop_times = entry.get("stopTimes", []) if type(entry) == "dict" else []
 
     all_departures = []
-    for stop_time in stop_data["data"]["entry"]["stopTimes"][:8]:
-        meta = get_meta(API_KEY, stop_time["tripId"])
-        print(meta["name"] + " " + stop_time["stopHeadsign"])
-        time_diff = stop_time["departureTime"] - epoch
+    for stop_time in stop_times[:8]:
+        if type(stop_time) != "dict":
+            continue
+        meta = get_meta(references, stop_time.get("tripId"))
+        departure_time = stop_time.get("predictedDepartureTime") or stop_time.get("departureTime") or 0
+        time_diff = departure_time - epoch
         if time_diff > 0:
             all_departures.append(
                 {
                     "number": meta["name"],
                     "color": meta["color"],
                     "secondaryColor": meta["secondaryColor"] or "ffffff",
-                    "name": stop_time["stopHeadsign"],
+                    "name": str(stop_time.get("stopHeadsign") or "Unknown destination")[:120],
                     "time": str(int(math.round(time_diff / 60))),
                 },
             )

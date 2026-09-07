@@ -5,6 +5,7 @@ Description: Show real time departures for desired  Public Transport stops in Vi
 Author: Lukas Peer
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/wl_icon_8_x_8.png", WL_ICON_8_X_8_ASSET = "file")
 load("render.star", "render")
@@ -20,13 +21,22 @@ DEFAULT_SWITCH_SPEED = "5000"
 
 # Execute API request for given stopps (stopIDs) and store data in lists
 def get_data(stopps):
+    stopps = [stop for stop in stopps if stop.isdigit()][:20]
+    if not stopps:
+        fail("Enter numeric Wiener Linien stop IDs")
     BASE_URL = "https://www.wienerlinien.at/ogd_realtime/monitor?stopId="
     WL_API_URL = BASE_URL + ",".join(stopps)
 
     rep = http.get(WL_API_URL, ttl_seconds = 30)
     if rep.status_code != 200:
         fail("WL request failed with status %d", rep.status_code)
-    n_monitors = len(rep.json()["data"]["monitors"])
+    body = rep.body()
+    response = json.decode(body, {}) if body and len(body) <= 1024 * 1024 else {}
+    monitors = response.get("data", {}).get("monitors", []) if type(response) == "dict" else []
+    monitors = monitors[:100] if type(monitors) == "list" else []
+    n_monitors = len(monitors)
+    if n_monitors == 0:
+        fail("No Wiener Linien departures found")
     linien = []
     haltestellen = []
     endstationen = []
@@ -34,21 +44,29 @@ def get_data(stopps):
 
     # get data for every available monitor
     for i in range(n_monitors):
-        linien.append(rep.json()["data"]["monitors"][i]["lines"][0]["name"])
-        haltestellen.append(rep.json()["data"]["monitors"][i]["locationStop"]["properties"]["title"])
-        endstationen.append(rep.json()["data"]["monitors"][i]["lines"][0]["towards"])
+        monitor = monitors[i]
+        lines = monitor.get("lines", []) if type(monitor) == "dict" else []
+        if not lines or type(lines[0]) != "dict":
+            continue
+        line = lines[0]
+        departures = line.get("departures", {}).get("departure", [])
+        if type(departures) != "list" or not departures:
+            continue
+        linien.append(str(line.get("name", "?"))[:12])
+        haltestellen.append(str(monitor.get("locationStop", {}).get("properties", {}).get("title", "Unknown"))[:80])
+        endstationen.append(str(line.get("towards", "Unknown"))[:80])
 
-        n_abfahrten_available = len(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"])
+        n_abfahrten_available = len(departures)
         n_abfahrten_shown = min(2, n_abfahrten_available)
 
         # Sometimes, if there is only one more departure for the day, only one departure time is shown
         # Hence, the necessary distinction to avoid out of bounds errors
         if n_abfahrten_shown == 2:
-            af1 = str(int(float(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"][0]["departureTime"]["countdown"])))
-            af2 = str(int(float(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"][1]["departureTime"]["countdown"])))
+            af1 = str(int(float(departures[0].get("departureTime", {}).get("countdown", 0))))
+            af2 = str(int(float(departures[1].get("departureTime", {}).get("countdown", 0))))
             out = af1 + " " + af2
         else:
-            out = str(int(float(rep.json()["data"]["monitors"][i]["lines"][0]["departures"]["departure"][0]["departureTime"]["countdown"])))
+            out = str(int(float(departures[0].get("departureTime", {}).get("countdown", 0))))
 
         abfahrten.append(out)
 
@@ -59,7 +77,9 @@ def get_data(stopps):
     haltestellen = [s.upper() for s in haltestellen]
     endstationen = [s.strip() for s in endstationen]
     endstationen = [s.title() for s in endstationen]
-    data = [linien, haltestellen, endstationen, abfahrten, n_monitors]
+    if not linien:
+        fail("No Wiener Linien departures found")
+    data = [linien, haltestellen, endstationen, abfahrten, len(linien)]
     return data
 
 def build_rows(linien, haltestellen, endstationen, abfahrten, linien_colors):
@@ -225,82 +245,37 @@ def get_linien_colors(linien):
 
     return linien_colors
 
-# Gets all available Stopps of the Wiener Linien
-def get_all_haltestellen():
-    # get all stopps
-    # This can be cached for a week as the stopps are not expected to change
-    haltestellen = http.get("https://www.wienerlinien.at/ogd_realtime/doku/ogd/wienerlinien-ogd-haltepunkte.csv", ttl_seconds = 86400 * 7).body()
-
-    # tidy up the data
-    # data = [line.split(";") for line in haltestellen.strip().split("\r\n")]
-    # columns = data[0]
-    # rows = data[1:]
-
-    # create a dictionary that stores all stopIDs for each haltestelle
-    haltestellen_dict = {}
-
-    for line in haltestellen.strip().split("\r\n"):
-        columns = line.split(";")
-        stopID = columns[0]
-        diva = columns[1]
-        haltestelle = columns[2]
-        municipality = columns[3]
-
-        # Some stopps are unnecessary or flawed
-        if municipality != "Wien" or haltestelle == "" or diva == "" or haltestelle == "A2":
-            continue
-
-        if haltestelle not in haltestellen_dict:
-            haltestellen_dict[haltestelle] = set()
-
-        haltestellen_dict[haltestelle].add(stopID)
-
-    # Sort dictionary alphabetically and add 'Keine' option
-    haltestellen_dict = dict(sorted(haltestellen_dict.items(), key = lambda item: item[0]))
-    haltestellen_dict["Keine"] = set()
-    haltestellen_dict["Keine"].add(" ")
-
-    # Create and return schema Options
-    haltestellenOptions = [schema.Option(display = haltestellen_dict.keys()[i], value = ",".join(haltestellen_dict[haltestellen_dict.keys()[i]])) for i in range(len(haltestellen_dict))]
-    return haltestellenOptions
-
 def get_schema():
-    haltestellenOptions = get_all_haltestellen()
-
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps1",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "Stop IDs",
+                desc = "Comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = "4111,4118,4906,4911",  # Stephansplatz
-                options = haltestellenOptions,
             ),
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps2",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "More stop IDs",
+                desc = "Optional comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = " ",
-                options = haltestellenOptions,
             ),
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps3",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "More stop IDs",
+                desc = "Optional comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = " ",
-                options = haltestellenOptions,
             ),
-            schema.Dropdown(
+            schema.Text(
                 id = "stopps4",
-                name = "Haltestellen",
-                desc = "Welche Haltestellen sollen angezeigt werden?",
+                name = "More stop IDs",
+                desc = "Optional comma-separated Wiener Linien stop IDs.",
                 icon = "train",
                 default = " ",
-                options = haltestellenOptions,
             ),
             schema.Dropdown(
                 id = "switch_speed",

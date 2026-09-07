@@ -5,108 +5,111 @@ Description: Gets the emblem, race, class, and light level of your most recently
 Author: brandontod97
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/error.png", ERROR_IMAGE = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 API_BASE_URL = "https://www.bungie.net/platform"
 API_USER_PROFILE = API_BASE_URL + "/User/GetBungieNetUserById/"
 API_SEARCH_BUNGIE_ID = API_BASE_URL + "/User/Search/GlobalName/0/"
 API_SEARCH_BUNGIE_ID_NAME = API_BASE_URL + "/Destiny2/SearchDestinyPlayerByBungieName/-1/"
+MAX_RESPONSE_BYTES = 512 * 1024
+
+def message(title, detail):
+    return render.Root(
+        child = render.Column(
+            main_align = "center",
+            cross_align = "center",
+            expanded = True,
+            children = [render.Text(title, color = "#fff"), render.Text(detail, color = "#888")],
+        ),
+    )
+
+def response_json(response):
+    body = response.body()
+    return json.decode(body, None) if len(body) <= MAX_RESPONSE_BYTES else None
+
+def safe_text(value, maximum):
+    return value.strip() if type(value) == "string" and value.strip() and len(value) <= maximum else None
+
+def safe_api_key(value):
+    return value if type(value) == "string" and len(value) >= 1 and len(value) <= 512 and "\r" not in value and "\n" not in value else None
 
 def main(config):
-    display_name = config.get("display_name")
-    display_name_code = config.get("display_name_code")
+    display_name = safe_text(config.get("display_name"), 64)
+    display_name_code = safe_text(config.get("display_name_code"), 8)
     show_id = config.bool("show_id", False)
-    displayed_character = ""
-
-    api_key = config.get("api_key")
-
-    print("No cached data. Hitting API")
-
-    bungie_membership_id = ""
-    bungie_membership_type = ""
-
-    if api_key == None or display_name == None or display_name_code == None:
-        api_key = "null value"
-        display_name = "null value"
-        display_name_code = "null value"
+    api_key = safe_api_key(config.get("api_key"))
+    if not api_key or not display_name or not display_name_code:
+        return message("Destiny 2", "Setup required")
+    if not re.match(r"^[0-9]{1,8}$", display_name_code):
+        return message("Destiny 2", "Invalid ID")
 
     apiResponse = http.post(
         API_SEARCH_BUNGIE_ID_NAME,
         headers = {"X-API-Key": api_key},
-        json_body = {"displayName": display_name, "displayNameCode": display_name_code},
+        json_body = {"displayName": display_name, "displayNameCode": int(display_name_code)},
     )
+    search_payload = response_json(apiResponse)
+    matches = search_payload.get("Response", []) if type(search_payload) == "dict" else []
+    match = matches[0] if type(matches) == "list" and matches and type(matches[0]) == "dict" else {}
+    membership_id = match.get("membershipId")
+    membership_type = match.get("membershipType")
+    if type(membership_id) != "string" or not re.match(r"^[0-9]{1,32}$", membership_id) or type(membership_type) != "int" or membership_type < 0 or membership_type > 255:
+        return message("Invalid API", "or Bungie ID")
 
-    if apiResponse.json()["ErrorStatus"] == "ApiInvalidOrExpiredKey" or len(apiResponse.json()["Response"]) == 0:
-        return render.Root(
-            child = render.Column(
-                main_align = "center",
-                expanded = True,
-                children = [
-                    render.Box(
-                        height = 8,
-                        child = render.Text("Invalid API"),
-                    ),
-                    render.Box(
-                        height = 8,
-                        child = render.Text("or"),
-                    ),
-                    render.Box(
-                        height = 8,
-                        child = render.Text("Invalid ID"),
-                    ),
-                ],
-            ),
-        )
-    else:
-        print("Recieved valid response")
-        bungie_membership_id = apiResponse.json()["Response"][0]["membershipId"]
-        bungie_membership_type = apiResponse.json()["Response"][0]["membershipType"]
+    profile_response = http.get(
+        API_BASE_URL + "/Destiny2/" + str(membership_type) + "/Profile/" + membership_id + "/",
+        params = {"components": "Characters"},
+        headers = {"X-API-Key": api_key},
+    )
+    profile_payload = response_json(profile_response) if profile_response.status_code == 200 else None
+    profile = profile_payload.get("Response", {}) if type(profile_payload) == "dict" else {}
+    characters = profile.get("characters", {}) if type(profile) == "dict" else {}
+    character_data = characters.get("data", {}) if type(characters) == "dict" else {}
+    displayed_character = get_last_played_character(character_data)
+    if not displayed_character:
+        return message("Destiny 2", "No character")
 
-        apiMembershipInfo = http.get(
-            API_BASE_URL + "/Destiny2/" + str(int(bungie_membership_type)) + "/Profile/" + bungie_membership_id + "/",
-            params = {"components": "Characters"},
-            headers = {"X-API-Key": api_key},
-            ttl_seconds = 300,
-        )
-
-        displayed_character = apiMembershipInfo.json()["Response"]["characters"]["data"][get_last_played_character(apiMembershipInfo.json()["Response"]["characters"]["data"])]
-
-    image = get_image("https://www.bungie.net" + displayed_character["emblemPath"])
+    image = get_image(displayed_character["emblemPath"])
 
     #TODO: Clean this up and send dictionary of values instead of all the needed values separately
     return get_view(show_id, image, displayed_character, display_name, display_name_code)
 
 def get_last_played_character(characters_list):
-    most_recent_character = {
-        "id": "",
-        "date": time.parse_time("1999-01-01T00:01:00.00Z"),
-    }
+    if type(characters_list) != "dict" or len(characters_list) > 16:
+        return None
+    most_recent = None
+    most_recent_date = ""
+    for character in characters_list.values():
+        if type(character) != "dict":
+            continue
+        played = character.get("dateLastPlayed")
+        emblem = character.get("emblemPath")
+        race = character.get("raceType")
+        character_class = character.get("classType")
+        light = character.get("light")
+        if type(played) != "string" or len(played) > 40 or type(emblem) != "string" or len(emblem) > 256:
+            continue
+        if not emblem.startswith("/common/destiny2_content/icons/") or not re.match(r"^/[A-Za-z0-9_./-]+$", emblem):
+            continue
+        if type(race) != "int" or type(character_class) != "int" or type(light) not in ["int", "float"] or light < 0 or light > 10000:
+            continue
+        if played > most_recent_date:
+            most_recent = {"dateLastPlayed": played, "emblemPath": emblem, "raceType": race, "classType": character_class, "light": light}
+            most_recent_date = played
+    return most_recent
 
-    for character in characters_list:
-        parsed_date = time.parse_time(characters_list[character]["dateLastPlayed"])
-
-        if (parsed_date > most_recent_character["date"]):
-            most_recent_character["date"] = parsed_date
-            most_recent_character["id"] = character
-
-    return most_recent_character["id"]
-
-def get_image(url):
-    if url:
-        print("Getting " + url)
-        response = http.get(url)
-
-        if response.status_code == 200:
-            return response.body()
-        else:
-            return ERROR_IMAGE.readall()
-
-    # Should never get here.
-    return ""
+def get_image(path):
+    response = http.get("https://www.bungie.net" + path)
+    body = response.body()
+    content_type = response.headers.get("Content-Type", "")
+    if response.status_code == 200 and len(body) <= MAX_RESPONSE_BYTES and content_type.startswith("image/"):
+        return body
+    return ERROR_IMAGE.readall()
 
 def get_character_class(class_value):
     class_value = int(class_value)

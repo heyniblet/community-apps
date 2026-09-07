@@ -5,6 +5,7 @@ Description: Shows how many satoshis for 1 USD.
 Author: PMK (@pmk)
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/background.gif", BACKGROUND_ASSET = "file")
 load("render.star", "render")
@@ -13,6 +14,7 @@ load("schema.star", "schema")
 BACKGROUND = BACKGROUND_ASSET.readall()
 
 DEFAULT_SHOW_MSAT = False
+MAX_RESPONSE_BYTES = 64 * 1024
 
 def get_data(ttl_seconds = 60 * 5):
     url = "https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=sats"
@@ -20,15 +22,17 @@ def get_data(ttl_seconds = 60 * 5):
     if response.status_code != 200:
         print("Coingecko request failed with status %d" % response.status_code)
         return None
-    json = response.json()
-    return json["tether"]["sats"]
+    body = response.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    value = data.get("tether", {}).get("sats") if type(data) == "dict" else None
+    return value if type(value) in ["int", "float"] and value >= 0 else None
 
 def print_moscowtime(show_msat = DEFAULT_SHOW_MSAT):
     data = get_data()
     if data == None:
         return [render.Text("Error")]
     sats = str(int(data // 1))
-    msat = str(int((data % 1) * 100)) if show_msat else 0
+    msat = int((data % 1) * 100) if show_msat else 0
 
     moscowtime = [render.Text(sats)]
     if (msat != 0):
@@ -40,7 +44,7 @@ def print_moscowtime(show_msat = DEFAULT_SHOW_MSAT):
                 ],
             ),
         )
-        moscowtime.append(render.Text(msat))
+        moscowtime.append(render.Text(str(msat)))
     return moscowtime
 
 def main(config):

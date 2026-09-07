@@ -3,11 +3,11 @@
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-API_KEY = ""  # Set by user in configuration
 AGENCY = "SF"
 PER_LINE = 3
 
@@ -97,15 +97,22 @@ def _mins_until(now, iso_ts):
     return 0 if diff <= 0 else int((diff + 30) / 60)
 
 def _get_visits(data):
-    sd = data.get("ServiceDelivery") or ((data.get("Siri") or {}).get("ServiceDelivery"))
-    if sd == None:
+    if type(data) != "dict":
+        return []
+    sd = data.get("ServiceDelivery")
+    if type(sd) != "dict":
+        siri = data.get("Siri") if type(data.get("Siri")) == "dict" else {}
+        sd = siri.get("ServiceDelivery")
+    if type(sd) != "dict":
         return []
     smd = sd.get("StopMonitoringDelivery")
     if smd == None:
         return []
     smd0 = smd[0] if (type(smd) == "list" and len(smd) > 0) else (smd if type(smd) != "list" else {})
+    if type(smd0) != "dict":
+        return []
     v = smd0.get("MonitoredStopVisit")
-    return v if v != None else []
+    return v if type(v) == "list" else []
 
 # ---------- visuals ----------
 def _is_rail(code):
@@ -189,8 +196,10 @@ def _get_stop_name(stop_code, api_key):
         return "UNKNOWN"
 
     # Get stop info from the API
-    url = "https://api.511.org/transit/stops?api_key=" + api_key + "&operator_id=" + AGENCY + "&format=xml"
+    url = "https://api.511.org/transit/stops?api_key=" + humanize.url_encode(api_key) + "&operator_id=" + AGENCY + "&format=xml"
     resp = http.get(url, ttl_seconds = 300)  # Cache for 5 minutes
+    if resp.status_code != 200:
+        return str(stop_code)
     body = resp.body() or ""
 
     # Look for our specific stop in the XML
@@ -217,12 +226,12 @@ def _process_visits(visits, route_filter, now):
 
     # Process all visits using functional approach
     def process_visit(visit):
-        mvj = visit.get("MonitoredVehicleJourney") if visit else None
-        if mvj == None:
+        mvj = visit.get("MonitoredVehicleJourney") if type(visit) == "dict" else None
+        if type(mvj) != "dict":
             return None
 
-        code = mvj.get("LineRef")
-        label = code if (code != None and code != "") else (mvj.get("PublishedLineName") or "?")
+        code = str(mvj.get("LineRef") or "")
+        label = code if code != "" else str(mvj.get("PublishedLineName") or "?")
 
         # Apply route filter (no more "ALL" option)
         if rf != "":
@@ -230,7 +239,7 @@ def _process_visits(visits, route_filter, now):
                 return None
 
         call = mvj.get("MonitoredCall")
-        if call == None:
+        if type(call) != "dict":
             return None
 
         etd = call.get("ExpectedDepartureTime")
@@ -285,21 +294,28 @@ def _process_visits(visits, route_filter, now):
     return group_by_label(valid_results)
 
 def _fetch(stop_code, route_filter, api_key):
-    if not stop_code or not api_key:
+    stop_code = str(stop_code or "")
+    route_filter = str(route_filter or "")
+    api_key = str(api_key or "")
+    if not _valid_stop(stop_code) or not api_key:
         return {"ok": False, "line": "?", "labels": ["No", "Stop"], "stop_name": "NO STOP"}
 
     now = time.now()
 
     # StopMonitoring API uses JSON format
-    url = "https://api.511.org/transit/StopMonitoring?api_key=" + api_key + "&agency=" + AGENCY + "&stopCode=" + stop_code + "&format=json"
+    url = "https://api.511.org/transit/StopMonitoring?api_key=" + humanize.url_encode(api_key) + "&agency=" + AGENCY + "&stopCode=" + humanize.url_encode(stop_code) + "&format=json"
     resp = http.get(url, ttl_seconds = 30)
+    if resp.status_code != 200:
+        return {"ok": False, "line": route_filter or "?", "labels": ["API", str(resp.status_code)], "stop_name": stop_code, "direction": ""}
     body = resp.body() or ""
     i = body.find("{")
     if i < 0:
         return {"ok": False, "line": "?", "labels": ["No", "Data"], "stop_name": "ERROR"}
 
     # Parse JSON response
-    data = json.decode(body[i:])
+    data = json.decode(body[i:], None)
+    if type(data) != "dict":
+        return {"ok": False, "line": route_filter or "?", "labels": ["Bad", "Data"], "stop_name": stop_code, "direction": ""}
     visits = _get_visits(data)
 
     # Get the stop name using the XML-based stops API
@@ -322,6 +338,14 @@ def _fetch(stop_code, route_filter, api_key):
 
     # If no route filter specified, return no data
     return {"ok": False, "line": "?", "labels": ["No", "Filter"], "stop_name": stop_name, "direction": ""}
+
+def _valid_stop(value):
+    if len(value) < 4 or len(value) > 6:
+        return False
+    for ch in value.elems():
+        if ch < "0" or ch > "9":
+            return False
+    return True
 
 def _create_stop_name_widget(stop_name):
     """Create stop name widget with scrolling if needed"""
@@ -414,6 +438,8 @@ def _render_combo(stop_code, route_code, api_key):
 def main(config):
     # Get API key from config
     api_key = config.get("api_key") or ""
+    if type(api_key) != "string":
+        api_key = ""
 
     # Check if API key is provided
     if not api_key:

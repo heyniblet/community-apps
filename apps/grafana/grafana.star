@@ -12,11 +12,11 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-TTL_SECONDS = 300  # 5 minutes
 DEFAULT_GRAFANA_URL = ""
 DEFAULT_KEY = ""
 DEFAULT_INSTANCE = ""
-DEBUG = True  # Set to False to disable debug output
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_POINTS = 1000
 JSON_DUMMY_DATA = """{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"__name__":"node_load1","instance":"default","job":"integrations/node_exporter"},"values":[[1763712213,"0.06"],[1763712228,"0.06"],[1763712243,"0.13"],[1763712258,"0.13"],[1763712273,"0.13"],[1763712288,"0.13"],[1763712303,"0.41"],[1763712318,"0.41"],[1763712333,"0.41"],[1763712348,"0.41"],[1763712363,"0.27"],[1763712378,"0.27"],[1763712393,"0.27"],[1763712408,"0.27"],[1763712423,"0.3"],[1763712438,"0.3"],[1763712453,"0.3"],[1763712468,"0.3"],[1763712483,"0.19"],[1763712498,"0.19"],[1763712513,"0.19"]]}]}}"""
 YELLOW = "#ffff00"  # Firefly palette color
 GREEN = "#ADFF2F"  # Firefly palette color
@@ -29,7 +29,7 @@ def main(config):
     api_key = config.str("api_key", DEFAULT_KEY)
     instance = config.str("instance", DEFAULT_INSTANCE)
     metric = config.str("metric", "node_load1")
-    hours = int(config.get("hours_history", 24))
+    hours = bounded_int(config.get("hours_history", "24"), 24, 1, 168)
     display_graph = config.bool("display_graph")
     step_interval = config.str("step_interval", "1m")
 
@@ -94,15 +94,14 @@ def main(config):
 
             # print("points " + str(points))
             y_lim = (None, None)
-            min_max = config.get("y_min_max", None)
-            if min_max and "," in min_max:
-                (min, max) = min_max.split(",")
-                y_lim = (float(min), float(max))
+            min_max = parse_axis_range(config.get("y_min_max"))
+            if min_max:
+                y_lim = min_max
             feed_graph = render.Plot(
                 data = points,
                 width = 64,
                 height = 32,
-                color = config.str("graph_color", "#00c"),
+                color = safe_color(config.get("graph_color"), "#0000cc"),
                 y_lim = y_lim,
             )
 
@@ -116,15 +115,14 @@ def main(config):
 
             # print("points " + str(points))
             y2_lim = (None, None)
-            min_max = config.get("y2_min_max", None)
-            if min_max and "," in min_max:
-                (min, max) = min_max.split(",")
-                y2_lim = (float(min), float(max))
+            min_max = parse_axis_range(config.get("y2_min_max"))
+            if min_max:
+                y2_lim = min_max
             feed2_graph = render.Plot(
                 data = points,
                 width = 64,
                 height = 32,
-                color = config.str("graph2_color", "#00c"),
+                color = safe_color(config.get("graph2_color"), "#0000cc"),
                 y_lim = y2_lim,
             )
 
@@ -217,11 +215,13 @@ def get_metric_data(grafana_url, api_key, instance, metric, hours, need_time_ser
                 }
         return {"error": "No dummy data available"}
 
-    # Build Prometheus query with the user-specified metric
-    query = "%s{instance=\"%s\"}" % (metric, instance)
+    origin = grafana_origin(grafana_url)
+    if not origin:
+        return {"error": "Invalid Grafana URL"}
+    if not valid_token(api_key) or not valid_selector(instance) or not valid_metric(metric) or not valid_step(step_interval):
+        return {"error": "Invalid Grafana configuration"}
 
-    if DEBUG:
-        print("DEBUG: Query:", query)
+    query = "%s{instance=\"%s\"}" % (metric, instance)
 
     # If we need time series data (for graphs), use query_range
     # Otherwise use instant query which is faster
@@ -232,42 +232,29 @@ def get_metric_data(grafana_url, api_key, instance, metric, hours, need_time_ser
         start_time = end_time - (hours * 3600)
 
         # Query range endpoint for time series data
-        url = "https://%s/api/datasources/proxy/uid/grafanacloud-prom/api/v1/query_range?query=%s&start=%d&end=%d&step=%s" % (
-            grafana_url,
-            query,
-            start_time,
-            end_time,
-            step_interval,
-        )
+        url = origin + "/api/datasources/proxy/uid/grafanacloud-prom/api/v1/query_range"
+        params = {"query": query, "start": str(start_time), "end": str(end_time), "step": step_interval}
     else:
-        # Instant query endpoint for single value
-        url = "https://%s/api/datasources/proxy/uid/grafanacloud-prom/api/v1/query?query=%s" % (
-            grafana_url,
-            query,
-        )
-
-    if DEBUG:
-        print("DEBUG: Fetching metric from URL:", url)
-        print("DEBUG: Using Bearer token:", api_key[:10] + "..." if len(api_key) > 10 else api_key)
+        url = origin + "/api/datasources/proxy/uid/grafanacloud-prom/api/v1/query"
+        params = {"query": query}
 
     res = http.get(
         url,
+        params = params,
         headers = {"Authorization": "Bearer " + api_key},
-        ttl_seconds = TTL_SECONDS,
     )
 
     if res.status_code != 200:
-        if DEBUG:
-            print("DEBUG: API error - status code:", res.status_code)
         return {"error": "API returned status %d" % res.status_code}
 
-    data = res.json()
+    body = res.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return {"error": "API response too large"}
+    data = json.decode(body, {})
 
     if data.get("status") == "success" and "data" in data:
         results = data["data"].get("result", [])
         if not results:
-            if DEBUG:
-                print("DEBUG: No results found in response")
             return {"error": "No data returned for query"}
 
         # Get first result
@@ -276,7 +263,9 @@ def get_metric_data(grafana_url, api_key, instance, metric, hours, need_time_ser
         # Check if this is an instant query (single value) or range query (time series)
         if "value" in result:
             # Instant query returns: {"value": [timestamp, "value"]}
-            value = result["value"]
+            value = valid_point(result["value"])
+            if value == None:
+                return {"error": "Invalid value in result"}
             return {
                 "feed": {
                     "id": 1,
@@ -287,7 +276,7 @@ def get_metric_data(grafana_url, api_key, instance, metric, hours, need_time_ser
             }
         elif "values" in result:
             # Range query returns: {"values": [[timestamp, "value"], ...]}
-            values = result["values"]
+            values = [point for point in [valid_point(value) for value in result["values"][:MAX_POINTS]] if point != None] if type(result["values"]) == "list" else []
             if not values:
                 return {"error": "No values in result"}
 
@@ -309,13 +298,79 @@ def parse_range(range_str):
     Returns None if range_str is empty or invalid."""
     if not range_str:
         return None
-    if "-" in range_str:
+    if type(range_str) == "string" and "-" in range_str:
         parts = range_str.split("-")
         if len(parts) == 2:
-            if parts[0] and parts[1]:
-                # Use float() directly - if it fails, the app will show an error
-                return (float(parts[0]), float(parts[1]))
+            low = safe_float(parts[0])
+            high = safe_float(parts[1])
+            if low != None and high != None and low <= high:
+                return (low, high)
     return None
+
+def parse_axis_range(value):
+    parts = value.split(",") if type(value) == "string" else []
+    if len(parts) != 2:
+        return None
+    low = safe_float(parts[0])
+    high = safe_float(parts[1])
+    return (low, high) if low != None and high != None and low < high else None
+
+def safe_float(value):
+    if type(value) == "int" or type(value) == "float":
+        return float(value)
+    if type(value) != "string" or len(value) > 32:
+        return None
+    cleaned = value.strip()
+    unsigned = cleaned[1:] if cleaned.startswith("-") or cleaned.startswith("+") else cleaned
+    parts = unsigned.split(".")
+    if len(parts) > 2 or not "".join(parts) or any([char not in "0123456789" for char in "".join(parts).elems()]):
+        return None
+    return float(cleaned)
+
+def bounded_int(value, fallback, minimum, maximum):
+    if type(value) == "int":
+        parsed = value
+    elif type(value) == "string" and value.isdigit():
+        parsed = int(value)
+    else:
+        return fallback
+    return parsed if parsed >= minimum and parsed <= maximum else fallback
+
+def grafana_origin(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://") or any([char in value for char in [" ", "\t", "\r", "\n", "?", "#"]]):
+        return ""
+    parts = value.split("/", 3)
+    host = parts[2].lower() if len(parts) >= 3 else ""
+    if not host or "@" in host or ":" in host:
+        return ""
+    path = parts[3].strip("/") if len(parts) == 4 else ""
+    return "" if path else "https://" + host
+
+def valid_token(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 2048 and not any([char in value for char in ["\r", "\n"]])
+
+def valid_metric(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 128 and all([char.isalnum() or char in "_:" for char in value.elems()])
+
+def valid_selector(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 256 and not any([char in value for char in ["\"", "\\", "\r", "\n"]])
+
+def valid_step(value):
+    if type(value) != "string" or len(value) < 2 or len(value) > 8 or value[-1] not in "smhd":
+        return False
+    return value[:-1].isdigit() and int(value[:-1]) >= 1 and int(value[:-1]) <= 10000
+
+def valid_point(value):
+    if type(value) != "list" or len(value) != 2:
+        return None
+    timestamp = safe_float(value[0])
+    measurement = safe_float(value[1])
+    return [str(timestamp), str(measurement)] if timestamp != None and measurement != None else None
+
+def safe_color(value, fallback):
+    if type(value) == "string" and len(value) in [4, 7] and value.startswith("#") and all([char.lower() in "0123456789abcdef" for char in value[1:].elems()]):
+        return value
+    return fallback
 
 def is_in_range(value, range_tuple):
     """Check if a value is within the specified range.
@@ -332,7 +387,7 @@ def get_schema():
         schema.Text(
             id = "grafana_url",
             name = "Grafana Host",
-            desc = "Grafana hostname (e.g., tronbyt.grafana.net)",
+            desc = "Public HTTPS Grafana root URL (e.g., https://example.grafana.net)",
             icon = "server",
         ),
     )
@@ -342,6 +397,7 @@ def get_schema():
             name = "API Key",
             desc = "Grafana API Key or Service Account Token",
             icon = "key",
+            secret = True,
         ),
     )
     fields.append(

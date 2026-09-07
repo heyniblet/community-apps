@@ -2,7 +2,7 @@
 id: jellyfin-recently-added
 name: JellyfinRecentlyAdded
 summary: Display Jellyfin recently added
-desc: Displays recently added on Jellyfin server. Recommended to run Tronbyt on same network that hosts Jellyfin.
+desc: Displays recently added media from a Jellyfin server exposed through public HTTPS. Requires the Home Screen Sections plugin.
 author: noahpodgurski
 fileName: jellyfin_recently_added.star
 packageName: jellyfinrecentlyadded

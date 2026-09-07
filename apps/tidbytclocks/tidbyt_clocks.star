@@ -8,6 +8,7 @@ Author: rs7q5
 #Created 20230128 RIS
 #Last Modified 20230516 RIS
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("time.star", "time")
@@ -15,25 +16,39 @@ load("time.star", "time")
 BASE_URL = "https://api.tidbyt.com/v0/apps"
 FONT = "tom-thumb"
 DEFAULT_TIMEZONE = "America/New_York"
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_CLOCKS = 100
 
 def main():
     #get list of apps
     rep = http.get(url = BASE_URL, ttl_seconds = 3600)  #refresh list every hour
-    if rep.status_code != 200:
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         data = None
     else:
-        data = [(x["id"], (x["name"], x["description"])) for x in rep.json()["apps"]]
-        data = dict(data)
+        payload = json.decode(body, {})
+        apps = payload.get("apps", []) if type(payload) == "dict" else []
+        data = [] if type(apps) == "list" else None
+        if data != None:
+            for app in apps[:5000]:
+                if type(app) != "dict":
+                    continue
+                name = app.get("name")
+                description = app.get("description", "")
+                if type(name) == "string" and type(description) == "string":
+                    data.append((name[:100], description[:500]))
 
     #find the apps that have clock in the name or description
     if data == None:
         clock_list = ["Error getting list of apps!!!!"]  #error in getting data
     else:
         clock_list = []
-        for app_val in data.values():
+        for app_val in data:
             clock_logic = app_val[0].lower().rfind("clock") != -1 or app_val[1].lower().rfind("clock") != -1
             if clock_logic:
                 clock_list.append(app_val[0])  #get app name
+            if len(clock_list) >= MAX_CLOCKS:
+                break
 
     #get total number of clocks
     clock_cnt = "" if data == None else len(clock_list)
@@ -80,7 +95,7 @@ def main():
     )
     return render.Root(
         delay = 100,  #speed up scroll text
-        max_age = 120,
+        max_age = 60,
         show_full_animation = True,
         child = final_frame,
     )

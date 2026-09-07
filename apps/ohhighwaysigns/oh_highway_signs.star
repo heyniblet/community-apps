@@ -5,30 +5,22 @@ Description: Displays messages from overhead signs on Ohio highways.
 Author: noahcolvin
 """
 
-load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
 # get all data for entire state
 URL = "https://publicapi.ohgo.com/api/v1/digital-signs?sign-type=dms"
-CACHE_KEY = "ALL_SIGNS"
-SEARCH_RADIUS = 50  #miles
+MAX_RESPONSE_BYTES = 512 * 1024
 
 def main(config):
-    api_key = config.get("api_key")
-
-    sign_id = "101"
-    selected_location = config.str("sign_id") or '{"display": "", "value": "101"}'
-    selected_location = json.decode(selected_location)
-    if "value" in selected_location:
-        sign_id = selected_location["value"]
+    api_key = config.str("api_key", "")
+    sign_id = parse_sign_id(config.str("sign_id", "101"))
 
     favor_times = config.bool("favor_times") or False
 
     text = get_sign_text(api_key, sign_id, favor_times)
-    print(text)
-
     return render.Root(
         child = render.Column(
             expanded = True,
@@ -68,12 +60,12 @@ def get_schema():
                 icon = "key",
                 secret = True,
             ),
-            schema.LocationBased(
+            schema.Text(
                 id = "sign_id",
-                name = "Nearby Sign",
-                desc = "A list of signs near you.",
+                name = "Sign ID",
+                desc = "OHGO digital sign ID. Existing nearby-sign selections continue to work.",
                 icon = "rectangleList",
-                handler = get_signs,
+                default = "101",
             ),
             schema.Toggle(
                 id = "favor_times",
@@ -85,34 +77,23 @@ def get_schema():
         ],
     )
 
-def get_signs(location, config):
-    loc = json.decode(location)
-    url = "{}&radius={},{},{}".format(URL, loc["lat"], loc["lng"], SEARCH_RADIUS)
-
-    print("schema locations not cached")
-    places = http.get(url, headers = headers(config.get("api_key")), ttl_seconds = 300)
-    signs = places.json()
-
-    options = []
-
-    for sign in signs["results"]:
-        options.append(
-            schema.Option(
-                display = sign["location"],
-                value = sign["id"],
-            ),
-        )
-
-    return options
+def parse_sign_id(value):
+    value = value.strip()
+    if value.startswith("{"):
+        legacy_values = re.findall('"value"\\s*:\\s*"([^"\\\\]+)"', value)
+        value = legacy_values[0] if legacy_values else ""
+    return value if value and len(value) <= 64 else "101"
 
 def get_sign_text(api_key, sign_id, favor_times):
+    if not api_key:
+        return ["Add OHGO", "API key", "to begin"]
     signs = load_signs(api_key)
     sign = find_sign(signs, sign_id)
 
     if sign == None:
         return ["No", "Messages", "Available"]
 
-    messages = sign["messages"]
+    messages = sign.get("messages", [])
     message = select_message(messages, favor_times)
 
     if sign_is_mile_min(message):
@@ -127,15 +108,15 @@ def get_sign_text(api_key, sign_id, favor_times):
     return message
 
 def select_message(messages, favor_times):
-    if len(messages) == 0:
+    if type(messages) != "list" or len(messages) == 0:
         return ["No", "Messages", "Available"]
 
-    message0Split = messages[0].split("\r\n")
+    message0Split = message_lines(messages[0])
 
     if len(messages) == 1:
         return message0Split
 
-    message1Split = messages[1].split("\r\n")
+    message1Split = message_lines(messages[1])
 
     if favor_times:
         if sign_is_mile_min(message0Split) or sign_is_time_via(message0Split):
@@ -145,6 +126,10 @@ def select_message(messages, favor_times):
         if not (sign_is_mile_min(message0Split) or sign_is_time_via(message0Split)):
             return message0Split
         return message1Split
+
+def message_lines(message):
+    lines = str(message).split("\r\n")[:3]
+    return (lines + [""] * (3 - len(lines)))[:3]
 
 def sign_is_mile_min(message):
     line = message[0]
@@ -241,17 +226,15 @@ def headers(api_key):
     return {"Authorization": "APIKEY {}".format(api_key)}
 
 def load_signs(api_key):
-    print("No data cached")
-
     resp = http.get(URL, headers = headers(api_key), ttl_seconds = 300)
 
     if resp.status_code != 200:
-        print("request failed with status {}".format(resp.status_code))
         return None
-    print("http success")
+    body = resp.body()
+    if not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
     data = resp.json()
-
-    return data["results"]
+    return data.get("results") if type(data) == "dict" and type(data.get("results")) == "list" else None
 
 def find_sign(results, sign_id):
     if results == None:
@@ -260,7 +243,7 @@ def find_sign(results, sign_id):
     for result in results:
         if sign_id == None:
             return result
-        if result["id"] == sign_id:
+        if type(result) == "dict" and str(result.get("id", "")) == sign_id:
             return result
 
     return None

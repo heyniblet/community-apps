@@ -9,24 +9,34 @@ load("http.star", "http")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
+load("time.star", "time")
 
-NPS_URL = "http://developer.nps.gov/api/v1/parks"
+NPS_URL = "https://developer.nps.gov/api/v1/parks"
+RANDOM_PARK_VALUE = "162"
 
 def getData(config):
-    api_key = config.get("nps_api_key")
+    api_key = config.get("nps_api_key", "")
+    if not api_key:
+        return None
     params = {
-        # 'q':'National Park',
-        "limit": "471",
+        "limit": "500",
     }
-    res = http.get(NPS_URL, headers = {"X-Api-Key": "%s" % api_key}, ttl_seconds = 3600, params = params)  # cache for 1 hour
-    return res.json()
+    res = http.get(NPS_URL, headers = {"X-Api-Key": api_key}, params = params)
+    if res.status_code != 200:
+        return None
+    data = res.json()
+    if type(data) != "dict" or type(data.get("data")) != "list" or len(data["data"]) == 0:
+        return None
+    return data["data"]
 
-def getImgData(imgUrl):
-    return http.get(imgUrl).body()
-
-def getRandomPark():
-    num = random.number(0, 470)
-    return num
+def parseParkIndex(value, park_count):
+    value = str(value)
+    if value == "" or len([char for char in value.elems() if char not in "0123456789"]) > 0:
+        return None
+    index = int(value)
+    if index < 0 or index >= park_count:
+        return None
+    return index
 
 def shortenDescription(desc):
     finalString = ""
@@ -40,14 +50,22 @@ def shortenDescription(desc):
     return finalString
 
 def main(config):
-    randomNumber = getRandomPark()
-    park = int(config.get("park", str(randomNumber)))
-    data = getData(config)
-    if "error" in data:
-        return []
-    parkName = data["data"][park]["fullName"]
-    parkDescription = data["data"][park]["description"]
-    parkImage = data["data"][park]["images"][0]["url"]
+    parks = getData(config)
+    if parks == None:
+        return renderError("NPS API key or data unavailable")
+
+    selected = config.get("park", RANDOM_PARK_VALUE)
+    if selected == RANDOM_PARK_VALUE:
+        random.seed(time.now().unix // 300)
+        parkIndex = random.number(0, len(parks) - 1)
+    else:
+        parkIndex = parseParkIndex(selected, len(parks))
+    if parkIndex == None or type(parks[parkIndex]) != "dict":
+        return renderError("Park selection unavailable")
+
+    park = parks[parkIndex]
+    parkName = park.get("fullName", "National Park")
+    parkDescription = park.get("description", "No description available.")
 
     header = render.Padding(
         child = render.Marquee(
@@ -66,10 +84,11 @@ def main(config):
     )
 
     image = render.Padding(
-        child = render.Image(
-            src = getImgData(parkImage),
+        child = render.Box(
             width = 25,
             height = 20,
+            color = "#1f4d2e",
+            child = render.Text("NPS", color = "#ffffff", font = "tb-8"),
         ),
         pad = (1, 1, 0, 0),
     )
@@ -100,9 +119,12 @@ def main(config):
         delay = 7,
     )
 
-def get_schema():
-    randomNumber = getRandomPark()
+def renderError(message):
+    return render.Root(
+        child = render.WrappedText(message, width = 64, align = "center", color = "#ff8888"),
+    )
 
+def get_schema():
     # FINDING INDEX VALUES FOR EACH NATIONAL PARK FOR DROPDOWN OPTIONS:
     # ================================================================
     # strings = []
@@ -112,7 +134,7 @@ def get_schema():
     # for s in strings:
     #     print(s)
     options = [
-        schema.Option(display = "Random", value = "%s" % randomNumber),
+        schema.Option(display = "Random", value = RANDOM_PARK_VALUE),
         schema.Option(display = "Acadia National Park", value = "1"),
         schema.Option(display = "Arches National Park", value = "24"),
         schema.Option(display = "Badlands National Park", value = "29"),

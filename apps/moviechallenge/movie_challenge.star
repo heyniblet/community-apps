@@ -56,35 +56,25 @@ def main(config):
     # Get configuration values with defaults
     letterboxd_username = config.get("letterboxd_username", "flanaganfilm")
     letterboxd_list_name = config.get("letterboxd_list_name", "flanagans-best-of-2025")
+    if not valid_slug(letterboxd_username) or not valid_slug(letterboxd_list_name):
+        return render_error("Use only letters, numbers, - and _ in Letterboxd names")
+    movie_goal_str = config.get("movie_goal", "50")
+    if not movie_goal_str.isdigit() or int(movie_goal_str) < 1:
+        return render_error("Movie Goal must be a positive number")
+    movie_goal = int(movie_goal_str)
     letterboxd_url = "https://letterboxd.com/%s/list/%s/detail/by/reverse/" % (letterboxd_username, letterboxd_list_name)
-    movie_goal = int(config.get("movie_goal", "50"))
 
     # Fetch and parse the Letterboxd list page
-    htmlstr = http.get(letterboxd_url).body()
+    response = http.get(letterboxd_url)
+    if response.status_code != 200:
+        return render_error("Letterboxd returned error %d" % response.status_code)
+    htmlstr = response.body()
     doc = html(htmlstr)
     watchedMovies = doc.find(".list-detailed-entry")
 
     # Display error message if no movies are found
     if watchedMovies.len() == 0:
-        return render.Root(
-            child = render.Box(
-                color = "#709AD1",
-                child = render.Column(
-                    expanded = True,
-                    main_align = "center",
-                    cross_align = "center",
-                    children = [
-                        render.Marquee(
-                            width = 64,
-                            child = render.Text(
-                                content = "No movies found - Check list URL and username",
-                                color = "#ffffff",
-                            ),
-                        ),
-                    ],
-                ),
-            ),
-        )
+        return render_error("No movies found - Check list URL and username")
 
     # Select a random movie from the list
     random_index = random.number(0, watchedMovies.len() - 1)
@@ -94,8 +84,9 @@ def main(config):
     # Extract and process the movie's rating (if it exists)
     starImages = []
     ratingClass = movieDetails.find(".rating").attr("class")
-    if ratingClass != None:
-        ratingOverTen = int(ratingClass.split("rated-")[1])
+    if ratingClass != None and "rated-" in ratingClass:
+        rating_value = ratingClass.split("rated-")[1].split(" ")[0]
+        ratingOverTen = int(rating_value) if rating_value.isdigit() else 0
         fullStars = int(ratingOverTen / 2)
         halfStars = ratingOverTen % 2
 
@@ -113,8 +104,7 @@ def main(config):
             starImages.append(render.Image(src = HALF_STAR_ICON))
 
     # Calculate progress percentage for the progress bar
-    percentage = watchedMovies.len() / movie_goal
-    leftPadding = int((1 - percentage) * 128)
+    leftPadding = 0 if watchedMovies.len() >= movie_goal else int((1 - (watchedMovies.len() / movie_goal)) * 128)
 
     # Render the main display
     return render.Root(
@@ -164,6 +154,27 @@ def main(config):
                         child = render.Image(src = FILM_ICON),
                     ),
                 ],
+            ),
+        ),
+    )
+
+def valid_slug(value):
+    if not value:
+        return False
+    for char in value.elems():
+        if not char.isalnum() and char != "-" and char != "_":
+            return False
+    return True
+
+def render_error(message):
+    return render.Root(
+        child = render.Box(
+            color = "#709AD1",
+            child = render.Column(
+                expanded = True,
+                main_align = "center",
+                cross_align = "center",
+                children = [render.Marquee(width = 64, child = render.Text(content = message, color = "#ffffff"))],
             ),
         ),
     )

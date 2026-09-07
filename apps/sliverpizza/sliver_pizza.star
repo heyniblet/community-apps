@@ -1,157 +1,72 @@
 """
 Applet: Sliver Pizza
 Summary: Sliver's Pizza of the Day
-Description: See the Pizza of the Day at any Sliver Pizzeria location.
 Author: Aaron Janse
 """
 
 load("encoding/json.star", "json")
-load("html.star", "html")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-SLIVER_URL = "https://www.sliverpizzeria.com/pizza-of-the-day/{}/"
+SLIVER_URL = "https://sliverpizzeria-api-production.up.railway.app/api/v1/pizza-of-day/public"
+SLIVER_LOCATIONS = {
+    "shattuck": "Shattuck",
+    "telegraph": "Telegraph",
+    "valdez": "Broadway",
+    "moraga": "Lafayette",
+    "antioch": "Montclair - Oakland",
+    "capitol": "Fremont-Capitol",
+}
+DEFAULT_LOCATION = "telegraph"
+MAX_RESPONSE_BYTES = 64 * 1024
 
 def main(config):
-    location_code = config.str("location", DEFAULT_LOCATION)
-    location_url = SLIVER_URL.format(location_code)
-
-    rep = http.get(
-        location_url,
+    location = config.str("location", DEFAULT_LOCATION)
+    if location not in SLIVER_LOCATIONS:
+        location = DEFAULT_LOCATION
+    response = http.get(
+        SLIVER_URL,
+        params = {"date_filter": time.now().format("2006-01-02")},
+        headers = {"User-Agent": "tronbyt-sliver-pizza/1.0"},
         ttl_seconds = 3600,
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
     )
-    if rep.status_code != 200:
-        fail("Failed to fetch pizza of the day: status %d", rep.status_code)
+    body = response.body()
+    pizzas = json.decode(body, []) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else []
+    if type(pizzas) != "list":
+        pizzas = []
 
-    body = html(rep.body())
-
-    js_code = body.find("#codemine-calendar-js-js-extra").text()
-    js_data = js_code.strip()[20:].split(";")[0]
-    data = json.decode(js_data)
-
-    today = time.now().format("2006-01-02")
-
-    out = None
-    for event in data["all_events"]:
-        if event["start"] == today:
-            out = event
+    selected = None
+    for pizza in pizzas[:24]:
+        if type(pizza) == "dict" and pizza.get("location_name") == SLIVER_LOCATIONS[location]:
+            selected = pizza
             break
+    if selected == None:
+        return error_frame("Pizza unavailable")
 
-    if not out or out["title"] == "CLOSED":
-        toppings = ["Closed", ""]
-    else:
-        toppings_txt = out["pizza_description"][0]
-        toppings_txt = toppings_txt.replace("(Shitake, Chanterelle, Portabella, Cremini Mushrooms)", "")
-        toppings = [topping.strip() for topping in toppings_txt.split(",")]
+    name = bounded_text(selected.get("name"), 120)
+    description = bounded_text(selected.get("description"), 400)
+    if not name or not description:
+        return error_frame("Pizza unavailable")
+    return render.Root(child = render.Column(children = [
+        render.Text(SLIVER_LOCATIONS[location][:20], font = "tom-thumb", color = "#ff7a24"),
+        render.Marquee(width = 64, child = render.Text(name, font = "tb-8")),
+        render.Marquee(width = 64, child = render.Text(description, font = "tom-thumb", color = "#ddd")),
+    ]))
 
-    img_url = html(out["post_image"]).find("img").attr("src")
-    img_req = http.get(img_url, ttl_seconds = 86400)
-    if "sliverlogo" in img_url.lower() or img_req.status_code != 200:
-        text_color = "#fff"
-        pizza_img = render.Box(
-            width = 150,
-            height = 150,
-            color = "#000",
-        )
-    else:
-        text_color = "#000"
-        pizza_img = render.Image(
-            src = img_req.body(),
-            width = 150,
-            height = 150,
-        )
+def bounded_text(value, limit):
+    return value[:limit] if type(value) == "string" else ""
 
-    shifted_pizza = render.Padding(
-        pad = (-12, -40, 0, 0),
-        child = pizza_img,
-    )
-
-    location_name = SLIVER_LOCATIONS[location_code]
-
-    return render.Root(
-        delay = 200,
-        child = render.Stack(
-            children = [
-                shifted_pizza,
-                render.Padding(
-                    pad = (1, 2, 0, 0),
-                    child = render.WrappedText(
-                        content = location_name,
-                        align = "right",
-                        width = 62,
-                        color = text_color,
-                        font = "Dina_r400-6",
-                    ),
-                ),
-                render.Padding(
-                    pad = (0, 13, 0, 0),
-                    child = render_topping(toppings[0], text_color),
-                ),
-                render.Padding(
-                    pad = (0, 22, 0, 0),
-                    child = render_topping(toppings[1], text_color),
-                ),
-            ],
-        ),
-    )
-
-def render_topping(orig, text_color):
-    return render.WrappedText(
-        content = shorten_topping(orig),
-        align = "right",
-        width = 62,
-        color = text_color,
-    )
-
-def shorten_topping(orig):
-    """ Shortens multi-word topping names to a single word. """
-    normalized = orig.lower()
-    keywords = [
-        "tomato",
-        "asparagus",
-        "mushroom",
-        "spinach",
-        "onion",
-        "potato",
-        "pasilla",
-        "feta",
-        "bell pepper",
-    ]
-    for keyword in keywords:
-        if keyword in normalized:
-            return keyword.title()
-    return orig.title()
-
-SLIVER_LOCATIONS = {
-    "telegraph": "Telegraph",
-    "shattuck": "Shattuck",
-    "valdez": "Valdez",
-    "moraga": "Lafayette",
-    "antioch": "Montclair",
-    "capitol": "Capitol",
-}
-
-DEFAULT_LOCATION = "telegraph"
+def error_frame(message):
+    return render.Root(child = render.WrappedText(content = message, width = 64, color = "#f00"))
 
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Dropdown(
-                id = "location",
-                name = "Location",
-                desc = "Which Sliver Pizzeria location's pizza to display.",
-                icon = "locationDot",
-                default = DEFAULT_LOCATION,
-                options = [
-                    schema.Option(display = name, value = code)
-                    for (code, name) in SLIVER_LOCATIONS.items()
-                ],
-            ),
-        ],
-    )
+    return schema.Schema(version = "1", fields = [schema.Dropdown(
+        id = "location",
+        name = "Location",
+        desc = "Which Sliver Pizzeria location's pizza to display.",
+        icon = "locationDot",
+        default = DEFAULT_LOCATION,
+        options = [schema.Option(display = name, value = code) for code, name in SLIVER_LOCATIONS.items()],
+    )])

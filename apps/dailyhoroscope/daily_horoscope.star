@@ -116,27 +116,49 @@ def render_error(code):
         ),
     )
 
+def valid_date(value):
+    if type(value) != "string" or not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", value):
+        return False
+    year, month, day = [int(part) for part in value.split("-")]
+    if year < 2000 or year > 2100 or month < 1 or month > 12:
+        return False
+    month_days = [31, 29 if year % 400 == 0 or (year % 4 == 0 and year % 100 != 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    return 1 <= day and day <= month_days[month - 1]
+
 def main(config):
     # Render for display
     zodiac = config.str("zodiac_choice", DEFAULT_SIGN)
+    if zodiac not in SIGN_ICONS:
+        zodiac = DEFAULT_SIGN
     show_moon = config.bool("moon_choice", DEFAULT_MOON)
     sign_color = config.str("color_choice", DEFAULT_COLOR)
+    if not re.match(r"^#[0-9A-Fa-f]{6}$", sign_color):
+        sign_color = DEFAULT_COLOR
 
     # Fetch horoscope data
     horoscope_url = "https://play.usatoday.com/horoscopes/daily/" + zodiac  # Updates daily at 09:00 UTC
     scope_response = http.get(horoscope_url, ttl_seconds = TTL)
 
-    if scope_response.status_code != 200:
+    if scope_response.status_code != 200 or len(scope_response.body()) > 512 * 1024:
         return render_error("Could not reach source")
 
     scope_html = html(scope_response.body())
     json_extract = scope_html.find("script").filter("#__NEXT_DATA__").text()
-    scope_json = json.decode(json_extract)
+    scope_json = json.decode(json_extract, None) if len(json_extract) <= 256 * 1024 else None
+    page_props = scope_json.get("props", {}).get("pageProps", {}) if type(scope_json) == "dict" and type(scope_json.get("props")) == "dict" else {}
+    state = page_props.get("dehydratedState", {}) if type(page_props) == "dict" else {}
+    queries = state.get("queries", []) if type(state) == "dict" else []
+    query = queries[0] if type(queries) == "list" and queries and type(queries[0]) == "dict" else {}
+    query_state = query.get("state", {}) if type(query) == "dict" else {}
+    data = query_state.get("data", {}) if type(query_state) == "dict" else {}
+    daily = data.get("horoscopesDaily", {}) if type(data) == "dict" else {}
+    horoscopes = daily.get("horoscopes", []) if type(daily) == "dict" else []
+    horoscope_data = horoscopes[0] if type(horoscopes) == "list" and horoscopes and type(horoscopes[0]) == "dict" else {}
 
     # Parse date that horoscope was written
-    date_extracted = scope_json.get("props", {}).get("pageProps", {}).get("dehydratedState", {}).get("queries", [{}])[0].get("state", {}).get("data", {}).get("horoscopesDaily", {}).get("horoscopes", [{}])[0].get("date")
+    date_extracted = horoscope_data.get("date")
 
-    if date_extracted == None:
+    if not valid_date(date_extracted):
         return render_error("Could not get date")
 
     date_parsed = time.parse_time(date_extracted, format = "2006-01-02")
@@ -144,8 +166,8 @@ def main(config):
     date_d = humanize.time_format("d", date_parsed)
 
     # Parse horoscope
-    horoscope_extracted = scope_json.get("props", {}).get("pageProps", {}).get("dehydratedState", {}).get("queries", [{}])[0].get("state", {}).get("data", {}).get("horoscopesDaily", {}).get("horoscopes", [{}])[0].get("horoscope")
-    horoscope_parsed = re.sub(".*\n", "", horoscope_extracted or "")
+    horoscope_extracted = horoscope_data.get("horoscope")
+    horoscope_parsed = re.sub(".*\n", "", horoscope_extracted[:2000]) if type(horoscope_extracted) == "string" else ""
 
     if horoscope_parsed == "":
         return render_error("Could not get horoscope")
@@ -250,7 +272,8 @@ def main(config):
     )
 
     # Display everything
-    scroll_speed = int(config.str("speed_choice", DEFAULT_SPEED))
+    speed = config.str("speed_choice", DEFAULT_SPEED)
+    scroll_speed = int(speed) if speed in ["40", "55", "70", "90", "120"] else int(DEFAULT_SPEED)
     date_font = "CG-pixel-3x5-mono"
     date_color = "#ffda9c"
 
@@ -308,31 +331,11 @@ def edit_horoscope(horoscope):
     for w in horoscope_list:
         # Replace apostrophe if it exists
         word = re.sub(r"’", "'", w)
-        w_length = len(word)
-
-        # Check last character of word, keep word passes safety list
-        pattern_end = r".$"
-        last_char = re.findall(pattern_end, word)[0]
-        safe_for_last = [".", ",", "!", "'", "-", "i", ")", "1", ":", ";", "`", "|"]
-
-        if w_length == (char_limit + 1) and last_char in safe_for_last:
-            horoscope_edit.append(word)
-
-            # Hyphenate and line break at final 'syllable'
-        elif w_length > char_limit:
-            pattern_end = r"([^aeiouy])([aeiouy]*?[^aeiouy\s]*)$"  # Finds final 'syllable'
-            w_end = re.findall(pattern_end, word)[0]
-            w_end_length = len(w_end)
-            w_start_length = w_length - w_end_length
-            pattern_start = r"(^\S{%s})" % w_start_length
-            w_start = re.findall(pattern_start, word)[0]
-            w_edit = w_start + "-\n" + w_end
-
-            # Replace original word with edited word
-            horoscope_edit.append(w_edit)
-
-        else:
-            horoscope_edit.append(word)
+        chunks = []
+        for start in range(0, len(word), char_limit - 1):
+            chunk = word[start:start + char_limit - 1]
+            chunks.append(chunk + "-" if start + char_limit - 1 < len(word) else chunk)
+        horoscope_edit.append("\n".join(chunks))
 
     return " ".join(horoscope_edit)
 

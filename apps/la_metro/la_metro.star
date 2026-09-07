@@ -33,21 +33,20 @@ DEFAULT_LOCATION = """
 """
 
 BASE_API = "https://api.goswift.ly/real-time"
-CACHE_TTL_SECS = 60
 
 def main(config):
     location = json.decode(config.get("location", DEFAULT_LOCATION))
     lat = location["lat"]
     lon = location["lng"]
     api_key = config.get("api_key", "")
-    include_busses = config.get("include_bus")
-    show_stops = config.get("show_stops")
+    include_busses = config.bool("include_bus", False)
+    show_stops = config.bool("show_stops", False)
 
     agency_key = "lametro-rail"
     NextSchedCacheData = None
     if api_key:
         api_url = "{}/{}/predictions-near-location?lat={}&lon={}&meters=800".format(BASE_API, agency_key, lat, lon)
-        NextSchedCacheData = get_cachable_data(api_url, api_key, CACHE_TTL_SECS)
+        NextSchedCacheData = get_data(api_url, api_key)
 
     # Display error, suggest requesting a new key
     if not NextSchedCacheData:
@@ -58,15 +57,19 @@ def main(config):
 
     NextSchedCacheData = NextSchedCacheData.body()
     predictions = json.decode(NextSchedCacheData)
-    StationData = predictions["data"]["predictionsData"]
-    if include_busses == "true":
+    StationData = predictions.get("data", {}).get("predictionsData", [])
+    if type(StationData) != "list":
+        return render.Root(get_failure_message())
+    StationData = [line for line in StationData[:20] if type(line) == "dict" and line.get("destinations")]
+    if include_busses:
         api_url = "{}/{}/predictions-near-location?lat={}&lon={}&meters=400".format(BASE_API, "lametro", lat, lon)
-        bus_data = get_cachable_data(api_url, api_key, CACHE_TTL_SECS)
+        bus_data = get_data(api_url, api_key)
         if bus_data.status_code != 200:
             print("Error! Your API key didn't have permission to read busses. Request access to agencykey 'lametro")
         else:
-            bus_arrivals = json.decode(bus_data.body())["data"]["predictionsData"]
-            StationData += dedupe_routes(bus_arrivals)
+            bus_arrivals = json.decode(bus_data.body()).get("data", {}).get("predictionsData", [])
+            if type(bus_arrivals) == "list":
+                StationData += dedupe_routes(bus_arrivals[:20])
 
     children = []
     for line in StationData:
@@ -86,7 +89,7 @@ def get_line_child(line_data, show_stops):
 
     for i in range(0, DestinationCount, 1):
         headsign = line_data["destinations"][i]["headsign"]
-        if show_stops == "true":
+        if show_stops:
             headsign = headsign + " (" + line_data["stopName"] + ")"
         HEADSIGN_LIST.append(headsign)
 
@@ -237,5 +240,5 @@ def get_failure_message():
 def get_headers(api_key):
     return {"Authorization": api_key, "Accept": "application/xml, application/json"}
 
-def get_cachable_data(url, api_key, timeout):
-    return http.get(url = url, headers = get_headers(api_key), ttl_seconds = timeout)
+def get_data(url, api_key):
+    return http.get(url = url, headers = get_headers(api_key))

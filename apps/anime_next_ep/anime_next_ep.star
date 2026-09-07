@@ -9,28 +9,25 @@ load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("re.star", "re")
-load("render.star", "render")
+load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 ANILIST_ENDPOINT = "https://graphql.anilist.co"
 DEFAULT_ANIME_ID = 21  # One Piece
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 def main(config):
-    id = DEFAULT_ANIME_ID
-    selection = config.get("anime_name")
-    if selection != None:
-        parsed_selection = json.decode(selection)["value"]
-        unsanitized_anime_id = parsed_selection
-        if is_numeric(unsanitized_anime_id):
-            id = int(unsanitized_anime_id)
+    id = configured_anime_id(config.get("anime_name", str(DEFAULT_ANIME_ID)))
+    if id == None:
+        return render_error("Enter a valid AniList anime ID")
 
-    airing_info = fetch_airing_info(id)
+    media = fetch_airing_info(id)
 
-    if airing_info == None:
+    if media == None:
         return not_found(id)
 
-    media = airing_info["data"]["Media"]
     title = media["title"]["romaji"]
     cover_url = media["coverImage"]["medium"]
     next_episode = media.get("nextAiringEpisode")
@@ -40,7 +37,7 @@ def main(config):
     title_display = render.Marquee(
         child = render.Text(title, font = "tb-8", color = "#FFFFFF"),
         scroll_direction = "horizontal",
-        width = 64,  # Full width
+        width = canvas.width(),
     )
 
     return render.Root(
@@ -59,33 +56,49 @@ def main(config):
         ),
     )
 
-def is_numeric(string):
-    return len(re.findall("\\d+", string)) > 0
+def configured_anime_id(raw):
+    if type(raw) != "string":
+        return None
+    legacy = re.findall(r'"value"\s*:\s*"([0-9]{1,10})"', raw)
+    value = legacy[0] if legacy else raw.strip()
+    if not re.findall("^[0-9]{1,10}$", value):
+        return None
+    anime_id = int(value)
+    return anime_id if anime_id > 0 else None
 
 def fetch_image(image_url):
-    response = http.get(image_url)
+    if type(image_url) != "string" or not image_url.startswith("https://s4.anilist.co/"):
+        return None
 
-    if response.status_code != 200:
-        return None  # Fail gracefully if image request fails
+    response = http.get(image_url, ttl_seconds = 24 * 60 * 60)
+    body = response.body()
 
-    return response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_IMAGE_BYTES:
+        return None
+
+    return body
 
 def render_cover(image_url):
+    scale = 2 if canvas.is2x() else 1
     cover_image = fetch_image(image_url)
     if cover_image == None:
-        return None
+        return render.Box(width = 18 * scale, height = 24 * scale)
     return render.Padding(
         child = render.Image(
-            # Left: Anime Cover Image
-            width = 18,
+            width = 18 * scale,
             src = cover_image,
         ),
-        pad = (0, 0, 1, 0),
+        pad = (0, 0, 1 * scale, 0),
     )
 
 def not_found(id):
     return render.Root(
         child = render.WrappedText("Anime ID {} not found".format(id), color = "#FF0000"),
+    )
+
+def render_error(message):
+    return render.Root(
+        child = render.WrappedText(message, width = canvas.width(), align = "center", color = "#FF0000"),
     )
 
 def next_episode_info(next_episode, status):
@@ -109,18 +122,6 @@ def next_episode_info(next_episode, status):
             height = 32,
         )
     )
-
-def search(pattern):
-    results = search_possible_anime(pattern)
-    if results == None:
-        return []
-
-    result_list = results["data"]["Page"]["media"]
-
-    def format_search_result(media):
-        return schema.Option(display = media["title"]["romaji"], value = str(int(media["id"])))
-
-    return [format_search_result(media) for media in result_list]
 
 def fetch_airing_info(anime_id):
     query = {
@@ -151,50 +152,41 @@ def fetch_airing_info(anime_id):
 
     response = http.post(ANILIST_ENDPOINT, headers = headers, json_body = query, ttl_seconds = 3600)
 
-    if response.status_code != 200:
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return None
 
-    return response.json()
-
-def search_possible_anime(pattern):
-    query = {
-        "query": """
-        query ($pattern: String) {
-            Page(perPage: 10) { 
-                media(search: $pattern, type: ANIME, sort: [TRENDING_DESC, SEARCH_MATCH]) {
-                    id
-                    title {
-                        romaji
-                    }
-                }
-            }
-        }
-        """,
-        "variables": {"pattern": pattern},
-    }
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-    response = http.post(ANILIST_ENDPOINT, headers = headers, json_body = query)
-
-    if response.status_code != 200:
+    payload = json.decode(body, None)
+    data = payload.get("data") if type(payload) == "dict" else None
+    media = data.get("Media") if type(data) == "dict" else None
+    if type(media) != "dict" or type(media.get("title")) != "dict" or type(media.get("coverImage")) != "dict":
         return None
 
-    return response.json()
+    title = media["title"].get("romaji")
+    cover_url = media["coverImage"].get("medium")
+    status = media.get("status")
+    next_episode = media.get("nextAiringEpisode")
+    if type(title) != "string" or not title or len(title) > 200:
+        return None
+    if type(cover_url) != "string" or not cover_url.startswith("https://s4.anilist.co/"):
+        return None
+    if type(status) != "string" or len(status) > 40:
+        return None
+    if next_episode != None:
+        if type(next_episode) != "dict" or type(next_episode.get("episode")) != "int" or type(next_episode.get("airingAt")) != "int":
+            return None
+    return media
 
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "anime_name",
-                name = "name",
-                desc = "Anime name",
+                name = "AniList anime ID",
+                desc = "Numeric anime ID from anilist.co (for example, 21 for One Piece)",
                 icon = "tv",
-                handler = search,
+                default = str(DEFAULT_ANIME_ID),
             ),
         ],
     )

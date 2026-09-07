@@ -21,23 +21,28 @@ def main(config):
     Returns rendered application root.
     """
     if config.get("public_key") == None or config.get("private_key") == None:
-        image = http.get("http://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg").body()
+        image = http.get("https://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg").body()
         name = "Something went wrong, enjoy this image of Wolverine while we fix it."
 
         return render_data(image, name)
     else:
         random.seed(time.now().unix // 86400)
-        characterId = get_random_character_id(config)
-        params = get_auth_params(config)
-        req = http.get(BASE_URL + "/" + str(characterId), ttl_seconds = 86400, params = params)
+        params = {"limit": "1", "offset": str(random.number(0, 1562))} | get_auth_params(config)
+        req = http.get(BASE_URL, params = params)
         if req.status_code != 200:
-            fail("API request failed with status:", req.status_code)
+            return render_data(http.get("https://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg").body(), "Marvel API unavailable")
 
-        item = req.json()["data"]["results"][0]
-        name = item["name"]
-        imageUrlSegments = item["thumbnail"]
-        imageUrl = imageUrlSegments["path"] + "." + imageUrlSegments["extension"]
-        image = http.get(imageUrl).body()
+        results = req.json().get("data", {}).get("results", [])
+        if not results:
+            return render_data(http.get("https://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg").body(), "No Marvel character found")
+        item = results[0]
+        name = item.get("name", "Marvel character")
+        thumbnail = item.get("thumbnail", {})
+        image_url = thumbnail.get("path", "").replace("http:", "https:") + "." + thumbnail.get("extension", "jpg")
+        if not image_url.startswith("https://i.annihil.us/"):
+            image_url = "https://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg"
+        image_response = http.get(image_url)
+        image = image_response.body() if image_response.status_code == 200 else http.get("https://i.annihil.us/u/prod/marvel/i/mg/2/60/537bcaef0f6cf.jpg").body()
 
         return render_data(image, name)
 
@@ -98,30 +103,3 @@ def get_auth_params(config):
     }
 
     return params
-
-def get_random_character_id(config):
-    """
-    Get a single, random character.
-    Only return a character if the character has an image.
-    """
-    limit = 1
-    maxOffset = 1562
-    offset = random.number(0, maxOffset)
-    baseParams = {"limit": str(limit), "offset": str(offset)}
-    params = baseParams | get_auth_params(config)
-
-    req = http.get(BASE_URL, ttl_seconds = 82800, params = params)
-    if req.status_code != 200:
-        fail("API request failed with status:", req.status_code)
-
-    responseCharacter = req.json()["data"]["results"][0]
-    imagePath = responseCharacter["thumbnail"]["path"]
-    hasImage = imagePath != "http://i.annihil.us/u/prod/marvel/i/mg/b/40/image_not_available"
-    characterId = responseCharacter["id"]
-
-    if not hasImage:
-        print("Seeking...")
-        return get_random_character_id()
-
-    print("Character found...")
-    return int(characterId)

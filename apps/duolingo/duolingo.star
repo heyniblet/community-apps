@@ -6,7 +6,7 @@ Author: Olly Stedall @saltedlolly
 Thanks: @drudge @whyamIhere @AmillionAir
 """
 
-load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/crown_icon.png", CROWN_ICON_ASSET = "file")
 load("images/duolingo_icon_angry.webp", DUOLINGO_ICON_ANGRY_ASSET = "file")
@@ -68,6 +68,8 @@ DEFAULT_TIMEZONE = "Europe/London"  # Affects when the daily XP counter resets.
 DEFAULT_DISPLAY_VIEW = "week"  # can be 'today', 'week' or 'twoweeks'
 DEFAULT_NICKNAME = ""  # Max five characters. Displays on screen to identify the Duolingo user.
 DEFAULT_SHOW_EXTRA_STATS = "totalxp"  # Display currennt Streak and total XP score on the week chart. Can be 'none', 'todayxp', 'chartxp' or 'totalxp'
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_TOKEN_BYTES = 4096
 
 # 18 x 18 Standing Blinking, Flap
 
@@ -147,6 +149,54 @@ XP_TARGET_LIST = {
     "500xp": "500",
 }
 
+def safe_username(value):
+    value = str(value or "").strip()
+    if not value or len(value) > 64:
+        return ""
+    for char in value.elems():
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.":
+            return ""
+    return value
+
+def safe_token(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= MAX_TOKEN_BYTES and "\r" not in value and "\n" not in value else ""
+
+def safe_int(value, maximum):
+    if type(value) in ["int", "float"] or (type(value) == "string" and value.isdigit()):
+        return min(maximum, max(0, int(value)))
+    return 0
+
+def decode_response(response):
+    body = response.body()
+    return json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+
+def normalized_user_response(response):
+    data = decode_response(response)
+    users = data.get("users") if type(data) == "dict" else None
+    user = users[0] if type(users) == "list" and users and type(users[0]) == "dict" else None
+    user_id = safe_int(user.get("id"), 1000000000000) if user else 0
+    if not user_id:
+        return None
+    return {"users": [{
+        "id": user_id,
+        "streak": safe_int(user.get("streak"), 1000000),
+        "totalXp": safe_int(user.get("totalXp"), 1000000000000),
+    }]}
+
+def normalized_summary_response(response):
+    data = decode_response(response)
+    summaries = data.get("summaries") if type(data) == "dict" else None
+    if type(summaries) != "list":
+        return None
+    return {"summaries": [{
+        "date": safe_int(item.get("date"), 9999999999),
+        "gainedXp": safe_int(item.get("gainedXp"), 100000000),
+        "streakExtended": item.get("streakExtended") == True,
+        "frozen": item.get("frozen") == True,
+        "repaired": item.get("repaired") == True,
+    } for item in summaries[:14] if type(item) == "dict"]}
+
 def get_schema():
     displayoptions = [
         schema.Option(display = displaykey, value = displayval)
@@ -176,7 +226,7 @@ def get_schema():
             schema.Text(
                 id = "jwt_token",
                 name = "JWT Token",
-                desc = "Find 'jwt_token' in your browser cookies for duolingo.com and enter it here. This is required to retrieve your XP data. The token is valid for 30 days and will be cached, but you will need to update it here each time it expires.",
+                desc = "Find 'jwt_token' in your browser cookies for duolingo.com and enter it here. It is required for XP data and must be updated when it expires.",
                 icon = "key",
                 default = "",
                 secret = True,
@@ -232,11 +282,7 @@ def main(config):
     do_duolingo_main_query = None
     duolingo_main_json = None
     duolingo_main_query_url = None
-    duolingo_streak = None
-    duolingo_streak_daystart = None
     duolingo_streak_now = None
-    duolingo_totalxp = None
-    duolingo_totalxp_daystart = None
     duolingo_totalxp_now = None
     duolingo_userid = None
     duolingo_xpsummary_json = None
@@ -273,12 +319,21 @@ def main(config):
     xp_score = None
 
     # Get Schema variables
-    duolingo_username = config.get("duolingo_username", DEFAULT_USERNAME)
+    duolingo_username = safe_username(config.get("duolingo_username", DEFAULT_USERNAME))
     display_view = config.str("display_view", DEFAULT_DISPLAY_VIEW)
-    xp_target = int(config.str("xp_target", DEFAULT_DAILY_XP_TARGET))
-    nickname = config.get("nickname", DEFAULT_NICKNAME)
+    if display_view not in ["today", "week", "twoweeks"]:
+        display_view = DEFAULT_DISPLAY_VIEW
+    xp_target_raw = config.str("xp_target", DEFAULT_DAILY_XP_TARGET)
+    xp_target = int(xp_target_raw if xp_target_raw in XP_TARGET_LIST.values() else DEFAULT_DAILY_XP_TARGET)
+    nickname = str(config.get("nickname", DEFAULT_NICKNAME) or "")
     display_extra_stats = config.str("extra_week_stats", DEFAULT_SHOW_EXTRA_STATS)
-    jwt_token = config.get("jwt_token", "")
+    if display_extra_stats not in ["none", "todayxp", "chartxp", "totalxp"]:
+        display_extra_stats = DEFAULT_SHOW_EXTRA_STATS
+    jwt_token = safe_token(config.get("jwt_token", ""))
+    if not duolingo_username:
+        display_error_msg = True
+        error_message_1 = "invalid"
+        error_message_2 = "username"
 
     print("XP Target: " + str(xp_target))
 
@@ -286,34 +341,9 @@ def main(config):
     nickname = nickname[:5].upper()
 
     headers = {
-        "authority": "www.duolingo.com",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "accept-language": "en-US,en;q=0.9",
-        "dnt": "1",
-        "sec-ch-ua": '"Google Chrome";v="111", "Not(A:Brand";v="8", "Chromium";v="111"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"macOS"',
-        "sec-fetch-dest": "document",
-        "sec-fetch-mode": "navigate",
-        "sec-fetch-site": "none",
-        "sec-fetch-user": "?1",
-        "upgrade-insecure-requests": "1",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36",
-        "Authorization": "Bearer {}".format(jwt_token),
-        "Cookie": "jwt_token={}".format(jwt_token),
+        "Authorization": "Bearer " + jwt_token,
+        "Cookie": "jwt_token=" + jwt_token,
     }
-
-    # Setup user cache keys
-    duolingo_cache_key_username = "duolingo_%s" % duolingo_username
-
-    duolingo_cache_key_saveddate = "%s_saveddate" % duolingo_cache_key_username
-    duolingo_cache_key_totalxp_daystart = "%s_totalxp_daystart" % duolingo_cache_key_username
-    duolingo_cache_key_streak_daystart = "%s_streak_daystart" % duolingo_cache_key_username
-
-    # Get Cache variables
-    duolingo_saveddate_cached = cache.get(duolingo_cache_key_saveddate)
-    duolingo_totalxp_daystart_cached = cache.get(duolingo_cache_key_totalxp_daystart)
-    duolingo_streak_daystart_cached = cache.get(duolingo_cache_key_streak_daystart)
 
     # Get time and location variables
     timezone = time.tz()
@@ -325,27 +355,21 @@ def main(config):
 
     #Setup main query url
     duolingo_main_query_url_prefix = "https://www.duolingo.com/2017-06-30/users?username="
-    if duolingo_username != None:
+    if duolingo_username:
         duolingo_main_query_url = duolingo_main_query_url_prefix + duolingo_username
 
-    # IMPORTANT NOTE: There are two queries that need to be made to duolingo.com
-    # The main query is made the first time the script runs each day (to update the daily xptotal)
-    # The xpsummary query is made every 15 minutes (to get the running xp count, and live status)
-
-    # FIRST LOOKUP CURRENT DUOLINGO USERID (OR RETRIEVE FROM CACHE)
-    # If the userid for the provided username is not yet known, send a query to duolingo.com to retrieve it
-    # Thereafter the userid for the associated username is cached for 7 days, and the timer is updated on each run
-    # i.e. So as long as that username continues to be used in the app, the userid will remain cached
+    # The public profile query resolves the numeric user ID; the authenticated
+    # summary query supplies the rolling XP data.
 
     # Check a username has been provided (i.e. field is not blank)
-    if duolingo_username != None:
+    if duolingo_username:
         do_duolingo_main_query = True
 
-    # Lookup userId from supplied username (if not already found in cache)
+    # Lookup userId from supplied username.
     if do_duolingo_main_query == True:
         print("Querying duolingo.com for userId...")
 
-        duolingo_main_query = http.get(duolingo_main_query_url, headers = headers, ttl_seconds = 604800)
+        duolingo_main_query = http.get(duolingo_main_query_url, headers = headers)
 
         if duolingo_main_query.status_code != 200:
             if duolingo_main_query.status_code == 422:
@@ -362,8 +386,8 @@ def main(config):
                 duolingo_userid = None
         else:
             # display an error message if the username is unrecognised
-            duolingo_main_json = duolingo_main_query.json()
-            if duolingo_main_json["users"] == []:
+            duolingo_main_json = normalized_user_response(duolingo_main_query)
+            if not duolingo_main_json:
                 print("Error! Unrecognised username.")
                 display_error_msg = True
                 error_message_1 = "invalid"
@@ -372,7 +396,7 @@ def main(config):
             else:
                 duolingo_userid = int(duolingo_main_json["users"][0]["id"])
                 if duolingo_userid != None:
-                    print("Success! userId for username \"" + str(duolingo_username) + "\": " + str(duolingo_userid))
+                    print("Duolingo user ID resolved")
                     display_error_msg = False
                 else:
                     # Show error if username not found
@@ -384,7 +408,7 @@ def main(config):
     # Declare display variable
     hide_duolingo_in_rotation = False
 
-    # If we know the userId then next we'll lookup the progress data for that user (either from duolingo or from cache)
+    # If we know the userId then look up the progress data for that user.
     if duolingo_userid != None:
         # LOOKUP DUOLINGO XP SUMMARY JSON DATA
         # The XP summary is updated every 15 minutes
@@ -412,28 +436,31 @@ def main(config):
             timezone,
         )
 
-        xpsummary_query = http.get(DUOLINGO_XP_QUERY_URL, headers = headers, ttl_seconds = 900)
+        xpsummary_query = http.get(DUOLINGO_XP_QUERY_URL, headers = headers)
         if xpsummary_query.status_code != 200:
             print("XP summary query failed with status %d", xpsummary_query.status_code)
             display_error_msg = True
             error_message_1 = "check"
             error_message_2 = "connection"
-            live_xp_data = None
         else:
-            display_error_msg = False
-            duolingo_xpsummary_json = xpsummary_query.json()
-            xp_query_time = now
-            live_xp_data = True
-
-            # Show error if username was not recognised
-            print("XP summary data retrieved from duolingo.com")
+            duolingo_xpsummary_json = normalized_summary_response(xpsummary_query)
+            if duolingo_xpsummary_json == None:
+                display_error_msg = True
+                error_message_1 = "invalid"
+                error_message_2 = "response"
+            else:
+                display_error_msg = False
+                xp_query_time = now
+                print("XP summary data retrieved from duolingo.com")
 
         # Setup dummy data for use on days with no data available
         dummy_data = {"gainedXp": 0, "streakExtended": False, "frozen": False, "repaired": False, "dummyData": True}
 
         # If there is no data returned at all for the time frame then we can assume no lessons have been completed recently
         # In this case we need to insert dummy data for the entire time frame
-        if not duolingo_xpsummary_json or duolingo_xpsummary_json.get("summaries") == []:
+        if duolingo_xpsummary_json == None:
+            hide_duolingo_in_rotation = False
+        elif duolingo_xpsummary_json.get("summaries") == []:
             hide_duolingo_in_rotation = True
             print("WARNING: Duolingo returned no data suggesting no lessons have been completed for the last 14 days. App will be hidden.")
         else:
@@ -489,12 +516,9 @@ def main(config):
                     day_xp = int(day_xp)
                 week_xp_scores.append(day_xp)
 
-            print("Two Week's XP Scores: " + str(week_xp_scores))
-
             # Slice the current week's xp scores, if we are only displaying the last week of data
             if display_view == "week":
                 week_xp_scores = (week_xp_scores[0:7])
-                print("One Week's XP Scores: " + str(week_xp_scores))
 
             # Add up the XP score from every day to get the one week or two week total
             week_xp_scores_total = 0
@@ -518,109 +542,10 @@ def main(config):
             else:
                 hide_duolingo_in_rotation = False
 
-            # LOOKUP DUOLINGO MAIN JSON DATA AT START OF DAY
-            # The is run daily to calculate what the user's totalXP was at the start of the day
-            # It runs whenever it detects that the date has changed from the previous time it was run
-            # It also requires live XP data to be available (rather than cached data)
-
-            # Run this if today's date has changed and live data has just been retried (or this is the first time running)
-            if (duolingo_saveddate_cached != date_now) and (live_xp_data == True):
-                print("New day detected!")
-
-                # First we are going to get the totalXp score at the start of the day
-                # (we will use this to calculate the running XP total throughout the day)
-                if do_duolingo_main_query == True:
-                    duolingo_totalxp = int(duolingo_main_json["users"][0]["totalXp"])
-                    duolingo_streak = int(duolingo_main_json["users"][0]["streak"])
-                else:
-                    # Setup userid query URL
-                    print("Querying duolingo.com for current totalXp...")
-                    duolingo_main_query = http.get(duolingo_main_query_url)
-                    if duolingo_main_query.status_code != 200:
-                        print("Duolingo query failed with status %d", duolingo_main_query.status_code)
-                        display_error_msg = True
-                    else:
-                        duolingo_main_json = duolingo_main_query.json()
-                        duolingo_totalxp = int(duolingo_main_json["users"][0]["totalXp"])
-
-                        # Show error if totalxp was not found
-                        if duolingo_totalxp == "":
-                            print("totalXp query failed with status %d", duolingo_main_query.status_code)
-                            display_error_msg = True
-                            error_message_1 = "totalXp"
-                            error_message_2 = "not found"
-                        else:
-                            display_error_msg = False
-                            print("Queried totalXp for username \"" + str(duolingo_username) + "\": " + str(duolingo_totalxp))
-
-                        #                       cache.set(duolingo_cache_key_totalxp, str(duolingo_totalxp), ttl_seconds=86400)
-
-                        # Get current streak
-                        duolingo_streak = int(duolingo_main_json["users"][0]["streak"])
-
-                        # Show error if totalxp was not found
-                        if duolingo_streak == "":
-                            print("Streak query failed with status %d", duolingo_main_query.status_code)
-                            display_error_msg = True
-                            error_message_1 = "streak"
-                            error_message_2 = "not found"
-                        else:
-                            display_error_msg = False
-                            print("Queried Streak for username \"" + str(duolingo_username) + "\": " + str(duolingo_totalxp))
-
-                #                      cache.set(duolingo_cache_key_totalxp, str(duolingo_totalxp), ttl_seconds=86400)
-
-                # Now we subtract the daily XP count from the total count to find out the XP count at the start of the day
-                # (this is saved in the cache so we don't have to perform the main json query more than once per day - we can calculate the)
-                # running live total by adding the XP at start of day to the current daily count from the XP Summary query.)
-                duolingo_totalxp_daystart = int(duolingo_totalxp) - int(duolingo_xptoday)
-
-                print("XP Count at Start of Day: " + str(duolingo_totalxp_daystart))
-
-                # Store start-of-day XP count in cache (for 24hrs)
-                cache.set(duolingo_cache_key_totalxp_daystart, str(duolingo_totalxp_daystart), ttl_seconds = 86400)
-
-                # Now we cache the Streak at the start of the day, and store it in the cache
-                if is_streak_extended == True:
-                    duolingo_streak_daystart = int(duolingo_streak) - 1
-                else:
-                    duolingo_streak_daystart = int(duolingo_streak)
-
-                print("Streak at Start of Day: " + str(duolingo_streak_daystart))
-
-                # Store start-of-day XP count in cache (for 24hrs)
-                cache.set(duolingo_cache_key_streak_daystart, str(duolingo_streak_daystart), ttl_seconds = 86400)
-
-                # Finally update the cache with the new date so this won't run again until tomorrow (stored for 24 hours)
-                cache.set(duolingo_cache_key_saveddate, str(date_now), ttl_seconds = 86400)
-
-            # Set variables for current state
-            if live_xp_data == True:
-                print("---- CURRENT DATA: LIVE ----- ")
-            elif live_xp_data == False:
-                print("---- CURRENT DATA: CACHED ----- ")
-            elif live_xp_data == None:
-                print("---- CURRENT DATA: UNAVAILABLE ----- ")
-
-            # Use cached value for Total XP at day start if live value is not available
-            if duolingo_totalxp_daystart_cached != None:
-                duolingo_totalxp_daystart = str(duolingo_totalxp_daystart_cached)
-
-            # Calculate current total XP
-            duolingo_totalxp_now = int(duolingo_totalxp_daystart) + int(duolingo_xptoday)
-            print("Today's XP: " + str(duolingo_xptoday) + "  Total XP (at day start): " + str(duolingo_totalxp_daystart) + "   TOTAL XP: " + str(duolingo_totalxp_now))
-
-            # Use cached value for Streak at day start if live value is not available
-            if duolingo_streak_daystart_cached != None:
-                duolingo_streak_daystart = str(duolingo_streak_daystart_cached)
-
-            # Calculate current Streak, based on whther it has already been extended today
-            if is_streak_extended == True:
-                duolingo_streak_now = int(duolingo_streak_daystart) + 1
-            else:
-                duolingo_streak_now = int(duolingo_streak_daystart)
-
-            print("Streak: " + str(duolingo_streak_now) + "   Streak Extended?: " + str(is_streak_extended))
+            # The main response already contains current totals. Using it directly
+            # avoids credential-derived values leaking through process-global cache.
+            duolingo_totalxp_now = int(duolingo_main_json["users"][0]["totalXp"])
+            duolingo_streak_now = int(duolingo_main_json["users"][0]["streak"])
 
             # Deduce what streak icon to display on Today view
             if is_streak_extended == False:

@@ -41,7 +41,7 @@ load("xpath.star", "xpath")
 LQUOTE = LQUOTE_ASSET.readall()
 RQUOTE = RQUOTE_ASSET.readall()
 
-URL = "http://feeds.feedburner.com/theysaidso/qod"
+URL = "https://feeds.feedburner.com/theysaidso/qod"
 
 WIDTH = 64
 HEIGHT = 32
@@ -83,15 +83,16 @@ def main(config):
         if data == None:
             #print("retrieving feed")
             content = http.get(URL)
-            if content.status_code == 200 and content.body():
-                xml = xpath.loads(content.body())
+            body = content.body()
+            if content.status_code == 200 and body and len(body) <= 512 * 1024 and "<rss" in body:
+                xml = xpath.loads(body)
                 data = {}
                 for c in CATEGORIES:
                     description = xml.query("//item[ends-with(link,'quote-of-the-day/" + c + "')]/description").replace("&#039;", "'")
                     quote, author = description.split(" - ", 1) if " - " in description else (description, "Unknown")
                     data[c] = {
-                        "quote": quote,
-                        "author": author,
+                        "quote": quote[:1000],
+                        "author": author[:200],
                     }
             else:
                 #print('Server returned %s' % content.status_code)

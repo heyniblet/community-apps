@@ -26,34 +26,19 @@ def main():
     description = []
     content_type = []
     pod_type = []
-    NLUPOD = True
+    item_count = min(6, len(channel), len(link))
+    if item_count == 0:
+        return render.Root(child = render.Text("NLU feed unavailable", font = "tom-thumb"))
 
-    for i in range(0, 6, 1):
+    for i in range(0, item_count, 1):
         desc = channel[i]
-        strippedlink = link[i][23:]
-        NLUPOD = True
-
-        # if its a podcast, check which one and remove chars at the front depending on which one - NLU or TrapDraw
-        if strippedlink.startswith("p"):
-            podstrip = strippedlink[9:]
-            if podstrip.startswith("t"):
-                NLUPOD = False
-
-        # if its video content, check if its Nest or NLU content and revise description
-        if strippedlink.startswith("v"):
-            vidstrip = strippedlink[7:]
-            if vidstrip.startswith("ne"):
-                desc = desc[12:]
-                desc = "Nest:" + desc
-            elif vidstrip.startswith("no"):
-                desc = desc[26:]
-                desc = "NLU:" + desc
-
-        strippedlink = strippedlink[:3]
+        article_link = link[i]
+        nlu_podcast = "/trap-draw/" not in article_link
+        content = "pod" if "/podcast" in article_link else "vid" if "/video" in article_link else "blo"
 
         description.append(desc)
-        content_type.append(strippedlink)
-        pod_type.append(NLUPOD)
+        content_type.append(content)
+        pod_type.append(nlu_podcast)
 
     return render.Root(
         delay = 90,
@@ -105,6 +90,9 @@ def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
 
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        fail("No Laying Up feed failed with status code: %d" % res.status_code)
 
-    return res.body()
+    body = res.body()
+    if not body or len(body) > 512000:
+        fail("No Laying Up feed returned an invalid body")
+    return body

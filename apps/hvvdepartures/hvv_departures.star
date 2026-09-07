@@ -694,8 +694,11 @@ def get_config_option_value(config, key, default = None):
         The value of the 'schema.Option' or the fallback value.
     """
     blob = config.str(key)
-    data = json.decode(blob) if blob != None else None
-    return data["value"] if data != None else default
+    if blob == None or blob == "":
+        return default
+    if blob.startswith("{"):
+        return json.decode(blob).get("value", default)
+    return blob
 
 def is_legacy_station_id(station_id):
     """Check whether a station ID is in HVV's old numeric format.
@@ -973,19 +976,19 @@ def get_schema():
                 default = widget_mode_options[0].value,
                 options = widget_mode_options,
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "station_id",
                 name = "Station",
-                desc = "Pick a station to show departures from (or your starting station, in Journey planner mode)",
+                desc = "Transitous station ID for departures or the journey start.",
                 icon = "mapPin",
-                handler = find_stations,
+                default = DEFAULT_STATION_ID,
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "to_station_id",
                 name = "Destination",
-                desc = "Pick where you want to go (Journey planner mode only, ignored otherwise)",
+                desc = "Transitous destination station ID (Journey planner mode only).",
                 icon = "mapPin",
-                handler = find_stations,
+                default = "",
             ),
             schema.Dropdown(
                 id = "max_walk_minutes",

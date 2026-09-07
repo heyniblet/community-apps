@@ -468,10 +468,5 @@ def get_schema():
                 default = scrollSpeedOptions[2].value,
                 options = scrollSpeedOptions,
             ),
-            schema.Generated(
-                id = "genbright",
-                source = "bginfo",
-                handler = brightness_schema,
-            ),
-        ],
+        ] + brightness_schema("3"),
     )

@@ -6,7 +6,7 @@ desc: Creating multiple app instances is no longer necessary. Just install once 
 author: LunchBox8484
 fileName: nhl_scores.star
 packageName: nhlscores
-recommendedInterval: 5
+recommendedInterval: 1
 category: sports
 tags:
   - utility

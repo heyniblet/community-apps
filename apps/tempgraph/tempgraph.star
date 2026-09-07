@@ -563,12 +563,7 @@ def get_schema():
                 icon = "gear",
                 default = False,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "custom_colors",
-                handler = color_options,
-            ),
-        ],
+        ] + color_options("true"),
     )
 
 def get_data(type, polling_interval, lat, lng, local_date, api_key):
@@ -586,9 +581,9 @@ def get_data(type, polling_interval, lat, lng, local_date, api_key):
     """
     url = ""
     if type == "current":
-        url = "http://api.weatherapi.com/v1/current.json?key={}&q={},{}".format(api_key, lat, lng)
+        url = "https://api.weatherapi.com/v1/current.json?key={}&q={},{}".format(api_key, lat, lng)
     elif type == "history":
-        url = "http://api.weatherapi.com/v1/history.json?key={}&q={},{}&dt={}".format(api_key, lat, lng, local_date)
+        url = "https://api.weatherapi.com/v1/history.json?key={}&q={},{}&dt={}".format(api_key, lat, lng, local_date)
 
     res = http.get(url, ttl_seconds = polling_interval)  # cache for polling_interval seconds
 

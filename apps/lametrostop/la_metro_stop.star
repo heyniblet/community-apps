@@ -25,7 +25,11 @@ def main(config):
         return render.Root(
             child = render.Text("No Transit App API Key provided.", font = "5x8"),
         )
+    if not transit_stop_id or len(transit_stop_id) > 40 or any([c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:_-" for c in transit_stop_id.elems()]):
+        return render.Root(child = render.Text("Invalid stop ID", font = "5x8"))
     route_info = parse_api_response(get_times(transit_stop_id, api_key))
+    if not route_info:
+        return render.Root(child = render.Text("No departures", font = "5x8"))
     stop_renders = []
     for stop_name in route_info:
         stop_renders.append(render_stop_info(route_info, stop_name, transit_line))
@@ -99,19 +103,21 @@ def get_times(stop_id, api_key):
         headers = {
             "apiKey": api_key,
         },
-        ttl_seconds = 60,
     )
     if rep.status_code != 200:
-        fail("Predictions request failed with status ", rep.status_code)
+        return {}
     return rep.json()
 
 def parse_api_response(depts):
     departures_dict = {}
-    for direction in depts["route_departures"][0]["itineraries"]:
-        departures_dict[direction["headsign"]] = [
+    routes = depts.get("route_departures", [])
+    if not routes:
+        return departures_dict
+    for direction in routes[0].get("itineraries", [])[:4]:
+        departures_dict[direction.get("headsign", "Metro")] = [
             int((time.from_timestamp(int(dept_time["departure_time"])) - time.now()).minutes)
-            for dept_time in direction["schedule_items"]
-            if not dept_time["is_cancelled"]
+            for dept_time in direction.get("schedule_items", [])[:8]
+            if not dept_time.get("is_cancelled", False) and dept_time.get("departure_time") != None
         ]
     return departures_dict
 

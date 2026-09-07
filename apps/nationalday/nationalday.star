@@ -86,7 +86,14 @@ def main(config):
     if rc == 0:
         json_data = data.get("today") or []
         metadata = data.get("metadata") or {}
+        if type(json_data) != "list":
+            json_data = []
+        json_data = [str(item) for item in json_data if type(item) == "string"]
+        if type(metadata) != "dict":
+            metadata = {}
         day_str = metadata.get("day") or ""
+        if type(day_str) != "string":
+            day_str = ""
         if day_str != "":
             date_str = format_header_date(mode, day_str, date_str)
     else:
@@ -171,13 +178,13 @@ def error(errtext):
     return render.WrappedText(errtext, font = ARTICLE_SUB_TITLE_FONT, color = ARTICLE_COLOR)
 
 def getData(filename):
-    # go get the data
     url = BASE_URL + filename
     response = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
     if response.status_code != 200:
-        return -1, "Data retreival error {}".format(str(response.status_code))
-    else:
-        json_data = response.json()
+        return -1, "Data retrieval error {}".format(str(response.status_code))
+    json_data = response.json()
+    if type(json_data) != "dict":
+        return -1, "Invalid calendar data"
 
     return 0, json_data
 

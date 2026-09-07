@@ -33,18 +33,23 @@ CATEGORIES = {
 COLOR_ALTER = "#fada5e"
 
 def get_feed(category = DEFAULT_ITEM_CATEGORY, ttl_seconds = 60 * 5):
-    url = "https://stacker.news/"
+    url = "https://stacker.news"
     if category != "home":
         url += "/~{}".format(category)
     url += "/rss"
 
     response = http.get(url = url, ttl_seconds = ttl_seconds)
-    if response.status_code != 200:
-        fail("Stacker.news request failed with status %d @ %s", response.status_code, url)
-    return response.body()
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 512 * 1024 or "<rss" not in body:
+        return None
+    return body
 
 def get_nth_item_from_raw_xml(raw_xml, nth = 1):
+    if nth > 10:
+        return None
     feed_item = xpath.loads(raw_xml).query_node("//rss/channel/item[{}]".format(nth))
+    if feed_item == None:
+        return None
     author = feed_item.query("/atom:author/atom:name")
 
     # Skip ads
@@ -95,14 +100,19 @@ def main(config):
     item_category = config.str("category", DEFAULT_ITEM_CATEGORY)
 
     rss_feed = get_feed(category = item_category)
+    if not rss_feed:
+        return render.Root(child = render.WrappedText("Stacker.news unavailable", align = "center"))
     item = get_nth_item_from_raw_xml(rss_feed, item_nth)
+    if not item:
+        return render.Root(child = render.WrappedText("No Stacker.news posts", align = "center"))
 
     category = item_category
     if item_category == "home":
         category = item["category"] or "home"  # rss feed backwards compatible
 
-    category_name = CATEGORIES[category]["name"]
-    category_color = CATEGORIES[category]["color"]
+    category_details = CATEGORIES.get(category, {"name": str(category)[:8], "color": "#fff"})
+    category_name = category_details["name"]
+    category_color = category_details["color"]
 
     return render.Root(
         delay = 90,

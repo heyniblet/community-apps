@@ -13,6 +13,7 @@ load("schema.star", "schema")
 
 ADDS_URL = "https://aviationweather.gov/api/data/metar?ids=%s&format=json&hours=2"
 DEFAULT_AIRPORT = "KJFK, KLGA, KBOS, KDCA"
+REQUEST_HEADERS = {"User-Agent": "Niblet/1.0 (hello@heyniblet.com)"}
 
 # encryption, schema
 # fail expired, add timeout to Root
@@ -28,7 +29,7 @@ def normalize_airport(airport):
     return airport
 
 def decoded_result_for_airport(airport):
-    rep = http.get(ADDS_URL % airport, ttl_seconds = 60)
+    rep = http.get(ADDS_URL % airport, headers = REQUEST_HEADERS, ttl_seconds = 600)
     if rep.status_code == 204:
         return {
             "color": "#000000",
@@ -52,7 +53,9 @@ def decoded_result_for_airport(airport):
 
     result = dict(json_data[0])
 
-    if result["rawOb"] == "":
+    raw_observation = result.get("rawOb", "")
+    flight_category = result.get("fltCat", "UNK")
+    if raw_observation == "":
         return {
             "color": "#000000",
             "text": "Could not parse METAR",
@@ -60,9 +63,9 @@ def decoded_result_for_airport(airport):
         }
 
     response = {
-        "color": color_for_state(result["fltCat"]),
-        "text": result["rawOb"],
-        "flight_category": result["fltCat"],
+        "color": color_for_state(flight_category),
+        "text": raw_observation,
+        "flight_category": flight_category,
     }
     return response
 

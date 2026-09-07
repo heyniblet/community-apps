@@ -93,6 +93,13 @@ def main(config):
     league = {LEAGUE: API}
     selectedTeam = config.get("selectedTeam", "all")
     scores = get_scores(league, selectedTeam)
+
+    # Keep cold downloads within the render budget and rotate through every
+    # game across refreshes instead of rendering frames beyond the 15s cap.
+    page_size = max(1, min(3, 15 // max(1, int(rotationSpeed))))
+    if len(scores) > page_size:
+        start = (now.unix // 60 * page_size) % len(scores)
+        scores = (scores + scores)[start:start + page_size]
     if len(scores) > 0:
         for i, s in enumerate(scores):
             gameStatus = s["status"]["type"]["state"]
@@ -486,7 +493,8 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
-            show_full_animation = True,
+            max_age = 180,
+            show_full_animation = len(renderCategory) > 1,
             child = render.Column(
                 children = [
                     render.Animation(
@@ -900,13 +908,17 @@ def get_background_color(team, displayType, color):
 def get_logoType(team, logo):
     usealtlogo = json.decode(ALT_LOGO)
     usealt = usealtlogo.get(team, "NO")
+    originalLogo = logo
     if usealt != "NO":
-        logo = get_cachable_data(usealt, 36000)
+        candidates = [usealt, originalLogo]
     else:
         logo = logo.replace("500/scoreboard", "500-dark/scoreboard")
-        logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=", 36000)
-        logo = get_cachable_data(logo + "&h=50&w=50")
-    return logo
+        candidates = [logo, originalLogo]
+    for candidate in candidates:
+        res = http.get(url = candidate, ttl_seconds = 36000)
+        if res.status_code == 200:
+            return res.body()
+    return get_cachable_data("https://i.ibb.co/5LMp8T1/transparent.png", 36000)
 
 def get_logoSize(team):
     usealtsize = json.decode(MAGNIFY_LOGO)
@@ -935,7 +947,7 @@ def get_date_column(displayTop, now, scoreNumber, rotationSpeed, textColor, bord
             timeBox += LEAGUE_DISPLAY_OFFSET
             statusBox -= LEAGUE_DISPLAY_OFFSET
         else:
-            now = now + time.parse_duration("%ds" % int(scoreNumber) * int(rotationSpeed))
+            now = now + time.parse_duration("%ds" % (int(scoreNumber) * int(rotationSpeed)))
             theTime = now.format("3:04")
             if len(str(theTime)) > 4:
                 timeBox += 4

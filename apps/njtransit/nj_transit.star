@@ -38,26 +38,18 @@ Author: jason-j-hunt
 #Even numbered trains are inbound direction(towards NYC, or Atlantic City, or northbound/eastbound AMTRAK)
 #odd numbered trans are outbound
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
-load("html.star", "html")
 load("http.star", "http")
 load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
+load("stations.txt", STATIONS_ASSET = "file")
 load("time.star", "time")
 
-#URL TO NJ TRANSIT DEPARTURE VISION WEBSITE
-NJ_TRANSIT_DV_URL = "https://www.njtransit.com/dv-to"
-NJ_TRANSIT_STATIONS_URL = "https://www.njtransit.com/station-park-ride-to"
 NJ_TRANSIT_GRAPHQL_URL = "https://www.njtransit.com/api/graphql/graphql"
 DEFAULT_STATION = "DEFAULT_STATION"
-
-STATION_CACHE_KEY = "stations"
-STATION_CACHE_TTL = 604800  #1 Week
-
-DEPARTURES_CACHE_KEY = "departures"
 DEPARTURES_CACHE_TTL = 60  # 1 minute
+STATION_NAMES = [name for name in STATIONS_ASSET.readall().split("\n") if name]
 
 TIMEZONE = "America/New_York"
 
@@ -394,7 +386,7 @@ def get_departures_for_station(station):
         track_number: string
         departing_in: string
     """
-    if station == DEFAULT_STATION:
+    if station == DEFAULT_STATION or type(station) != "string" or not station.strip() or len(station) > 120:
         return []
 
     # Construct GraphQL query
@@ -436,7 +428,11 @@ def get_departures_for_station(station):
         return []
 
     # Parse the GraphQL response
-    response_data = json.decode(response.body())
+    response_body = response.body()
+    if not response_body or len(response_body) > 512000:
+        print("GraphQL API returned an invalid body")
+        return []
+    response_data = json.decode(response_body)
 
     if response_data == None:
         print("Failed to parse GraphQL response")
@@ -453,18 +449,26 @@ def get_departures_for_station(station):
         return []
 
     departures_data = departure_screens.get("items", [])
+    if type(departures_data) != "list":
+        return []
     now = time.now().in_location(TIMEZONE)
 
     # Convert GraphQL response to our departure struct format
     result = []
-    for item in departures_data:
+    for item in departures_data[:64]:
+        if type(item) != "dict":
+            continue
         departure_date = item.get("departureDate", "")
-        status = item.get("status", "")
+        departure_date = departure_date if type(departure_date) == "string" else ""
+        status = item.get("status") or ""
+        train_id = str(item.get("trainID") or "")
+        if len(re.findall("[0-9]+", train_id)) == 0:
+            continue
         departure_struct = struct(
             departing_at = departure_date,
-            destination = str(item.get("destination", "")).upper(),
-            service_line = item.get("lineAbbreviation", "AMTK"),
-            train_number = str(item.get("trainID", "")),
+            destination = str(item.get("destination") or "Unknown").upper()[:120],
+            service_line = item.get("lineAbbreviation") or "AMTK",
+            train_number = train_id,
             track_number = item.get("track"),
             departing_in = get_departing_in(departure_date, now, status),
         )
@@ -510,84 +514,8 @@ def get_departing_in(departure_date, now, status):
 
     return "Sched in {}h {}m".format(hours, minutes)
 
-def fetch_stations_from_website():
-    """
-    Function fetches trains station list from NJ Transit website
-    To be used for creating Schema option list
-    Parses the Nuxt.js __NUXT_DATA__ JSON payload
-    """
-    result = []
-
-    nj_dv_page_response = http.get(NJ_TRANSIT_STATIONS_URL, ttl_seconds = DEPARTURES_CACHE_TTL)
-
-    if nj_dv_page_response.status_code != 200:
-        print("Got code '%s' from page response" % nj_dv_page_response.status_code)
-        return result
-
-    nj_dv_page_response_body = nj_dv_page_response.body()
-
-    # Parse the HTML to find the __NUXT_DATA__ script tag
-    selector = html(nj_dv_page_response_body)
-    script_tag = selector.find("script#__NUXT_DATA__").first()
-
-    if script_tag == None:
-        print("Could not find __NUXT_DATA__ script tag")
-        return result
-
-    # Get the JSON content from the script tag
-    json_content = script_tag.text()
-
-    # Parse the Nuxt.js data array format
-    # The format uses indexed references where objects contain indices pointing to values
-    data = json.decode(json_content)
-
-    # Iterate through the data array to find station objects
-    # Station objects have the pattern: {"__typename": idx1, "title": idx2, "path": idx3}
-    # where data[idx1] == "TrainScheduleStation" and data[idx2] is the station name
-    stations_found = 0
-    for i in range(len(data)):
-        item = data[i]
-
-        # Check if this is a dict with the expected station structure
-        if type(item) == "dict" and "__typename" in item and "title" in item and "path" in item:
-            typename_idx = item["__typename"]
-            title_idx = item["title"]
-
-            # Safely get values by index
-            if typename_idx < len(data) and title_idx < len(data):
-                typename = data[typename_idx]
-                title = data[title_idx]
-
-                # Check if this is a TrainScheduleStation with a valid title
-                if typename == "TrainScheduleStation" and type(title) == "string" and len(title) > 0:
-                    result.append(title)
-                    stations_found = stations_found + 1
-
-    print("Got response of '%s' stations" % stations_found)
-
-    return result
-
 def getStationListOptions():
-    """
-    Creates a list of schema options from station list
-    """
-    options = []
-    cache_string = cache.get(STATION_CACHE_KEY)
-
-    stations = None
-
-    if cache_string != None:
-        stations = json.decode(cache_string)
-
-    if stations == None:
-        stations = fetch_stations_from_website()
-
-        cache.set(STATION_CACHE_KEY, json.encode(stations), STATION_CACHE_TTL)
-
-    for station in stations:
-        options.append(create_option(station, station))
-
-    return options
+    return [create_option(station, station) for station in STATION_NAMES]
 
 def getLineOptions(evenwords, oddwords):
     """

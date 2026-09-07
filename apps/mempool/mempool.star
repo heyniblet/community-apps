@@ -18,6 +18,7 @@ BOX_PURPLE_IMG = BOX_PURPLE_IMG_ASSET.readall()
 LINE_IMG = LINE_IMG_ASSET.readall()
 
 DEFAULT_FIAT = "usd"
+CACHE_TTL_SECONDS = 60
 URL_BLOCK_TIP_HEIGHT = "https://mempool.space/api/blocks/tip/height"
 URL_BLOCK_DETAILS = "https://mempool.space/api/v1/blocks"
 URL_FEES = "https://mempool.space/api/v1/fees/recommended"
@@ -25,7 +26,7 @@ URL_FEES = "https://mempool.space/api/v1/fees/recommended"
 BOX_SIZE_WIDTH = 28
 BOX_SIZE_HEIGHT = 27
 
-def get_mempool_data(url, ttl_seconds = 30):
+def get_mempool_data(url, ttl_seconds = CACHE_TTL_SECONDS):
     response = http.get(url = url, ttl_seconds = ttl_seconds)
     if response.status_code != 200:
         print("Mempool.space request failed with status %d @ %s" % (response.status_code, url))
@@ -139,7 +140,7 @@ def main():
     box_purple = create_purple_block(block_tip_height)
 
     return render.Root(
-        max_age = 30,
+        max_age = CACHE_TTL_SECONDS,
         child = render.Row(
             main_align = "space_between",
             cross_align = "end",

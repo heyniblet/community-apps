@@ -16,15 +16,13 @@ DEMOICON = DEMOICON_ASSET.readall()
 def main(config):
     userName = config.get("lastFmUser") or "badUser"
     api_key = config.get("lastApiKey") or "badKey"
-    clockShown = config.get("showClock") or True
+    clockShown = config.bool("showClock", True)
 
     if (userName == "DemoUser" or api_key == "DemoKey"):
-        print("in demo")
         return demoMode()
 
     # handle missing config data
     if (userName == "badUser"):
-        print("bad user")
         return render.Root(
             child = render.WrappedText(
                 content = "Last.fm Username missing in Tidbyt config. Use DemoUser for demo.",
@@ -33,7 +31,6 @@ def main(config):
             ),
         )
     if (api_key == "badKey"):
-        print("bad key")
         return render.Root(
             child = render.WrappedText(
                 content = "Last.fm API key missing in Tidbyt config. Use DemoKey for demo.",
@@ -42,9 +39,13 @@ def main(config):
             ),
         )
 
-    lastFmUrl = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=" + userName + "&api_key=" + api_key + "&format=json"
-
-    rep = http.get(lastFmUrl)
+    rep = http.get("https://ws.audioscrobbler.com/2.0/", params = {
+        "method": "user.getrecenttracks",
+        "user": userName,
+        "api_key": api_key,
+        "format": "json",
+        "limit": "1",
+    })
     if rep.status_code != 200:
         return render.Root(
             child = render.WrappedText(
@@ -54,19 +55,24 @@ def main(config):
             ),
         )
 
-    track = rep.json()["recenttracks"]["track"][0]
+    tracks = rep.json().get("recenttracks", {}).get("track", [])
+    if not tracks:
+        return render.Root(child = render.Text("No recent tracks", font = "5x8"))
+    track = tracks[0]
 
     #print(track["image"][0])
-    img = http.get(track["image"][0]["#text"])
+    images = track.get("image", [])
+    image_url = images[-1].get("#text", "") if images else ""
+    img = http.get(image_url) if image_url.startswith("https://lastfm.freetls.fastly.net/") or image_url.startswith("https://lastfm-img2.akamaized.net/") else None
 
     #if no image on last.fm, use a colored box - should be rare
-    if (img == ""):
+    if img == None or img.status_code != 200:
         albumWidget = render.Box(color = "#5F9", height = 32, width = 32)
     else:
         albumWidget = render.Image(src = img.body(), height = 32, width = 32)
 
     now = ""
-    if (clockShown == "true"):
+    if clockShown:
         now = time.now()
 
     return renderIt(now, albumWidget, track)
@@ -78,7 +84,7 @@ def renderIt(now, albumWidget, track):
                 render.Padding(
                     pad = (42, 1, 0, 0),
                     child = render.Text(
-                        content = now.format("3:04"),
+                        content = now.format("3:04") if now else "",
                         font = "tom-thumb",
                         color = "#777",
                     ),

@@ -6,6 +6,7 @@ Author: Connick Shields
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -39,10 +40,13 @@ EASE_IN_OUT = "ease_in_out"
 # Constants
 API_URL = "https://api.bluelytics.com.ar/v2/evolution.json"
 DAYS = 30
+DAY_OPTIONS = ["7", "14", "30", "60", "90"]
+MAX_RESPONSE_BYTES = 256 * 1024
 
 def main(config):
     # Load config settings from mobile app, or set default
-    config_days = int(config.str("days", DAYS))
+    configured_days = str(config.get("days", DAYS))
+    config_days = int(configured_days if configured_days in DAY_OPTIONS else str(DAYS))
 
     api_url = "{api}?days={days}".format(
         api = API_URL,
@@ -51,18 +55,27 @@ def main(config):
 
     # Get data from API
     response = http.get(api_url, ttl_seconds = CACHE_TTL)
-    if response.status_code != 200:
-        fail("Request failed with status %d", response.status_code)
-    json_response = response.json()
+    body = response.body()
+    json_response = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    if type(json_response) != "list":
+        return render_error()
 
     blue_prices = []
     official_prices = []
 
-    for price in list(json_response):
-        if price["source"] == "Blue":
-            blue_prices.append(price["value_sell"])
-        else:
-            official_prices.append(price["value_sell"])
+    for price in json_response[:400]:
+        if type(price) != "dict" or type(price.get("value_sell")) not in ["int", "float"]:
+            continue
+        value = price["value_sell"]
+        if value <= 0 or value > 1000000000:
+            continue
+        if price.get("source") == "Blue":
+            blue_prices.append(value)
+        elif price.get("source") == "Oficial":
+            official_prices.append(value)
+
+    if len(blue_prices) < 2 or len(official_prices) < 2:
+        return render_error()
 
     blue_stack = render.Stack(
         children = [
@@ -90,6 +103,9 @@ def main(config):
     )
 
     return render.Root(child = final_sequence)
+
+def render_error():
+    return render.Root(child = render.WrappedText(content = "Exchange data unavailable", align = "center", width = 64))
 
 def currency_info(prices, label):
     latest_price = prices[0]
@@ -182,6 +198,12 @@ def history_chart(prices):
     price_history = reversed(days_value_variation)
 
     # Render trendy line (based on schema configs + api data)
+    lower = min(days_value_variation)
+    upper = max(days_value_variation)
+    if lower == upper:
+        lower = lower - 1
+        upper = upper + 1
+
     return render.Plot(
         data = enumerate(price_history),
         width = 40,
@@ -192,7 +214,7 @@ def history_chart(prices):
         fill_color = POSITIVE_PLOT_FILL,
         fill_color_inverted = NEGATIVE_PLOT_FILL,
         x_lim = (0, len(price_history) - 1),
-        y_lim = (min(days_value_variation), max(days_value_variation)),
+        y_lim = (lower, upper),
     )
 
 def animate_history_chart(prices):

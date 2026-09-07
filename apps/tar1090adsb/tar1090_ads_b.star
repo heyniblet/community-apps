@@ -5,6 +5,7 @@ Description: ADS-B Information from your publically available tar1090 instance.
 Author: Cameron Battagler
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/blank.png", BLANK_ASSET = "file")
 load("images/error.gif", ERROR_ASSET = "file")
@@ -253,6 +254,8 @@ def find_flag(icao):
     flag_icon_file = "blank.png"
 
     # Determine country code based on ICAO ranges (listed above)
+    if type(icao) != "string" or not re.match("^[0-9A-Fa-f]{6}$", icao):
+        return BLANK_ASSET.readall()
     hex_icao = int(icao, 16)
     for icao_range in ICAO_Ranges:
         if hex_icao >= icao_range["start"] and hex_icao <= icao_range["end"]:
@@ -260,28 +263,25 @@ def find_flag(icao):
 
     # Cache flags for a week, they don't change that often
     flag_response = http.get("%s/flags-tiny/%s" % ("https://globe.adsbexchange.com", flag_icon_file), ttl_seconds = 604800)
-    if flag_response.status_code != 200:
-        print("ADSB-EX request for flag icon failed with status %d" % (flag_response.status_code))
-
-        # If we can't reach the server, return a copy of the blank flag
+    body = flag_response.body()
+    if flag_response.status_code != 200 or not body or len(body) > 512 * 1024 or not flag_response.headers.get("Content-Type", "").lower().startswith("image/"):
         return BLANK_ASSET.readall()
-    return flag_response.body()
+    return body
 
 # Get our database version
 def get_db_version(tar_url):
     response = http.get(tar_url + "/version.json", ttl_seconds = 1800)
-    if response.status_code != 200:
-        print("Failed to get database version, throwing error.")
-        return None
-    return response.json()["databaseVersion"]
+    data = response_json(response, 64 * 1024)
+    version = data.get("databaseVersion") if type(data) == "dict" else None
+    version = str(version) if type(version) in ["string", "int"] else ""
+    return version if re.match("^[A-Za-z0-9._-]{1,80}$", version) else None
 
 # Aircraft descriptions
 def lookup_aircraft_desc(tar_url, aircraft_data, db_version):
     response = http.get("%s/db-%s/%s.js" % (tar_url, db_version, "icao_aircraft_types"), ttl_seconds = 86400)
-    if response.status_code != 200:
-        print("Couldn't get aircraft types file, throwing error")
+    aircraft_types = response_json(response, 2 * 1024 * 1024)
+    if type(aircraft_types) != "dict":
         return None
-    aircraft_types = response.json()
 
     typeDesignator = aircraft_data[1].upper()
     if typeDesignator in aircraft_types:
@@ -292,15 +292,16 @@ def lookup_aircraft_desc(tar_url, aircraft_data, db_version):
 # We grab the icao aircraft info via nested API calls
 # Caching all files as needed for 24 hours, again database keyed
 def lookup_db(tar_url, icao, level, db_version):
+    if level >= len(icao):
+        return None
     icao = icao.upper()
     bkey = icao[0:level]
     dkey = icao[level:]
 
     response = http.get("%s/db-%s/%s.js" % (tar_url, db_version, bkey), ttl_seconds = 86400)
-    if response.status_code != 200:
-        print("Cannot get aircraft DB file " + bkey + " throwing error")
+    aircraft_db = response_json(response, 2 * 1024 * 1024)
+    if type(aircraft_db) != "dict":
         return None
-    aircraft_db = response.json()
 
     if dkey in aircraft_db:
         return aircraft_db[dkey]
@@ -319,9 +320,9 @@ def aircraft_distance_sort(aircraft):
 
 # Return nearest aircraft to station
 def find_nearest_aircraft(aircrafts):
-    aircrafts = sorted(aircrafts, key = aircraft_distance_sort)
+    aircrafts = sorted([aircraft for aircraft in aircrafts if type(aircraft) == "dict"], key = aircraft_distance_sort)
     for aircraft in aircrafts:
-        if "category" in aircraft and "flight" in aircraft and "alt_baro" in aircraft:
+        if "category" in aircraft and "flight" in aircraft and "alt_baro" in aircraft and type(aircraft.get("hex")) == "string" and re.match("^[0-9A-Fa-f]{6}$", aircraft["hex"]):
             # print(aircraft)
             return aircraft
     return None
@@ -337,9 +338,9 @@ def get_callsign(aircraft):
 # to a PNG icon that the color is alt based
 def get_aircraft_icon(category, designator, description, addrtype, color):
     aircraft_icon_response = http.get("https://tar1090tidbyt.azurewebsites.net/api/aircraft_icon?category=%s&typeDesignator=%s&typeDescription=%s&addrtype=%s&color=%s" % (category, designator, description, addrtype, color), ttl_seconds = 86400)
-    if aircraft_icon_response.status_code != 200:
-        fail("tar1090 request failed with status %d" % (aircraft_icon_response.status_code))
     aircraft_icon = aircraft_icon_response.body()
+    if aircraft_icon_response.status_code != 200 or not aircraft_icon or len(aircraft_icon) > 512 * 1024 or not aircraft_icon_response.headers.get("Content-Type", "").lower().startswith("image/"):
+        return BLANK_ASSET.readall()
     return aircraft_icon
 
 # Determine the color of the icon based on altitude of the aircraft
@@ -417,15 +418,19 @@ def unable_to_reach_tar_error(tar_url):
     )
 
 def validate_url(url):
-    url_regex = "http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
-    url_search = re.findall(url_regex, url)
-    if len(url_search) > 0:
-        return True
-    else:
+    if type(url) != "string" or len(url) > 2048 or not url.startswith("https://") or any([char in url for char in [" ", "\t", "\r", "\n", "?", "#"]]):
         return False
+    parts = url.split("/", 3)
+    host = parts[2].lower() if len(parts) >= 3 else ""
+    return bool(host) and "@" not in host and ":" not in host
+
+def response_json(response, maximum):
+    body = response.body()
+    data = json.decode(body, None) if response.status_code == 200 and body and len(body) <= maximum else None
+    return data
 
 def main(config):
-    tar_url = config.str("tar1090url", TAR1090_URL_DEFAULT)
+    tar_url = config.str("tar1090url", TAR1090_URL_DEFAULT).rstrip("/")
 
     if tar_url == TAR1090_URL_DEFAULT:
         return unable_to_reach_tar_error(tar_url)
@@ -443,7 +448,9 @@ def main(config):
     if response.status_code != 200:
         return unable_to_reach_tar_error(tar_url)
 
-    aircrafts = response.json()["aircraft"]
+    data = response_json(response, 2 * 1024 * 1024)
+    aircrafts = data.get("aircraft", []) if type(data) == "dict" else []
+    aircrafts = aircrafts[:1000] if type(aircrafts) == "list" else []
 
     aircraft = find_nearest_aircraft(aircrafts)
     if aircraft == None:

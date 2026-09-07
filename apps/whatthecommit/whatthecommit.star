@@ -1,3 +1,4 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 
@@ -87,16 +88,18 @@ def write_command(line, frame_delay, frame_buffer_size, hold_first_frame_count, 
     ], expanded = True)
 
 def main():
-    resp = http.get("https://whatthecommit.com/index.json", headers = {"accept": "application/json"})
-    data = resp.json()
-    if not "commit_message" in data:
+    resp = http.get("https://whatthecommit.com/index.json", headers = {"accept": "application/json"}, ttl_seconds = 3600)
+    body = resp.body()
+    data = json.decode(body, {}) if resp.status_code == 200 and body and len(body) <= 16 * 1024 else {}
+    msg = data.get("commit_message") if type(data) == "dict" else None
+    if type(msg) != "string" or not msg:
         return render.Root(
             render.WrappedText(
                 "Error pulling funny commit msg :/",
                 font = "5x8",
             ),
         )
-    msg = data["commit_message"]
+    msg = msg[:240]
     frame_buffer_size = 15
 
     return render.Root(

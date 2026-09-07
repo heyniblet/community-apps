@@ -5,7 +5,7 @@ Tidbyt/Pixlet applet that renders today's tide table for Brazilian beachs.
 The first version defaults to the Cabedelo station (`pb01`) and calls:
 
 ```text
-https://tabuamare.devtu.qzz.io/api/v2/tabua-mare/pb01/{month}/{day}
+https://tabuamare.api.br/api/v2/tabua-mare/pb01/{month}/{day}
 ```
 
 `{month}` is the current month in `MM` format and `{day}` is the current local day for the configured timezone.

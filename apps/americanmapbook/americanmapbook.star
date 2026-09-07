@@ -296,7 +296,7 @@ def get_location_options(locations):
     sorted_locations = sorted(locations, key = lambda entry: entry["state"])
 
     return [
-        schema.Toggle(id = "STATE_%s_%s" % (location["state"].replace(" ", "_"), location["location"].replace(" ", "_")), name = location["state"], desc = "%s, %s" % (location["location"], location["state"]), icon = "landmarkDome", default = False)
+        schema.Toggle(id = "STATE_%s_%s" % (slugify(location["state"]), slugify(location["location"])), name = location["state"], desc = "%s, %s" % (location["location"], location["state"]), icon = "landmarkDome", default = False)
         for location in sorted_locations
     ]
 
@@ -304,7 +304,7 @@ def get_national_park_options(parks):
     sorted_parks = sorted(parks, key = lambda entry: (entry["state"], entry["park"]))
 
     return [
-        schema.Toggle(id = "PARK_%s_%s" % (park["state"].replace(" ", "_"), park["park"].replace(" ", "_")), name = park["park"].replace(" National Park", ""), desc = "%s, %s" % (park["park"], park["state"]), icon = "tree", default = False)
+        schema.Toggle(id = "PARK_%s_%s" % (slugify(park["state"]), slugify(park["park"])), name = park["park"].replace(" National Park", ""), desc = "%s, %s" % (park["park"], park["state"]), icon = "tree", default = False)
         for park in sorted_parks
     ]
 
@@ -312,7 +312,7 @@ def get_world_heritage_options(sites):
     sorted_sites = sorted(sites, key = lambda entry: (entry["state"], entry["site"]))
 
     return [
-        schema.Toggle(id = "HERITAGE_%s_%s" % (site["state"].replace(" ", "_"), site["site"].replace(" ", "_")), name = site["site"], desc = "%s, %s" % (site["site"], site["state"]), icon = "locationPin", default = False)
+        schema.Toggle(id = "HERITAGE_%s_%s" % (slugify(site["state"]), slugify(site["site"])), name = site["site"], desc = "%s, %s" % (site["site"], site["state"]), icon = "locationPin", default = False)
         for site in sorted_sites
     ]
 
@@ -363,48 +363,49 @@ def get_tracking_items(tracking_type):
         return get_location_options(usa_capitols)
 
 def get_schema():
+    fields = [
+        schema.Toggle(
+            id = "showCount",
+            name = "Count",
+            desc = "Display the Count of Visited Items?",
+            icon = "calculator",
+        ),
+        schema.Color(
+            id = "map_outline_color",
+            name = "Map",
+            desc = "Map Outline Color",
+            icon = "brush",
+            default = DEFAULT_COLORS[0],
+        ),
+        schema.Color(
+            id = "unvisited_color",
+            name = "Unvisited",
+            desc = "Unvisited Dot Color",
+            icon = "brush",
+            default = DEFAULT_COLORS[1],
+        ),
+        schema.Color(
+            id = "visited_color",
+            name = "Visited",
+            desc = "Visited Dot Color",
+            icon = "brush",
+            default = DEFAULT_COLORS[2],
+        ),
+        schema.Dropdown(
+            id = "type",
+            name = "Tracking",
+            desc = "What do you want to track?",
+            icon = "mapLocation",
+            options = TRACKING_OPTIONS,
+            default = TRACKING_OPTIONS[0].value,
+        ),
+    ]
+    fields.extend(get_location_options(usa_capitols))
+    fields.extend(get_national_park_options(usa_national_parks))
+    fields.extend(get_world_heritage_options(world_heritage_sites))
+    fields.extend(get_presidential_library_options(presidential_libraries))
+
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Toggle(
-                id = "showCount",
-                name = "Count",
-                desc = "Display the Count of Visited Items?",
-                icon = "calculator",
-            ),
-            schema.Color(
-                id = "map_outline_color",
-                name = "Map",
-                desc = "Map Outline Color",
-                icon = "brush",
-                default = DEFAULT_COLORS[0],
-            ),
-            schema.Color(
-                id = "unvisited_color",
-                name = "Unvisited",
-                desc = "Unvisited Dot Color",
-                icon = "brush",
-                default = DEFAULT_COLORS[1],
-            ),
-            schema.Color(
-                id = "visited_color",
-                name = "Visited",
-                desc = "Visited Dot Color",
-                icon = "brush",
-                default = DEFAULT_COLORS[2],
-            ),
-            schema.Dropdown(
-                id = "type",
-                name = "Tracking",
-                desc = "What do you want to track?",
-                icon = "mapLocation",
-                options = TRACKING_OPTIONS,
-                default = TRACKING_OPTIONS[0].value,
-            ),
-            schema.Generated(
-                id = "typelist",
-                source = "type",
-                handler = get_tracking_items,
-            ),
-        ],
+        fields = fields,
     )

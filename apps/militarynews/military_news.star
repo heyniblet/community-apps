@@ -11,7 +11,7 @@ load("schema.star", "schema")
 load("time.star", "time")
 load("xpath.star", "xpath")  #XPath Expressions to read XML RSS Feed
 
-CACHE_TTL_SECONDS = 86400  #1 Day
+CACHE_TTL_SECONDS = 600
 
 BRANCH_OPTIONS = [
     schema.Option(value = "air-force", display = "Air Force"),
@@ -241,7 +241,7 @@ def get_military_news(rss):
     res = http.get(
         url = rss,
         headers = {
-            "User-Agent": "curl/8.0",
+            "User-Agent": "Niblet/1.0 (hello@heyniblet.com)",
             "Accept": "application/rss+xml, application/xml, text/xml, */*",
         },
         ttl_seconds = CACHE_TTL_SECONDS,

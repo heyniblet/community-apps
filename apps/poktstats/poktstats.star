@@ -1,24 +1,20 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/pokt_icon.png", POKT_ICON_ASSET = "file")
 load("render.star", "render")
 
 POKT_ICON = POKT_ICON_ASSET.readall()
 
-COINSTATS_PRICE_URL = "https://api.coinstats.app/public/v1/coins/pocket-network"
-PNI_HEIGHT_URL = "https://supply.research.pokt.network:8192/height"
+PRICE_URL = "https://api.coingecko.com/api/v3/simple/price?ids=pocket-network&vs_currencies=usd"
+TTL_SECONDS = 300
+MAX_RESPONSE_BYTES = 4096
 
 def main():
-    print("calling coinstats API")
-    rep = http.get(COINSTATS_PRICE_URL, ttl_seconds = 7200)
-    if rep.status_code != 200:
-        fail("Coinstats request failed with status %d", rep.status_code)
-    price = rep.json().get("coin", {}).get("price", "0.00")
-
-    print("calling PNI API")
-    rep = http.get(PNI_HEIGHT_URL, ttl_seconds = 600)
-    if rep.status_code != 200:
-        fail("PNI Height request failed with status %d", rep.status_code)
-    height = rep.body()
+    rep = http.get(PRICE_URL, ttl_seconds = TTL_SECONDS)
+    body = rep.body()
+    data = json.decode(body, None) if rep.status_code == 200 and len(body) <= MAX_RESPONSE_BYTES and body.startswith("{") and body.endswith("}") else {}
+    price = data.get("pocket-network", {}).get("usd") if type(data) == "dict" else None
+    price_text = "$%s" % price if type(price) in ("int", "float") else "Unavailable"
 
     return render.Root(
         child = render.Box(
@@ -39,8 +35,8 @@ def main():
                         cross_align = "start",  # Controls vertical alignment
                         children = [
                             render.Text(content = "POKT", font = "Dina_r400-6"),
-                            render.Text("$%s" % price),
-                            render.Text("%s" % height),
+                            render.Text(price_text),
+                            render.Text("USD"),
                         ],
                     ),
                 ],

@@ -54,6 +54,14 @@ def main(config):
     bid_ask = config.str("bid_ask", DEFAULT_BID_ASK)
 
     # Validate chosen options
+    if from_coin not in COINS:
+        from_coin = DEFAULT_FROM_COIN
+    if to_coin not in COINS:
+        to_coin = DEFAULT_TO_COIN
+    if price_precision not in ["2", "3", "4"]:
+        price_precision = DEFAULT_DECIMAL_POINTS
+    if bid_ask not in ["bid", "ask"]:
+        bid_ask = DEFAULT_BID_ASK
     if from_coin == to_coin:
         coins = list(COINS)
         coins.remove(from_coin)
@@ -71,11 +79,18 @@ def main(config):
     price_response = http.get(api_price_url, ttl_seconds = CACHE_TTL)
     if price_response.status_code != 200:
         fail("Request failed with status %d", price_response.status_code)
+    body = price_response.body()
+    if len(body) > 65536:
+        fail("Coin price response is too large")
     json_response = price_response.json()
+    if type(json_response) != "list" or len(json_response) < 2:
+        fail("Coin price response is incomplete")
 
     prices = []
 
-    for price in list(json_response):
+    for price in list(json_response)[:DAYS]:
+        if type(price) != "dict" or price.get(bid_ask) == None:
+            fail("Coin price response is invalid")
         prices.append(float(price[bid_ask]))
 
     stack = render.Stack(
@@ -184,6 +199,12 @@ def history_chart(prices):
     price_history = reversed(days_value_variation)
 
     # Render five days tendency line (based on schema configs + api data)
+    lower = min(days_value_variation)
+    upper = max(days_value_variation)
+    if lower == upper:
+        lower -= 1
+        upper += 1
+
     return render.Plot(
         data = enumerate(price_history),
         width = 26,
@@ -194,7 +215,7 @@ def history_chart(prices):
         fill_color = POSITIVE_PLOT_FILL,
         fill_color_inverted = NEGATIVE_PLOT_FILL,
         x_lim = (0, 4),
-        y_lim = (min(days_value_variation), max(days_value_variation)),
+        y_lim = (lower, upper),
     )
 
 def animate_history_chart(prices, price_precision):

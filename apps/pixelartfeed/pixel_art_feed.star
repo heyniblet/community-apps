@@ -15,12 +15,9 @@ request a minute, so the parsed post list is cached and reused across
 renders rather than fetched per frame.
 
 KNOWN LIMITATION: reddit also blocks by TLS fingerprint, and the fingerprint
-Go presents depends on whether the CPU has hardware AES. Hosts without it —
-every Raspberry Pi, whose ARM cores lack the crypto extensions — get a 403
-block page from reddit.com no matter what this app sends, while x86 hosts
-are served normally. Nothing here can change that, so those hosts can point
-"Feed mirror" at something on their own network that fetches the feed with a
-client reddit accepts (curl, python) and serves it back over plain HTTP.
+Go presents depends on whether the CPU has hardware AES. Hosts without it may
+receive a 403 block page from reddit.com. Those hosts can point "Feed mirror"
+at a public HTTPS service that mirrors Reddit's .rss feeds.
 """
 
 load("cache.star", "cache")
@@ -174,7 +171,7 @@ def load_posts(subreddit, feed_id, base):
     refresh fails, the stale list keeps being used rather than dropping
     the app to an error card.
     """
-    key = "posts:%s:%s" % (subreddit, feed_id)
+    key = "posts:%s:%s:%s" % (base, subreddit, feed_id)
     cached = decode_posts(cache.get(key))
 
     if len(cached) > 0 and cache.get("fresh:" + key) != None:
@@ -239,7 +236,7 @@ def feed_base(config):
     """Where feeds are read from: reddit, or a mirror standing in for it.
 
     See the KNOWN LIMITATION note at the top of this file for when a mirror
-    is needed. Anything that isn't a plain http(s) origin is ignored.
+    is needed. Insecure mirror URLs are ignored.
     """
     relay = config.str("relay", "").strip().rstrip("/")
 
@@ -248,7 +245,7 @@ def feed_base(config):
     # doesn't look like a bare origin is ignored in favour of reddit.
     if relay.find(" ") >= 0 or relay.find("\t") >= 0 or relay.find("\n") >= 0:
         return "https://www.reddit.com"
-    if relay.startswith("http://") or relay.startswith("https://"):
+    if relay.startswith("https://"):
         return relay
     return "https://www.reddit.com"
 
@@ -268,7 +265,7 @@ def fetch_posts(subreddit, feed_id, base):
     # the body has to be vetted before it gets there. Checking both ends
     # rejects a page that isn't a feed and a feed that arrived truncated.
     body = resp.body().strip()
-    if not body.startswith("<?xml") or not body.endswith("</feed>"):
+    if len(body) > 524288 or not body.startswith("<?xml") or not body.endswith("</feed>"):
         return []
     if body.find("<entry") < 0:
         return []
@@ -292,7 +289,7 @@ def fetch_posts(subreddit, feed_id, base):
         if len(found) == 0:
             continue
 
-        src = found[0]
+        src = found[0].split("&quot;")[0].split("&lt;")[0]
         if not has_image_ext(src):
             continue
 
@@ -748,7 +745,7 @@ def get_schema():
             schema.Text(
                 id = "relay",
                 name = "Feed mirror (advanced)",
-                desc = "Leave empty. Only needed if reddit returns 403 on your server, which it does on Raspberry Pi hosts: the address of something on your network that mirrors reddit's .rss feeds, e.g. http://192.168.1.10:8791",
+                desc = "Leave empty unless Reddit returns 403. Enter the public HTTPS address of a service that mirrors Reddit's .rss feeds.",
                 icon = "server",
                 default = "",
             ),

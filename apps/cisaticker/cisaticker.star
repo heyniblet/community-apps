@@ -4,15 +4,13 @@
 # Description: Shows top 3 CISA alerts simultaneously on the Tidbyt 64x32 display.
 #              Each alert scrolls independently in its own row.
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
-CISA_RSS = "https://www.cisa.gov/uscert/ncas/alerts.xml"
-CACHE_KEY = "cisa_alerts_v3"
-CACHE_TTL = 3600  # 60 minutes
+CISA_RSS = "https://www.cisa.gov/cybersecurity-advisories/cybersecurity-advisories.xml"
+CACHE_TTL = 1800
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 RED = "#CC0000"
 YELLOW = "#FFD700"
@@ -22,15 +20,11 @@ BLACK = "#000000"
 DIM = "#333333"
 
 def get_alerts(max_alerts):
-    cached = cache.get(CACHE_KEY)
-    if cached:
-        return json.decode(cached)[:max_alerts]
-
     resp = http.get(CISA_RSS, ttl_seconds = CACHE_TTL)
-    if resp.status_code != 200:
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return ["CISA feed unavailable"]
 
-    body = resp.body()
     titles = []
 
     items = body.split("<item>")
@@ -46,14 +40,13 @@ def get_alerts(max_alerts):
             title = title[:-3]
         title = title.strip()
         if title:
-            titles.append(title)
+            titles.append(title[:240])
         if len(titles) >= 10:
             break
 
     if not titles:
         return ["No CISA alerts found"]
 
-    cache.set(CACHE_KEY, json.encode(titles), ttl_seconds = CACHE_TTL)
     return titles[:max_alerts]
 
 def alert_row(text, color):

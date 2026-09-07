@@ -6,7 +6,6 @@ Author: Brian Bell
 """
 
 load("animation.star", "animation")
-load("encoding/base64.star", "base64")
 load("images/icon_check.png", ICON_CHECK_ASSET = "file")
 load("images/icon_clock.png", ICON_CLOCK_ASSET = "file")
 load("images/icon_do_not_enter.png", ICON_DO_NOT_ENTER_ASSET = "file")
@@ -23,18 +22,31 @@ load("schema.star", "schema")
 DEFAULT_NAME = "Jane Smith"
 DEFAULT_STATUS = "Focusing"
 DEFAULT_COLOR = "#FFFF00"
-DEFAULT_ICON = ICON_CHECK_ASSET.readall()
+DEFAULT_ICON = "lightning"
 DEFAULT_MESSAGE = "Until later"
+
+ICONS = {
+    "check": ICON_CHECK_ASSET.readall(),
+    "clock": ICON_CLOCK_ASSET.readall(),
+    "do-not-enter": ICON_DO_NOT_ENTER_ASSET.readall(),
+    "exclamation": ICON_EXCLAMATION_ASSET.readall(),
+    "heart": ICON_HEART_ASSET.readall(),
+    "house": ICON_HOUSE_ASSET.readall(),
+    "lightning": ICON_LIGHTNING_ASSET.readall(),
+    "music": ICON_MUSIC_ASSET.readall(),
+    "plane": ICON_PLANE_ASSET.readall(),
+    "question": ICON_QUESTION_ASSET.readall(),
+}
 
 def main(config):
     name = config.str("name", DEFAULT_NAME)
     status = config.get("status", DEFAULT_STATUS)
     color = config.get("color", DEFAULT_COLOR)
-    icon_setting = config.get("icon")
+    icon_setting = config.str("icon", DEFAULT_ICON)
     message = config.get("message", DEFAULT_MESSAGE)
     animations = config.bool("animation", False)
 
-    icon = base64.decode(icon_setting) if icon_setting != None else DEFAULT_ICON
+    icon = ICONS.get(icon_setting, ICONS[DEFAULT_ICON])
 
     if config.bool("hide_app", False):  ## hide app
         return []
@@ -307,43 +319,43 @@ def get_schema():
     icon_options = [
         schema.Option(
             display = "Check",
-            value = ICON_CHECK_ASSET.readall(),
+            value = "check",
         ),
         schema.Option(
             display = "Clock",
-            value = ICON_CLOCK_ASSET.readall(),
+            value = "clock",
         ),
         schema.Option(
             display = "Do Not Enter",
-            value = ICON_DO_NOT_ENTER_ASSET.readall(),
+            value = "do-not-enter",
         ),
         schema.Option(
             display = "Exclamation",
-            value = ICON_EXCLAMATION_ASSET.readall(),
+            value = "exclamation",
         ),
         schema.Option(
             display = "Heart",
-            value = ICON_HEART_ASSET.readall(),
+            value = "heart",
         ),
         schema.Option(
             display = "House",
-            value = ICON_HOUSE_ASSET.readall(),
+            value = "house",
         ),
         schema.Option(
             display = "Lightning",
-            value = ICON_LIGHTNING_ASSET.readall(),
+            value = "lightning",
         ),
         schema.Option(
             display = "Music",
-            value = ICON_MUSIC_ASSET.readall(),
+            value = "music",
         ),
         schema.Option(
             display = "Plane",
-            value = ICON_PLANE_ASSET.readall(),
+            value = "plane",
         ),
         schema.Option(
             display = "Question",
-            value = ICON_QUESTION_ASSET.readall(),
+            value = "question",
         ),
     ]
 
@@ -375,7 +387,7 @@ def get_schema():
                 name = "Icon",
                 desc = "Select a custom status icon.",
                 icon = "icons",
-                default = icon_options[6].value,
+                default = DEFAULT_ICON,
                 options = icon_options,
             ),
             schema.Text(

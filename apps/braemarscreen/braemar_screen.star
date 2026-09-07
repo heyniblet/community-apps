@@ -8,6 +8,7 @@ Author: Ali-Mahmood
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -23,6 +24,7 @@ PRODUCT_HEIGHT = 60
 FONT = "tom-thumb"
 GREEN = "#008000"
 RED = "#FF0000"
+MAX_RESPONSE_BYTES = 256 * 1024
 
 # renders the index/tick name as a heading
 def render_heading_name(tick):
@@ -133,21 +135,49 @@ def render_each_index(tick, config):
     )
 
 def main(config):
+    ttl = config.get("ttl", "60")
+    if ttl not in ["10", "20", "30", "60"]:
+        ttl = "60"
     rep = http.post(
         BRAEMAR_PRICES_URL,
         body = BRAEMAR_QUERY,
-        ttl_seconds = int(config.get("ttl", "60")),
+        ttl_seconds = int(ttl),
         headers = {
             "content-type": "application/json",
         },
     )  # cache for 1 minute
     if rep.status_code != 200:
-        fail("Braemar request failed with status %d", rep.status_code)
-    tickers = rep.json()["data"]["brokerSite"]["ticker"]
+        return render.Root(child = render.WrappedText(content = "Market data unavailable", align = "center"))
+    body = rep.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return render.Root(child = render.WrappedText(content = "Market data unavailable", align = "center"))
+    data = json.decode(body)
+    data = data.get("data") if type(data) == "dict" else None
+    broker_site = data.get("brokerSite") if type(data) == "dict" else None
+    tickers = broker_site.get("ticker") if type(broker_site) == "dict" else None
+    if type(tickers) != "list":
+        return render.Root(child = render.WrappedText(content = "Market data unavailable", align = "center"))
 
     indexes = []
-    for tick in tickers[0:3]:
-        indexes.append(render_each_index(tick, config))
+    for tick in tickers[:3]:
+        products = tick.get("products") if type(tick) == "dict" else None
+        name = tick.get("name") if type(tick) == "dict" else None
+        if type(name) != "string" or type(products) != "list":
+            continue
+        clean_products = []
+        for product in products[:5]:
+            product_name = product.get("name") if type(product) == "dict" else None
+            price = product.get("price") if type(product) == "dict" else None
+            previous = product.get("prevClose") if type(product) == "dict" else None
+            price = str(price) if type(price) in ["int", "float"] else price
+            previous = str(previous) if type(previous) in ["int", "float"] else previous
+            if type(product_name) == "string" and type(price) == "string" and type(previous) == "string" and re.match(r"^-?[0-9]+(\.[0-9]+)?$", price) and re.match(r"^-?[0-9]+(\.[0-9]+)?$", previous):
+                clean_products.append({"name": product_name[:80], "price": price, "prevClose": previous})
+        if clean_products:
+            indexes.append(render_each_index({"name": name[:120], "products": clean_products}, config))
+
+    if not indexes:
+        return render.Root(child = render.WrappedText(content = "Market data unavailable", align = "center"))
 
     return render.Root(
         max_age = 120,

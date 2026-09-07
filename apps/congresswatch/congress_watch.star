@@ -16,8 +16,6 @@ load("time.star", "time")  #Ensure Timely display of congressional actions
 
 CONGRESS_ICON = CONGRESS_ICON_ASSET.readall()
 CONGRESS_API_URL = "https://api.congress.gov/v3/"
-CONGRESS_SESSION_LENGTH_IN_DAYS = 720  #730, but we'll shorten it some to make sure we don't miss
-CONGRESS_BILL_TTL = 12 * 60 * 60  #12 hours * 60 mins/hour * 60 seconds/min
 MAX_ITEMS = 50
 SCREEN_WIDTH = canvas.width()
 
@@ -78,9 +76,6 @@ def main(config):
     if canvas.is2x():
         font_type = "terminus-16"
 
-    #initialize
-    senate_start = None
-    house_start = None
     congress_number = ""
 
     if not api_key:
@@ -93,27 +88,15 @@ def main(config):
     else:
         #Get the current congress
         congress_session_url = "{}congress/current".format(CONGRESS_API_URL)
-        congress_session_res = http.get(url = congress_session_url, params = {"api_key": api_key, "format": "json"}, ttl_seconds = 21600)  # Cache for 6 hours
-        congress_session_body = json.decode(congress_session_res.body())
-        if "congress" not in congress_session_body:
-            fail("Invalid congress session data")
+        congress_session_raw = get_data(congress_session_url, params = {"api_key": api_key, "format": "json"})
+        if congress_session_raw == None:
+            return render_error("Congress API unavailable")
+        congress_session_body = json.decode(congress_session_raw)
+        if type(congress_session_body) != "dict" or type(congress_session_body.get("congress")) != "dict":
+            return render_error("Congress data unavailable")
 
         #Congress Session Info
         congress_number = congress_session_body["congress"]["number"]
-
-        for i in range(0, len(congress_session_body["congress"]["sessions"])):
-            current_start_date = time.parse_time(congress_session_body["congress"]["sessions"][i]["startDate"], format = "2006-01-02")
-
-            if congress_session_body["congress"]["sessions"][i]["chamber"] == "House of Representatives":
-                if house_start == None or house_start < current_start_date:
-                    house_start = current_start_date
-            elif congress_session_body["congress"]["sessions"][i]["chamber"] == "Senate":
-                if senate_start == None or senate_start < current_start_date:
-                    senate_start = current_start_date
-
-        session_duration_days = (time.now() - senate_start).hours / 24
-
-        cache_ttl = int((CONGRESS_SESSION_LENGTH_IN_DAYS - session_duration_days) * 60 * 60 * 24)
 
         #Get Bill Data for past X days where X = the most days we search based on period options
         period_days = int(config.get("period", "7"))
@@ -129,10 +112,12 @@ def main(config):
         }
 
         # 2. Define the Base URL (without the '?' or any query params)
-        base_url = "{}/bill/{}".format(CONGRESS_API_URL, congress_number)
+        base_url = "{}bill/{}".format(CONGRESS_API_URL, congress_number)
 
         # 3. Pass the params dictionary into your helper function
-        congress_raw = get_cachable_data(base_url, cache_ttl, params = query_params)
+        congress_raw = get_data(base_url, params = query_params)
+        if congress_raw == None:
+            return render_error("Congress API unavailable")
         congress_data = json.decode(congress_raw)
 
     #We have either live or test data, now display it.
@@ -239,16 +224,22 @@ def add_padding_to_child_element(element, left = 0, top = 0, right = 0, bottom =
     )
     return padded_element
 
+def render_error(message):
+    return render.Root(child = render.WrappedText(message, font = "tom-thumb"))
+
 def randomize(min, max):
     now = time.now()
     rand = int(str(now.nanosecond)[-6:-3]) / 1000
     return int(rand * (max - min) + min)
 
-def get_cachable_data(url, ttl, params = {}):  # Add the params argument here
-    res = http.get(url = url, params = params, ttl_seconds = ttl)
+def get_data(url, params = {}):
+    res = http.get(url = url, params = params)
     if res.status_code != 200:
-        fail("Request failed with status %d" % res.status_code)
-    return res.body()
+        return None
+    body = res.body()
+    if len(body) > 1048576:
+        return None
+    return body
 
 def get_schema():
     return schema.Schema(

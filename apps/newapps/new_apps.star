@@ -16,6 +16,7 @@ load("schema.star", "schema")
 
 BASE_URL = "https://api.tidbyt.com/v0/apps"
 FONT = "tom-thumb"
+HEADERS = {"User-Agent": "Niblet/1.0 support@heyniblet.com"}
 
 def main(config):
     #get old list of apps
@@ -104,13 +105,19 @@ def get_schema():
 ######################################################
 #functions
 def get_apps():
-    #get the data
-    rep = http.get(BASE_URL)
+    rep = http.get(BASE_URL, headers = HEADERS, ttl_seconds = 1800)
     if rep.status_code != 200:
         return None
-    else:
-        data = [(x["id"], x["name"]) for x in rep.json()["apps"]]
-    return dict(data)
+    payload = rep.json()
+    if type(payload) != "dict" or type(payload.get("apps")) != "list":
+        return None
+    data = {}
+    for app in payload["apps"]:
+        if type(app) != "dict" or type(app.get("id")) != "string" or type(app.get("name")) != "string":
+            continue
+        if app["id"] != "" and app["name"] != "" and len(data) < 5000:
+            data[app["id"]] = app["name"]
+    return data if len(data) > 0 else None
 
 def format_text(x, font):
     #formats color and font of text

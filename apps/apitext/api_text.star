@@ -12,12 +12,18 @@ load("images/bg_image.jpg", BG_IMAGE_ASSET = "file")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 load("xpath.star", "xpath")
 
 BG_IMAGE = BG_IMAGE_ASSET.readall()
 
 MAX_TEXT_LENGTH = 1000
+TTL_OPTIONS = [5, 20, 60, 900, 3600, 86400]
+IMAGE_PLACEMENTS = [1, 2, 3, 4, 5]
+MAX_DOCUMENT_BYTES = 1024 * 1024
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_HEADERS = 16
+MAX_HEADER_VALUE = 2048
+BLOCKED_HEADERS = ["connection", "content-length", "host", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]
 
 def main(config):
     api_url = config.str("api_url", "")
@@ -33,24 +39,13 @@ def main(config):
         body_font_color = "#FFFFFF"
     debug_output = config.bool("debug_output", False)
     base_url = config.str("base_url", "")
-    image_placement = config.get("image_placement", 2)
-    image_placement = int(image_placement)
-    ttl_seconds = config.get("ttl_seconds", 20)
-    ttl_seconds = int(ttl_seconds)
+    image_placement_value = str(config.get("image_placement", "2"))
+    image_placement = int(image_placement_value) if image_placement_value.isdigit() and int(image_placement_value) in IMAGE_PLACEMENTS else 2
+    ttl_value = str(config.get("ttl_seconds", "20"))
+    ttl_seconds = int(ttl_value) if ttl_value.isdigit() and int(ttl_value) in TTL_OPTIONS else 20
 
     if debug_output:
-        print("------------------------------")
-        print("CONFIG - api_url: " + api_url)
-        print("CONFIG - base_url: " + base_url)
-        print("CONFIG - heading_response_path: " + heading_response_path)
-        print("CONFIG - body_response_path: " + body_response_path)
-        print("CONFIG - image_response_path: " + image_response_path)
-        print("CONFIG - image_placement: " + str(image_placement))
-        print("CONFIG - request_headers: " + request_headers)
-        print("CONFIG - heading_font_color: " + heading_font_color)
-        print("CONFIG - body_font_color: " + body_font_color)
-        print("CONFIG - debug_output: " + str(debug_output))
-        print("CONFIG - ttl_seconds: " + str(ttl_seconds))
+        print("API Text debug enabled; URLs, headers, and response values are redacted")
 
     return get_text(api_url, base_url, heading_response_path, body_response_path, image_response_path, request_headers, debug_output, ttl_seconds, heading_font_color, body_font_color, image_placement)
 
@@ -106,16 +101,11 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
         if debug_output:
             print(message)
 
-    else:
-        # Parse request headers
-        headerMap = {}
-        if request_headers != "" or request_headers != {}:
-            request_headers_array = request_headers.split(",")
+    elif not valid_https_url(api_url) or (base_url and not valid_https_url(base_url)):
+        message = "Only HTTPS URLs are supported"
 
-            for app_header in request_headers_array:
-                headerKeyValueArray = app_header.split(":")
-                if len(headerKeyValueArray) > 1:
-                    headerMap[headerKeyValueArray[0].strip()] = headerKeyValueArray[1].strip()
+    else:
+        headerMap = parse_headers(request_headers)
 
         # Get API content
         output_map = get_data(api_url, debug_output, headerMap, ttl_seconds)
@@ -130,19 +120,6 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
             output_image = None
 
             if output != None or output_type == "xml":
-                if debug_output:
-                    outputStr = str(output)
-                    outputLen = len(outputStr)
-                    if outputLen >= 200:
-                        outputLen = 200
-
-                    outputStr = outputStr[0:outputLen]
-                    if outputLen >= 200:
-                        outputStr = outputStr + "..."
-                        print("Decoded response JSON truncated: " + outputStr)
-                    else:
-                        print("Decoded response JSON: " + outputStr)
-
                 # Parse response path for JSON
                 if output_type == "xml":
                     response_path_data_body = parse_response_path(xpath.loads(output_content), body_response_path, debug_output, ttl_seconds, True)
@@ -155,17 +132,9 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
                     print("Getting text body. Pass: " + str(body_parse_failure == False))
                     if body_parse_failure:
                         children.append(render.WrappedText(content = body_parse_message, font = "tom-thumb", color = "#FF0000"))
-                    else:
-                        bodyoutputStr = output_body
-                        if bodyoutputStr != None:
-                            if len(bodyoutputStr) >= 200:
-                                print("Body text: " + str(bodyoutputStr)[0:200] + "...")
-                            else:
-                                print("Body text: " + str(bodyoutputStr))
-
-                            if len(output_body) >= MAX_TEXT_LENGTH:
-                                output_body = output_body[0:MAX_TEXT_LENGTH] + "..."
-                                print("Body text truncated")
+                    elif type(output_body) == "string" and len(output_body) >= MAX_TEXT_LENGTH:
+                        output_body = output_body[0:MAX_TEXT_LENGTH] + "..."
+                        print("Body text truncated")
 
                 # Get heading
                 if output_type == "xml":
@@ -179,17 +148,9 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
                     print("Getting text heading. Pass: " + str(heading_parse_failure == False))
                     if heading_parse_failure:
                         children.append(render.WrappedText(content = heading_parse_message, font = "tom-thumb", color = "#FF0000"))
-                    else:
-                        headingoutputStr = output_heading
-                        if headingoutputStr != None:
-                            if len(headingoutputStr) >= 200:
-                                print("Header text: " + str(headingoutputStr)[0:200] + "...")
-                            else:
-                                print("Header text: " + str(headingoutputStr))
-
-                            if len(output_heading) >= MAX_TEXT_LENGTH:
-                                output_heading = output_heading[0:MAX_TEXT_LENGTH] + "..."
-                                print("Heading text truncated")
+                    elif type(output_heading) == "string" and len(output_heading) >= MAX_TEXT_LENGTH:
+                        output_heading = output_heading[0:MAX_TEXT_LENGTH] + "..."
+                        print("Heading text truncated")
 
                 # Get image
                 if output_type == "xml":
@@ -227,8 +188,14 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
                                 else:
                                     output_image = base_url + "/" + output_image
                             image_endpoint = output_image
-                            output_image_map = get_data(image_endpoint, debug_output, headerMap, ttl_seconds)
-                            img = output_image_map["data"]
+                            if not allowed_nested_url(image_endpoint, api_url, base_url):
+                                message = "Image host must match API URL or Base URL"
+                                if debug_output:
+                                    children.append(render.WrappedText(content = message, font = "tom-thumb", color = "#FF0000"))
+                            else:
+                                nested_headers = headerMap if url_origin(image_endpoint) == url_origin(api_url) else {}
+                                output_image_map = get_data(image_endpoint, debug_output, nested_headers, ttl_seconds)
+                                img = output_image_map["data"]
 
                             if img == None and debug_output:
                                 message = "Could not retrieve image. Recheck URL and headers."
@@ -242,7 +209,7 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
                             children.append(render.WrappedText(content = "Image " + image_parse_message, font = "tom-thumb", color = "#FF0000"))
                         elif len(image_response_path) > 0 and output_image == None and debug_output:
                             if len(image_endpoint) > 0:
-                                print("Image URL found but failed to render URL " + image_endpoint)
+                                print("Image URL found but failed to render")
                             else:
                                 print("No image URL found")
                         elif image_placement == 4 or image_placement == 5:
@@ -330,8 +297,8 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
                             children.append(row)
                         elif len(image_response_path) > 0 and output_image == None and debug_output:
                             if len(image_endpoint) > 0:
-                                print("Image URL found but failed to render URL " + image_endpoint)
-                                children.append(render.WrappedText(content = "Image URL found but failed to render URL " + image_endpoint, font = "tom-thumb", color = "#FF0000"))
+                                print("Image URL found but failed to render")
+                                children.append(render.WrappedText(content = "Image URL found but failed to render", font = "tom-thumb", color = "#FF0000"))
                             else:
                                 print("No image URL found")
                                 children.append(render.WrappedText(content = "No image URL found", font = "tom-thumb", color = "#FF0000"))
@@ -420,12 +387,12 @@ def get_text(api_url, base_url, heading_response_path, body_response_path, image
                         height = 32,
                         scroll_direction = "vertical",
                         width = 64,
-                        child = render.WrappedText(output_content),
+                        child = render.WrappedText(output_content[:MAX_TEXT_LENGTH]),
                     ),
                 )
 
         else:
-            message = "Oops! Check URL and header values. URL " + api_url + " must return JSON or text."
+            message = "Check the URL and headers; the endpoint must return JSON, XML, or text."
             if debug_output:
                 print(message)
 
@@ -688,20 +655,19 @@ def parse_response_path(output, responsePathStr, debug_output, ttl_seconds, is_x
     return {"output": output, "failure": failure, "message": message}
 
 def get_random_index(item, a_list, debug_output, ttl_seconds):
-    cached_index = cache.get(item)
-
-    if cached_index:
+    cache_key = item + ":" + str(len(a_list))
+    cached_index = cache.get(cache_key)
+    if cached_index != None and int(cached_index) < len(a_list):
         if debug_output:
             print("Using cached value: " + str(cached_index))
         return int(cached_index)
-    else:
-        random_index = random.number(0, len(a_list) - 1)
-        if debug_output:
-            print("Setting cached value for item " + item + ": " + str(random_index))
-        cache.set(item, str(random_index), ttl_seconds = ttl_seconds)
-        return random_index
+    random_index = random.number(0, len(a_list) - 1)
+    cache.set(cache_key, str(random_index), ttl_seconds = ttl_seconds)
+    return random_index
 
 def get_data(url, debug_output, headerMap = {}, ttl_seconds = 20):
+    if not valid_https_url(url):
+        return {"data": None, "type": ""}
     if headerMap == {}:
         res = http.get(url, ttl_seconds = ttl_seconds)
     else:
@@ -717,33 +683,63 @@ def get_data(url, debug_output, headerMap = {}, ttl_seconds = 20):
     if headers != None and headers.get("content-type") != None:
         contentType = headers.get("content-type")
 
-        if contentType.find("gif") != -1 or contentType.find("json") != -1 or contentType.find("text/plain") != -1 or contentType.find("image") != -1 or contentType.find("xml") != -1:
+        if contentType.find("gif") != -1 or contentType.find("json") != -1 or contentType.find("text/") != -1 or contentType.find("image") != -1 or contentType.find("xml") != -1:
             if contentType.find("json") != -1:
                 contentType = "json"
             elif contentType.find("gif") != -1:
                 contentType = "gif"
             elif contentType.find("image") != -1:
                 contentType = "image"
-            elif contentType.find("text/plain") != -1:
-                contentType = "text"
-            else:
+            elif contentType.find("xml") != -1:
                 contentType = "xml"
+            else:
+                contentType = "text"
 
             isValidContentType = True
 
     if debug_output:
-        print("isValidContentType for " + url + " content type " + contentType + ": " + str(isValidContentType))
+        print("Response content type: " + contentType + "; accepted: " + str(isValidContentType))
 
     if res.status_code != 200 or isValidContentType == False:
         if debug_output:
             print("status: " + str(res.status_code))
-            print("Requested url: " + str(url))
     else:
         data = res.body()
+        limit = MAX_IMAGE_BYTES if contentType in ["gif", "image"] else MAX_DOCUMENT_BYTES
+        if len(data) > limit:
+            return {"data": None, "type": contentType}
 
         return {"data": data, "type": contentType}
 
     return {"data": None, "type": contentType}
+
+def valid_https_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://") or any([char in value for char in [" ", "\t", "\r", "\n"]]):
+        return False
+    parts = value.split("/", 3)
+    return len(parts) >= 3 and parts[2] and "@" not in parts[2]
+
+def url_origin(value):
+    return value.split("/", 3)[2].lower() if valid_https_url(value) else ""
+
+def allowed_nested_url(value, api_url, base_url):
+    origin = url_origin(value)
+    return origin and origin in [url_origin(api_url), url_origin(base_url)]
+
+def parse_headers(value):
+    headers = {}
+    if type(value) != "string":
+        return headers
+    for item in value.split(",")[:MAX_HEADERS]:
+        parts = item.split(":", 1)
+        if len(parts) != 2:
+            continue
+        key = parts[0].strip()
+        header_value = parts[1].strip()
+        lowered = key.lower()
+        if key and header_value and len(key) <= 80 and len(header_value) <= MAX_HEADER_VALUE and lowered not in BLOCKED_HEADERS and not any([char in key + header_value for char in ["\r", "\n"]]):
+            headers[key] = header_value
+    return headers
 
 def get_schema():
     ttl_options = [
@@ -812,6 +808,7 @@ def get_schema():
                 desc = "Comma separated key:value pairs to build the request headers. eg, `x-api-key:abc123,content-type:application/json`",
                 icon = "code",
                 default = "",
+                secret = True,
             ),
             schema.Text(
                 id = "heading_response_path",
@@ -867,7 +864,7 @@ def get_schema():
             schema.Text(
                 id = "base_url",
                 name = "Base URL",
-                desc = "The base URL if needed",
+                desc = "The HTTPS base URL for relative images, or to authorize a separate image host",
                 icon = "globe",
                 default = "",
             ),

@@ -6,7 +6,7 @@ desc: Shows Bitcoin Lightning Network statistics, or statistics of your own Ligh
 author: PMK (@pmk)
 fileName: lightningnode.star
 packageName: lightningnode
-recommendedInterval: 5
+recommendedInterval: 60
 category: finance
 tags:
   - weather

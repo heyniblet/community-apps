@@ -9,7 +9,7 @@ load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
-WHATS_ON = "https://api.wnyc.org/api/v1/whats_on/wqxr"
+WHATS_ON = "https://api.wnyc.org/api/v1/whats_on/wqxr/"
 
 COLORS = {
     "dark_blue": "#12518A",
@@ -233,12 +233,7 @@ def get_schema():
                 icon = "palette",
                 default = DEFAULT_USE_CUSTOM_COLORS,
             ),
-            schema.Generated(
-                id = "custom_colors",
-                source = "use_custom_colors",
-                handler = custom_colors,
-            ),
-        ],
+        ] + custom_colors("true"),
     )
 
 def custom_colors(use_custom_colors):

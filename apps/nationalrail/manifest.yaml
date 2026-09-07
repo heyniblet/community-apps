@@ -6,7 +6,7 @@ desc: Realtime departure board information from National Rail Enquiries.
 author: dinosaursrarr
 fileName: national_rail.star
 packageName: nationalrail
-recommendedInterval: 5
+recommendedInterval: 1
 category: transit
 tags:
   - local

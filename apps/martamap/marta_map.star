@@ -20,7 +20,11 @@ DEAFULT_DIRECTION = "No Direction Filter"
 FONT = "CG-pixel-4x5-mono"
 
 def main(config):
-    MARTA_API_URL = "http://labs.itsmarta.com/signpost/trains"  #New data source due to old one failing
+    api_key = config.get("api_key")
+    if not api_key:
+        return render.Root(child = render.Text("ADD MARTA API KEY", font = FONT, color = "#F00"))
+
+    MARTA_API_URL = "https://developerservices.itsmarta.com:18096/itsmarta/railrealtimearrivals/developerservices/traindata?apiKey=" + api_key
     trains = get_trains(MARTA_API_URL)
     arrivals = config.bool("arrivals") or DEFAULT_ARRIVALS
     orientation_bool = config.bool("orientation") or DEFAULT_ORIENTATION_BOOL
@@ -174,8 +178,9 @@ def get_trains(MARTA_API_URL):
     #             trains[arrival["TRAIN_ID"]] = arrival
     # else:  #New API
     for train in all_trains:  #Adds unique train IDs and skips duplicates. Only need the lat and long for a train once.
-        if train["trainId"] not in trains.keys():
-            trains[train["trainId"]] = train
+        train_id = train["TRAIN_ID"] if "TRAIN_ID" in train else train["trainId"]
+        if train_id not in trains.keys():
+            trains[train_id] = train
 
     return trains
 
@@ -318,7 +323,7 @@ def render_arrivals(config):
     rendered_arrivals = []
     user_station_arrivals = []
 
-    ARRIVALS_API_URL = "https://developerservices.itsmarta.com:18096/itsmarta/railrealtimearrivals/traindata"
+    ARRIVALS_API_URL = "https://developerservices.itsmarta.com:18096/itsmarta/railrealtimearrivals/developerservices/traindata?apiKey="
     api_key = config.get("api_key")
     if not api_key:
         return render.Text("API Key Missing", font = FONT, color = "#F00")

@@ -35,7 +35,6 @@ def get_avatar():
         "accept": "application/json, text/javascript, */*; q=0.01",
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         "referer": "https://www.avatarsinpixels.com/minipix/clothing/Body",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
     }, form_body = {
         "action": "actions",
         "Actions": "randomizeColors randomizeLayers",
@@ -62,7 +61,6 @@ def get_avatar():
     res = http.get("https://www.avatarsinpixels.com" + src, headers = {
         "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         "referer": "https://www.avatarsinpixels.com/minipix/clothing/Body",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
         "cookie": php_cookie,
     })
 

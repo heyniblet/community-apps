@@ -6,8 +6,6 @@ Author: James Woglom
 """
 
 load("animation.star", "animation")
-load("html.star", "html")
-load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/flag_afghanistan.webp", FLAG_AFGHANISTAN = "file")
 load("images/flag_albania.webp", FLAG_ALBANIA = "file")
@@ -219,8 +217,6 @@ load("schema.star", "schema")
 
 OLYMPIC_LOGO = OLYMPIC_LOGO_ASSET.readall()
 
-URL = "https://olympics.com/en/paris-2024/medals"
-USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 DEFAULT_TEXT_COLOR = "#fff"
 DEFAULT_BG_COLOR = "#000"
 
@@ -232,30 +228,109 @@ DEFAULT_COUNT = "5"
 DEFAULT_DELAY = "100"
 DEFAULT_FRAMES = "50"
 
+# Paris 2024 is complete, so keep its final table with the historical app
+# instead of scraping a page that is no longer a live-results endpoint.
+# Source: https://web.archive.org/web/20240812133010/https://olympics.com/en/paris-2024/medals
+FINAL_MEDALS = [
+    ["United States of America", "40", "44", "42"],
+    ["People's Republic of China", "40", "27", "24"],
+    ["Japan", "20", "12", "13"],
+    ["Australia", "18", "19", "16"],
+    ["France", "16", "26", "22"],
+    ["Netherlands", "15", "7", "12"],
+    ["Great Britain", "14", "22", "29"],
+    ["Republic of Korea", "13", "9", "10"],
+    ["Italy", "12", "13", "15"],
+    ["Germany", "12", "13", "8"],
+    ["New Zealand", "10", "7", "3"],
+    ["Canada", "9", "7", "11"],
+    ["Uzbekistan", "8", "2", "3"],
+    ["Hungary", "6", "7", "6"],
+    ["Spain", "5", "4", "9"],
+    ["Sweden", "4", "4", "3"],
+    ["Kenya", "4", "2", "5"],
+    ["Norway", "4", "1", "3"],
+    ["Ireland", "4", "0", "3"],
+    ["Brazil", "3", "7", "10"],
+    ["Islamic Republic of Iran", "3", "6", "3"],
+    ["Ukraine", "3", "5", "4"],
+    ["Romania", "3", "4", "2"],
+    ["Georgia", "3", "3", "1"],
+    ["Belgium", "3", "1", "6"],
+    ["Bulgaria", "3", "1", "3"],
+    ["Serbia", "3", "1", "1"],
+    ["Czechia", "3", "0", "2"],
+    ["Denmark", "2", "2", "5"],
+    ["Azerbaijan", "2", "2", "3"],
+    ["Croatia", "2", "2", "3"],
+    ["Cuba", "2", "1", "6"],
+    ["Bahrain", "2", "1", "1"],
+    ["Slovenia", "2", "1", "0"],
+    ["Chinese Taipei", "2", "0", "5"],
+    ["Austria", "2", "0", "3"],
+    ["Hong Kong, China", "2", "0", "2"],
+    ["Philippines", "2", "0", "2"],
+    ["Algeria", "2", "0", "1"],
+    ["Indonesia", "2", "0", "1"],
+    ["Israel", "1", "5", "1"],
+    ["Poland", "1", "4", "5"],
+    ["Kazakhstan", "1", "3", "3"],
+    ["Jamaica", "1", "3", "2"],
+    ["South Africa", "1", "3", "2"],
+    ["Thailand", "1", "3", "2"],
+    ["Ethiopia", "1", "3", "0"],
+    ["Switzerland", "1", "2", "5"],
+    ["Ecuador", "1", "2", "2"],
+    ["Portugal", "1", "2", "1"],
+    ["Greece", "1", "1", "6"],
+    ["Argentina", "1", "1", "1"],
+    ["Egypt", "1", "1", "1"],
+    ["Tunisia", "1", "1", "1"],
+    ["Botswana", "1", "1", "0"],
+    ["Chile", "1", "1", "0"],
+    ["Saint Lucia", "1", "1", "0"],
+    ["Uganda", "1", "1", "0"],
+    ["Dominican Republic", "1", "0", "2"],
+    ["Guatemala", "1", "0", "1"],
+    ["Morocco", "1", "0", "1"],
+    ["Dominica", "1", "0", "0"],
+    ["Pakistan", "1", "0", "0"],
+    ["Türkiye", "0", "3", "5"],
+    ["Mexico", "0", "3", "2"],
+    ["Armenia", "0", "3", "1"],
+    ["Colombia", "0", "3", "1"],
+    ["Kyrgyzstan", "0", "2", "4"],
+    ["Democratic People's Republic of Korea", "0", "2", "4"],
+    ["Lithuania", "0", "2", "2"],
+    ["India", "0", "1", "5"],
+    ["Republic of Moldova", "0", "1", "3"],
+    ["Kosovo", "0", "1", "1"],
+    ["Cyprus", "0", "1", "0"],
+    ["Fiji", "0", "1", "0"],
+    ["Jordan", "0", "1", "0"],
+    ["Mongolia", "0", "1", "0"],
+    ["Panama", "0", "1", "0"],
+    ["Tajikistan", "0", "0", "3"],
+    ["Albania", "0", "0", "2"],
+    ["Grenada", "0", "0", "2"],
+    ["Malaysia", "0", "0", "2"],
+    ["Puerto Rico", "0", "0", "2"],
+    ["Côte d'Ivoire", "0", "0", "1"],
+    ["Cabo Verde", "0", "0", "1"],
+    ["Refugee Olympic Team", "0", "0", "1"],
+    ["Peru", "0", "0", "1"],
+    ["Qatar", "0", "0", "1"],
+    ["Singapore", "0", "0", "1"],
+    ["Slovakia", "0", "0", "1"],
+    ["Zambia", "0", "0", "1"],
+]
+
 def fetch_data(config):
     count = int(config.str("count", DEFAULT_COUNT))
-
-    res = http.get(URL, headers = {"User-Agent": USER_AGENT}, ttl_seconds = 3600)
-    if res.status_code != 200:
-        fail("GET %s failed with status %d: %s", URL, res.status_code, res.body())
-    page = html(res.body())
-    list = page.find("[data-testid='noc-row']")
-    if not list:
-        fail("could not find medal list table on %s: %s", URL, res.body())
-
     res = []
-    for i in range(min(count, list.len())):
-        row = list.eq(i)
-        spans = row.find("span")
-
-        scraped = [
-            spans.eq(2).text(),  # Country name
-            1 + i,  # Rank
-            spans.eq(3).text(),  # Gold
-            spans.eq(4).text(),  # Silver
-            spans.eq(5).text(),  # Bronze
-        ]
-        res.append(scraped)
+    for i in range(min(count, len(FINAL_MEDALS))):
+        row = FINAL_MEDALS[i]
+        res.append([row[0], 1 + i, row[1], row[2], row[3]])
 
     return res
 
@@ -374,15 +449,15 @@ def render_medal_row(left, gold, silver, bronze):
     )
 
 def render_country(country, place, gold, silver, bronze):
-    flag = FLAGS[country]
+    flag = FLAGS.get(country)
     country_name = SHORT_NAMES.get(country, country)
 
     # original flag image is 40 x 30
-    rendered_image = render.Image(
+    rendered_image = flag and render.Image(
         src = flag.readall(),
         width = 16,
         height = 12,
-    )
+    ) or render.Text(country[:3].upper(), font = "tom-thumb")
 
     total_medals = int(gold) + int(silver) + int(bronze)
 
@@ -482,14 +557,14 @@ def render_summary(data, show_rings):
 # keeping unused args in order to keep tuple format
 # buildifier: disable=unused-variable
 def render_summary_country(country, place, gold, silver, bronze):
-    flag = FLAGS[country]
+    flag = FLAGS.get(country)
 
     # original flag image is 40 x 30
-    rendered_image = render.Image(
+    rendered_image = flag and render.Image(
         src = flag.readall(),
         width = 16,
         height = 12,
-    )
+    ) or render.Text(country[:3].upper(), font = "tom-thumb")
 
     return render_medal_row(rendered_image, gold, silver, bronze)
 

@@ -17,29 +17,34 @@ JFT_SOURCE = "na-just-for-today"
 FILE_TYPE = ".txt"
 DEFAULT_TEXT = "God, grant me the serenity to accept the things I cannot change, the courage to change the things I can, and the wisdom to know the difference."
 
-def getCurrentDate(config):
-    timezone = config.get("timezone") or "America/New_York"
-    now = time.now().in_location(timezone)
-    return now.format("01-02")
+def getCurrentDate():
+    return time.now().format("01-02")
 
 def getJftText(config):
-    curr_date = getCurrentDate(config)
+    curr_date = getCurrentDate()
 
     root_url = config.get("JFT_DATA_ROOT_URL")
     if root_url == None:
         return DEFAULT_TEXT
+    if not valid_root_url(root_url):
+        return DEFAULT_TEXT
+    root_url = root_url.removesuffix("/")
     req_url = "%s/%s/%s%s" % (
         root_url,
         JFT_SOURCE,
         curr_date,
         FILE_TYPE,
     )
-    request = http.get(req_url, ttl_seconds = 86400)
-    if (request.status_code != 200):
+    request = http.get(req_url)
+    body = request.body()
+    if request.status_code != 200 or not body or len(body) > 64 * 1024:
         return DEFAULT_TEXT
-    jft_text = request.body()
+    return body[:4000]
 
-    return jft_text
+def valid_root_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://"):
+        return False
+    return not any([char in value for char in ["@", "?", "#", "\\", " ", "\t", "\r", "\n"]])
 
 def get_schema():
     return schema.Schema(

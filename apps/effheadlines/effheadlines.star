@@ -10,32 +10,31 @@ load("encoding/base64.star", "base64")
 load("http.star", "http")
 load("qrcode.star", "qrcode")
 load("random.star", "random")
-load("re.star", "re")
 load("render.star", "render")
+load("xpath.star", "xpath")
 
 EFF_XML_URL = "https://www.eff.org/rss/updates.xml"
 
 def main():
-    clean_titles = []
-    clean_guids = []
-
     rep = http.get(EFF_XML_URL, ttl_seconds = 3600)
     if rep.status_code != 200:
         fail("EFF XML request failed with status %d", rep.status_code)
-    body = rep.body()
 
-    dirty_titles = re.findall("<title>.+</title>", body)
-    for title in dirty_titles[1:11]:
-        clean_titles.append(title.replace("<title>", "").replace("</title>", ""))
+    rss = xpath.loads(rep.body())
+    titles = rss.query_all("/rss/channel/item/title")
+    guids = rss.query_all("/rss/channel/item/guid")
+    count = len(titles)
+    if len(guids) < count:
+        count = len(guids)
+    if count > 10:
+        count = 10
+    if count == 0:
+        fail("EFF RSS feed contained no articles")
 
-    dirty_guids = re.findall("<guid isPermaLink=\"false\">.+ at https://www\\.eff\\.org</guid>", body)
-    for guid in dirty_guids[:10]:
-        clean_guids.append(guid.replace("<guid isPermaLink=\"false\">", "").replace(" at https://www.eff.org</guid>", ""))
-
-    index = random.number(0, 9)
-
-    url = "https://eff.org/node/" + clean_guids[index]
-    headline = clean_titles[index]
+    index = random.number(0, count - 1)
+    node_id = guids[index].split(" at ")[0]
+    url = "https://eff.org/node/" + node_id
+    headline = titles[index]
 
     data = cache.get(url)
     if data == None:

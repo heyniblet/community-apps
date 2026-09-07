@@ -67,7 +67,7 @@ ERROR_CONTENT = render.Column(
 
 def main(config):
     stream = config.str("stream", DEFAULT_STREAM)
-    WHATS_ON = ("https://api.wnyc.org/api/v1/whats_on/%s" % stream)
+    WHATS_ON = ("https://api.wnyc.org/api/v1/whats_on/%s/" % stream)
 
     # Get settings values
     layout = config.str("layout", DEFAULT_LAYOUT)
@@ -196,12 +196,7 @@ def get_schema():
                 icon = "palette",
                 default = DEFAULT_USE_CUSTOM_COLORS,
             ),
-            schema.Generated(
-                id = "custom_colors",
-                source = "use_custom_colors",
-                handler = custom_colors,
-            ),
-        ],
+        ] + custom_colors("true"),
     )
 
 def custom_colors(use_custom_colors):

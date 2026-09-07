@@ -7,6 +7,7 @@ Author: drudge
 
 load("cache.star", "cache")
 load("encoding/json.star", "json")
+load("hash.star", "hash")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
@@ -22,6 +23,8 @@ DEFAULT_SHOW_ICON = True
 DEFAULT_HIDE_WHEN_NOT_ONCALL = False
 DEFAULT_CACHE_TTL = 120
 DEFAULT_TEAM_ID = "all"
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_ONCALL_SHIFTS = 500
 
 PAGERDUTY_BASE_URL = "https://api.pagerduty.com"
 PAGERDUTY_CLIENT_ID = "85d49cda-f774-438e-9f13-12cf5b644dba"
@@ -85,10 +88,14 @@ def pagerduty_api_call(config, url, use_cache = True):
     )
     body = res.body()
 
-    if len(body) <= 0:
-        body = '{"status":%i}' % res.status_code
+    if res.status_code == 204:
+        return {"status": 204}
+    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        print("PagerDuty request failed with status %d" % res.status_code)
+        return None
 
-    return json.decode(body)
+    payload = json.decode(body)
+    return payload if type(payload) == "dict" else None
 
 # buildifier: disable=function-docstring
 def get_pagerduty_counts(config, profile = None, teams_supported = True):
@@ -162,13 +169,17 @@ def parse_shifts(oncalls = []):
     return shifts
 
 # buildifier: disable=function-docstring
-def get_oncall_shifts(config, profile_id = None, offset = 0, limit = 100, shifts = []):
+def get_oncall_shifts(config, profile_id = None, offset = 0, limit = 100, shifts = None):
     access_token = config.get("auth")
 
     if not access_token:
         return None
 
-    cached_shifts = cache.get("%s|shifts" % access_token)
+    if shifts == None:
+        shifts = []
+
+    cache_key = "%s|shifts" % hash.sha1(access_token)
+    cached_shifts = cache.get(cache_key)
 
     if cached_shifts:
         return json.decode(cached_shifts)
@@ -194,12 +205,12 @@ def get_oncall_shifts(config, profile_id = None, offset = 0, limit = 100, shifts
         shifts = shifts + parse_shifts(data["oncalls"])
 
     # page through the results
-    if "more" in data and data["more"]:
+    if "more" in data and data["more"] and offset + limit < MAX_ONCALL_SHIFTS:
         return get_oncall_shifts(config, profile_id, offset + limit, limit, shifts)
 
     shifts = sorted(shifts, key = sort_by_level)
 
-    cache.set("%s|shifts" % access_token, json.encode(shifts), DEFAULT_CACHE_TTL)
+    cache.set(cache_key, json.encode(shifts), DEFAULT_CACHE_TTL)
     return shifts
 
 # buildifier: disable=function-docstring
@@ -287,7 +298,7 @@ def get_state(config):
         profile = get_current_user(config)
 
         if profile == None:
-            return Error("Failed to get user profile")
+            return None
 
         account_has_teams = are_teams_supported(config)
         counts = get_pagerduty_counts(config, profile, account_has_teams)
@@ -297,7 +308,7 @@ def get_state(config):
             oncall = is_user_oncall(config, shifts, profile["id"])
 
             if oncall == None:
-                return Error("Failed to get on-call status")
+                return None
 
     return struct(
         oncall = oncall,
@@ -318,6 +329,8 @@ def get_state(config):
 def main(config):
     timezone = time.tz()
     data = get_state(config)
+    if data == None:
+        return Error("Unable to load PagerDuty data")
 
     # don't show the app if we didn't get any data
     if not data.counts:
@@ -476,12 +489,14 @@ def oauth_handler(params):
         ),
         form_encoding = "application/x-www-form-urlencoded",
     )
+    body = res.body()
 
-    if res.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (res.status_code, res.body()))
+    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        fail("token request failed with status code: %d" % res.status_code)
 
     token_params = res.json()
+    if type(token_params) != "dict" or not token_params.get("access_token"):
+        fail("token request returned invalid data")
     access_token = token_params["access_token"]
 
     return access_token

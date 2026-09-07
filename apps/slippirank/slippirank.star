@@ -5,7 +5,6 @@ Description: Shows current rank from SSBM Slippi profile.
 Author: noahpodgurski
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/rank_bronze_1.png", RANK_BRONZE_1_ASSET = "file")
@@ -30,10 +29,10 @@ load("images/rank_silver_3.png", RANK_SILVER_3_ASSET = "file")
 load("images/rank_unranked_1.png", RANK_UNRANKED_1_ASSET = "file")
 load("images/rank_unranked_2.png", RANK_UNRANKED_2_ASSET = "file")
 load("images/rank_unranked_3.png", RANK_UNRANKED_3_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
-REFRESH_TIME = 43200  # twice a day
 DEFAULT_USER_CODE = "hbox-305"
 
 RANKS = [
@@ -156,39 +155,32 @@ RANK_IMGS = {
 
 def getRank(elo):
     for rank in RANKS:
-        if rank["min"] < elo and rank["max"] > elo:
+        if rank["min"] <= elo and rank["max"] > elo:
             return rank["name"]
-    return "Unranked3"
+    return "Unranked 3"
 
-RANK_URL = "https://gql-gateway-dot-slippi.uc.r.appspot.com/graphql"
-
-def getUserCodeDashIndex(userCode):
-    for i in range(len(userCode)):
-        if userCode[i] == "#" or userCode[i] == "-":
-            return i
-    return -1
+RANK_URL = "https://internal.slippi.gg/graphql"
 
 def requestRank(userCode):
     body = json.encode({
-        "operationName": "AccountManagementPageQuery",
+        "operationName": "UserProfilePageQuery",
         "variables": {
             "cc": userCode,
-            "uid": userCode,
         },
-        "query": "fragment userProfilePage on User {\n  fbUid\n  displayName\n  connectCode {\n    code\n    __typename\n  }\n  status\n  activeSubscription {\n    level\n    hasGiftSub\n    __typename\n  }\n  rankedNetplayProfile {\n    id\n    ratingOrdinal\n    ratingUpdateCount\n    wins\n    losses\n    dailyGlobalPlacement\n    dailyRegionalPlacement\n    continent\n    characters {\n      id\n      character\n      gameCount\n      __typename\n    }\n    __typename\n  }\n  __typename\n}\n\nquery AccountManagementPageQuery($cc: String!, $uid: String!) {\n  getUser(fbUid: $uid) {\n    ...userProfilePage\n    __typename\n  }\n  getConnectCode(code: $cc) {\n    user {\n      ...userProfilePage\n      __typename\n    }\n    __typename\n  }\n}\n",
+        "query": "query UserProfilePageQuery($cc: String) { getUser(connectCode: $cc) { displayName connectCode { code } rankedNetplayProfile { ratingOrdinal ratingUpdateCount wins losses dailyGlobalPlacement dailyRegionalPlacement continent characters { character gameCount } } } }",
     })
     res = http.post(
         RANK_URL,
         body = body,
         headers = {
+            "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": "tronbyt-slippi-rank/1.0",
         },
-        ttl_seconds = REFRESH_TIME,
     )
-    if res.status_code != 200:
-        fail("request failed with status %d", res.status_code)
-    res = res.json()
-    return res
+    raw = res.body()
+    data = json.decode(raw, {}) if res.status_code == 200 and raw and len(raw) <= 256 * 1024 else {}
+    return data if type(data) == "dict" else {}
 
 def main(config):
     userCode = config.str("userCode")
@@ -199,38 +191,23 @@ def main(config):
         # fail("No user code configured")
 
     userCode = userCode.upper()
-    userCodeDashIndex = getUserCodeDashIndex(userCode)
-    if userCodeDashIndex == -1:
-        fail("Invalid user code")
+    userCodeHash = userCode.replace("-", "#")
+    if not re.match(r"^[A-Z0-9]{1,10}#[0-9]{1,6}$", userCodeHash):
+        return error_frame("Invalid user code")
 
-    # print(userCode)
-
-    userCodeHash = userCode[:userCodeDashIndex] + "#" + userCode[userCodeDashIndex + 1:]
-    rankedData = cache.get("rankedData")
-    if rankedData != None:
-        # print("Cached - Displaying cached rankedData.")
-        rankedData = json.decode(rankedData)
-
-        # print(rankedData)
-        if not rankedData["data"]["getUser"] or userCodeHash != rankedData["data"]["getConnectCode"]["user"]["connectCode"]["code"]:
-            #new usercode, request data again
-            rankedData = requestRank(userCodeHash)
-            cache.set("rankedData", json.encode(rankedData), ttl_seconds = REFRESH_TIME)
-    else:
-        # print("No data available - Calling slippi API.")
-        rankedData = requestRank(userCodeHash)
-        cache.set("rankedData", json.encode(rankedData), ttl_seconds = REFRESH_TIME)
-
-    if rankedData["data"]["getConnectCode"]["user"]["displayName"]:
-        elo = rankedData["data"]["getConnectCode"]["user"]["rankedNetplayProfile"]["ratingOrdinal"]
+    rankedData = requestRank(userCodeHash)
+    data = rankedData.get("data", {})
+    user = data.get("getUser", {}) if type(data) == "dict" else {}
+    profile = user.get("rankedNetplayProfile", {}) if type(user) == "dict" else {}
+    if type(user) == "dict" and type(profile) == "dict" and type(user.get("displayName")) == "string" and type(profile.get("ratingOrdinal")) in ["int", "float"]:
+        elo = int(profile["ratingOrdinal"])
         rank = getRank(elo)
-        name = rankedData["data"]["getConnectCode"]["user"]["displayName"]
-        rankedImg = RANK_IMGS[rank]
+        name = user["displayName"][:80]
+        rankedImg = RANK_IMGS.get(rank, RANK_IMGS["Unranked 3"])
     else:
-        fail("Ranked data did not respond correctly")
+        return error_frame("Ranked data unavailable")
 
     msg = "%s \n%s \n%d" % (name, rank, elo)
-    print(showRankName)
     if showRankName == False:
         rank = ""
         msg = "%s \n%d" % (name, elo)
@@ -254,6 +231,9 @@ def main(config):
             ],
         ),
     )
+
+def error_frame(message):
+    return render.Root(child = render.WrappedText(message, width = 64, align = "center", color = "#f00"))
 
 def get_schema():
     return schema.Schema(

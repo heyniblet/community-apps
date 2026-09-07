@@ -5,60 +5,53 @@ Description: Show current US House floor activity in real-time, include live vot
 Author: Shaun Brown
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/adjourned_icon.png", ADJOURNED_ICON_ASSET = "file")
 load("images/voting_icon.png", VOTING_ICON_ASSET = "file")
 load("render.star", "render")
-load("time.star", "time")
 
-DEFAULT_TIMEZONE = "America/New_York"
 DOME_WATCH_API_URL = "https://api3.domewatch.us"
-API_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IlRpZEJ5dCIsImlhdCI6MTUxNjIzOTAyMn0.uXwcFp_oWP5bGXEJLJN8texjF9NYjGd_9wDMRIP7Aug"
+MAX_RESPONSE_BYTES = 256 * 1024
 
 # Mock mode configuration
 MOCK_MODE = False
 MOCK_TIMER_VALUE = "0:00"  # Test values: "15:00", "2:30", "0:00", "-1:45", "-5:00"
 
-def main(config):
+def main():
     """
     Main entry point for the applet.
     """
     print("Running applet")
     floor = getFloorActivityFromAPI()
-    return getRoot(config, floor)
+    return getRoot(floor)
 
-def getRoot(config, floor):
+def getRoot(floor):
     """
     Determines which screen to display based on the floor status.
     """
 
     # Use .get() for safety in case the API response is malformed
     if floor.get("now", {}).get("value") == "voting":
-        return renderVotingRoot(config, floor)
+        return renderVotingRoot(floor)
     else:
         return renderNonVotingRoot(floor)
 
-def renderVotingRoot(config, floor):
+def renderVotingRoot(floor):
     """
     Renders the main screen for when a vote is active.
     This version includes a continuously scrolling marquee.
     """
-    timezone = config.get("timezone") or DEFAULT_TIMEZONE
-    now = time.now().in_location(timezone)
 
     # --- NEW ---
     # Get the original question text.
-    question_text = floor.get("roll_call", {}).get("question", "Loading...")
+    question_text = floor.get("roll_call", {}).get("question", "Loading...")[:180]
 
-    # Repeat the text 10 times to create a very long, continuous scroll.
-    # This will feel like an endless loop to the user.
-    scroll_text = (question_text + " ") * 10
+    scroll_text = question_text
 
     return render.Root(
         delay = 125,
-        show_full_animation = True,
+        show_full_animation = False,
         child = render.Column(
             main_align = "space_around",
             cross_align = "space_around",
@@ -125,13 +118,13 @@ def renderVotingRoot(config, floor):
                     ],
                 ),
                 render.Box(
-                    child = renderVotingTimer(now, floor),
+                    child = renderVotingTimer(floor),
                 ),
             ],
         ),
     )
 
-def renderVotingTimer(now, floor):
+def renderVotingTimer(floor):
     """
     Timer function that formats overtime to include hours (H:MM:SS)
     after one hour has passed.
@@ -140,7 +133,7 @@ def renderVotingTimer(now, floor):
     # First check if we have a valid "value" field
     timer_value = floor.get("timer", {}).get("value", "")
 
-    if timer_value and timer_value != "0:00":
+    if timer_value:
         is_negative = timer_value.startswith("-")
         clean_value = timer_value.lstrip("-")
 
@@ -154,7 +147,7 @@ def renderVotingTimer(now, floor):
                 if is_negative:
                     # Already in overtime - generate count-up from this point
                     frames = []
-                    for i in range(total_seconds, total_seconds + 301):
+                    for i in range(total_seconds, total_seconds + 61):
                         # --- MODIFICATION FOR H:MM:SS FORMAT ---
                         if i < 3600:
                             # Less than 1 hour: -MM:SS
@@ -188,7 +181,7 @@ def renderVotingTimer(now, floor):
                     frames = []
 
                     # Countdown to 0:00
-                    for i in range(total_seconds, -1, -1):
+                    for i in range(total_seconds, max(-1, total_seconds - 61), -1):
                         min = i // 60
                         sec = i % 60
                         sec_str = str(sec)
@@ -199,7 +192,7 @@ def renderVotingTimer(now, floor):
                             frames.append(render.Text(content = content_str, color = "#FFFFFF"))
 
                     # Continue into overtime
-                    for i in range(1, 301):
+                    for i in range(1, max(1, 61 - total_seconds)):
                         # --- MODIFICATION FOR H:MM:SS FORMAT ---
                         if i < 3600:
                             # Less than 1 hour: -MM:SS
@@ -229,47 +222,7 @@ def renderVotingTimer(now, floor):
                             frames.append(render.Text(content = content_str, color = "#FF0000"))
                     return render.Animation(children = frames)
 
-    # If value is "0:00" or unavailable, use timestamp-based calculation
-    timestamp = floor.get("timer", {}).get("timestamp")
-    if not timestamp:
-        return render.Text("ERR: NO TIME")
-
-    voting_ends = time.parse_time(timestamp)
-    duration = now - voting_ends
-    seconds_elapsed = int(duration.seconds)
-
-    # Generate overtime animation from current point
-    frames = []
-    for i in range(seconds_elapsed, seconds_elapsed + 301):
-        # --- MODIFICATION FOR H:MM:SS FORMAT ---
-        if i < 3600:
-            # Less than 1 hour: -MM:SS
-            min = i // 60
-            sec = i % 60
-            sec_str = str(sec)
-            if sec < 10:
-                sec_str = "0" + sec_str
-            content_str = "-" + str(min) + ":" + sec_str
-        else:
-            # 1+ hour: -H:MM:SS
-            hr = i // 3600
-            rem_sec = i % 3600
-            min = rem_sec // 60
-            sec = rem_sec % 60
-            min_str = str(min)
-            if min < 10:
-                min_str = "0" + min_str
-            sec_str = str(sec)
-            if sec < 10:
-                sec_str = "0" + sec_str
-            content_str = "-" + str(hr) + ":" + min_str + ":" + sec_str
-
-        # --- END MODIFICATION ---
-
-        for _ in range(8):
-            frames.append(render.Text(content = content_str, color = "#FF0000"))
-
-    return render.Animation(children = frames)
+    return render.Text("ERR: NO TIME")
 
 def renderNonVotingRoot(floor):
     """
@@ -351,10 +304,11 @@ def getNonVotingMarquee(floor):
     )
 
 def getStatusIcon(floor):
-    if floor["now"]["value"] == "voting":
+    now = floor.get("now", {})
+    if now.get("value") == "voting":
         return VOTING_ICON_ASSET.readall()
 
-    elif floor["now"]["value"] != "adjourned":
+    elif now.get("value") != "adjourned":
         return VOTING_ICON_ASSET.readall()
 
     else:
@@ -409,25 +363,53 @@ def getFloorActivityFromAPI():
                 },
             },
         }
-    floor_cached = cache.get("floor")
-    if floor_cached != None:
-        print("Using cached floor activity")
-        return json.decode(floor_cached)
-
     print("Getting floor activity from API")
-    response = http.get(DOME_WATCH_API_URL + "/floor", headers = {
-        "Authorization": "Bearer " + API_TOKEN,
-    })
+    response = http.get(DOME_WATCH_API_URL + "/floor", ttl_seconds = 20)
+    body = response.body()
+    floor = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    return normalize_floor(floor)
 
-    if response.status_code != 200:
-        fail("DomeWatch API error: %d %s" % (response.status_code, response.body()))
+def normalize_floor(floor):
+    if type(floor) != "dict":
+        return {"now": {"text": "Floor data unavailable", "value": "unknown"}}
 
-    floor = response.json()
+    now = floor.get("now") if type(floor.get("now")) == "dict" else {}
+    roll_call = floor.get("roll_call") if type(floor.get("roll_call")) == "dict" else {}
+    timer = floor.get("timer") if type(floor.get("timer")) == "dict" else {}
+    votes = floor.get("votes") if type(floor.get("votes")) == "dict" else {}
+    counts = votes.get("counts") if type(votes.get("counts")) == "dict" else {}
+    blue = counts.get("blue") if type(counts.get("blue")) == "dict" else {}
+    red = counts.get("red") if type(counts.get("red")) == "dict" else {}
+    timeline = floor.get("timeline") if type(floor.get("timeline")) == "dict" else {}
 
-    if floor.get("now", {}).get("value") == "voting":
-        ttl = 1
-    else:
-        ttl = 20
+    return {
+        "now": {
+            "text": safe_text(now.get("text"), "No activity", 120),
+            "value": safe_text(now.get("value"), "unknown", 40),
+        },
+        "roll_call": {"question": safe_text(roll_call.get("question"), "Loading...", 180)},
+        "timer": {
+            "timestamp": safe_text(timer.get("timestamp"), "", 64),
+            "value": safe_text(timer.get("value"), "", 16),
+        },
+        "votes": {"counts": {"blue": safe_counts(blue), "red": safe_counts(red)}},
+        "timeline": {
+            str(key)[:40]: {"text": safe_text(value.get("text"), "", 160)}
+            for key, value in timeline.items()
+            if type(value) == "dict"
+        },
+    }
 
-    cache.set("floor", json.encode(floor), ttl_seconds = ttl)
-    return floor
+def safe_counts(counts):
+    return {
+        key: safe_count(counts.get(key))
+        for key in ["yeas", "nays", "present", "not_voting"]
+    }
+
+def safe_count(value):
+    if type(value) in ["int", "float"] or (type(value) == "string" and value.isdigit()):
+        return min(1000, max(0, int(value)))
+    return 0
+
+def safe_text(value, default, limit):
+    return value[:limit] if type(value) == "string" and value else default

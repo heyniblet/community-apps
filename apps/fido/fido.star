@@ -10,6 +10,7 @@ load("images/fence.png", FENCE_ASSET = "file")
 load("images/grass.png", GRASS_ASSET = "file")
 load("images/sky.png", SKY_ASSET = "file")
 load("random.star", "random")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -19,7 +20,7 @@ GRASS = GRASS_ASSET.readall()
 SKY = SKY_ASSET.readall()
 
 # CONFIG
-TTL = 86400
+TTL = 3600
 DEFAULT_TIMEZONE = "America/New_York"
 DEFAULT_BIRTHDAY = "2022-12-29T10:00:00Z"
 LAST_DAY_WALKED = "2022-12-28T10:00:00Z"
@@ -43,13 +44,17 @@ FIDO_FETCH = PET_ACTIONS["Fetch"]
 def main(config):
     # Set configuration variables
     timezone = time.tz()
-    pet_name = config.get("pet_name", DEFAULT_PAL_NAME)
+    pet_name = str(config.get("pet_name", DEFAULT_PAL_NAME))[:32]
     pet_birthday = config.str("pet_birthday", DEFAULT_BIRTHDAY)
+    if re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})$", pet_birthday) == None:
+        pet_birthday = DEFAULT_BIRTHDAY
 
     action_config = config.get("pet_action", PET_ACTIONS["Sit"])
     if action_config == "random":
         idx = random.number(0, len(PET_ACTIONS) - 1)  #-1 because indices start at zero
         action_config = PET_ACTIONS.values()[idx]
+    elif action_config not in PET_ACTIONS.values():
+        action_config = PET_ACTIONS["Sit"]
 
     stats_config = config.bool("showing_stats", False)
 
@@ -97,7 +102,7 @@ def interacting_object(action_config):
     """
     if action_config == FIDO_FETCH:
         action = get_cached(BALL_THROW)
-        return render.Image(src = action)
+        return render.Image(src = action) if action else None
 
     return None
 
@@ -243,6 +248,8 @@ def get_cached(url, ttl_seconds = TTL):
 
     # Grab responses body
     data = res.body()
+    if not data or len(data) > 512 * 1024 or data[0:3] != "GIF":
+        return None
 
     # Return the data we got from the web
     return data

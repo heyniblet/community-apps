@@ -12,11 +12,13 @@ load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-NUM_POKEMON = 1010
+NUM_POKEMON = 1025
 POKEAPI_URL = "https://pokeapi.co/api/v2/pokemon/{}"
-SPRITE_URL = "https://img.pokemondb.net/sprites/home/normal/"
-SHINY_SPRITE_URL = "https://img.pokemondb.net/sprites/home/shiny/"
+SPRITE_PREFIX = "https://raw.githubusercontent.com/PokeAPI/sprites/"
 CACHE_TTL_SECONDS = 3600 * 24 * 7  # 7 days in seconds.
+REFRESH_SECONDS = 300
+MAX_JSON_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
 TYPE_COLORS = {
     "normal": "#AA9",
@@ -43,32 +45,40 @@ TYPE_COLORS = {
 def main(config):
     is2x = canvas.is2x()
     scale = 2 if is2x else 1
-    random.seed(time.now().unix // 15)
+    random.seed(time.now().unix // REFRESH_SECONDS)
     id_ = random.number(1, NUM_POKEMON)
     pokemon = get_pokemon(id_)
-    name = pokemon["name"].title()
-    type1 = pokemon["types"][0]["type"]["name"].lower()
+    if pokemon == None:
+        return message("Pokémon unavailable")
+    name = pokemon.get("name", "")
+    types = pokemon.get("types", [])
+    sprites = pokemon.get("sprites", {})
+    other = sprites.get("other", {}) if type(sprites) == "dict" else {}
+    home = other.get("home", {}) if type(other) == "dict" else {}
+    if type(name) != "string" or not name or type(types) != "list" or len(types) == 0 or type(sprites) != "dict":
+        return message("Pokémon unavailable")
+    name = name[:32].title()
+    type1 = pokemon_type(types[0])
     type2 = ""
-    numTypes = len(pokemon["types"])
-    sprite_url = SPRITE_URL + name.lower() + ".png"
-    shiny_sprite_url = SHINY_SPRITE_URL + name.lower() + ".png"
+    numTypes = len(types)
+    shiny = config.bool("shiny", False)
+    sprite_url = sprites.get("front_shiny") if shiny else sprites.get("front_default")
+    if not sprite_url and type(home) == "dict":
+        sprite_url = home.get("front_shiny") if shiny else home.get("front_default")
+    if not sprite_url and type(other) == "dict":
+        artwork = other.get("official-artwork", {})
+        if type(artwork) == "dict":
+            sprite_url = artwork.get("front_shiny") if shiny else artwork.get("front_default")
 
     if numTypes > 1:
-        type2 = pokemon["types"][1]["type"]["name"].lower()
+        type2 = pokemon_type(types[1])
 
-    if sprite_url == None or shiny_sprite_url == None:
-        return []
-
-    normal_sprite = get_cachable_data(sprite_url)
-    shiny_sprite = get_cachable_data(shiny_sprite_url)
-
-    if config.bool("shiny", False):
-        sprite = shiny_sprite
-    else:
-        sprite = normal_sprite
+    sprite = get_image(sprite_url)
+    if sprite == None:
+        return message("Sprite unavailable")
 
     return render.Root(
-        max_age = 5,
+        max_age = REFRESH_SECONDS,
         child = render.Stack(
             children = [
                 render.Row(
@@ -112,7 +122,7 @@ def main(config):
                             width = 42 * scale,
                             height = 10 * scale,
                             padding = 1 * scale,
-                            color = TYPE_COLORS[type1],
+                            color = TYPE_COLORS.get(type1, "#000"),
                             child = render.Text(
                                 content = type1.upper(),
                                 color = "#000",
@@ -124,7 +134,7 @@ def main(config):
                             width = 42 * scale,
                             height = 10 * scale,
                             padding = 1 * scale,
-                            color = TYPE_COLORS[type2],
+                            color = TYPE_COLORS.get(type2, "#000"),
                             child = render.Text(
                                 content = type2.upper(),
                                 color = "#000",
@@ -167,12 +177,22 @@ def get_schema():
 
 def get_pokemon(id):
     url = POKEAPI_URL.format(id)
-    data = get_cachable_data(url)
-    return json.decode(data)
-
-def get_cachable_data(url):
     res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+    body = res.body()
+    data = json.decode(body, None) if res.status_code == 200 and body and len(body) <= MAX_JSON_BYTES else None
+    return data if type(data) == "dict" else None
 
-    return res.body()
+def get_image(url):
+    if type(url) != "string" or not url.startswith(SPRITE_PREFIX):
+        return None
+    res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = res.body()
+    return body if res.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES else None
+
+def pokemon_type(entry):
+    value = entry.get("type", {}) if type(entry) == "dict" else {}
+    name = value.get("name", "") if type(value) == "dict" else ""
+    return name.lower() if type(name) == "string" and name.lower() in TYPE_COLORS else ""
+
+def message(text):
+    return render.Root(child = render.Box(child = render.WrappedText(content = text, align = "center")))

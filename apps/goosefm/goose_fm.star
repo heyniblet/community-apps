@@ -5,6 +5,7 @@ Description: Info for the music service Goose.fm. Supports station overview and 
 Author: jqr
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -12,13 +13,18 @@ load("schema.star", "schema")
 MAX_WIDTH = 64
 MAX_HEIGHT = 32
 DEFAULT_TTL = 30
+MAX_RESPONSE_BYTES = 256 * 1024
+STATIONS_URL = "https://goose.fm/stations/"
 
 def main(config):
-    callsign = config.str("callsign")
-    if not callsign or len(callsign) == 0:
-        return render_station_overview()
-    else:
-        return render.Root(render_station(callsign))
+    callsign = (config.str("callsign") or "").strip().upper()[:10]
+    stations = list_stations()
+    if not callsign:
+        return render_station_overview(stations)
+    for station in stations:
+        if station["callsign"] == callsign:
+            return render.Root(render_station(station))
+    return render.Root(render.Text("Station unavailable"))
 
 def get_schema():
     return schema.Schema(
@@ -35,13 +41,12 @@ def get_schema():
 
 def get_json(url, ttl_seconds = DEFAULT_TTL):
     response = http.get(url, headers = {"Accept": "application/json"}, ttl_seconds = ttl_seconds)
-    if response.status_code != 200:
-        fail("Request failed with status %i to %s" % (response.status_code, url))
+    body = response.body()
+    return json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
 
-    return response.json()
-
-def render_station_overview():
-    stations = list_stations()
+def render_station_overview(stations):
+    if not stations:
+        return render.Root(render.Text("Goose FM unavailable"))
     rows = []
 
     for station in stations:
@@ -53,17 +58,28 @@ def render_station_overview():
 
 def list_stations():
     results = []
-
-    for station in get_json("https://goose.fm/stations/"):
+    payload = get_json(STATIONS_URL)
+    for station in payload[:50] if type(payload) == "list" else []:
+        if type(station) != "dict":
+            continue
+        callsign = station.get("callsign")
+        listeners = station.get("listeners")
+        if type(callsign) != "string" or not callsign or type(listeners) not in ("int", "float"):
+            continue
         results.append({
-            "callsign": station["callsign"],
-            "listeners": station["listeners"],
+            "callsign": callsign.upper()[:10],
+            "listeners": int(listeners),
+            "dj": clean_text(station.get("dj")),
+            "song_title": clean_text(station.get("title")),
+            "song_artist": clean_text(station.get("artist")),
         })
 
     return results
 
-def render_station(callsign, width = MAX_WIDTH):
-    station = get_station_info(callsign)
+def clean_text(value):
+    return " ".join(value.split())[:100] if type(value) == "string" else ""
+
+def render_station(station, width = MAX_WIDTH):
     return render.Column(
         [
             render_station_with_listeners(station),
@@ -72,24 +88,6 @@ def render_station(callsign, width = MAX_WIDTH):
             render.Marquee(render.Text(station["song_artist"], color = "#ccc"), width = width),
         ],
     )
-
-def get_station_info(callsign):
-    station = get_json("https://" + callsign.lower() + ".station.goose.fm/")
-    if "PlayingSong" in station["currentItem"]:
-        song = station["currentItem"]["PlayingSong"]["_0"]["song"]["proposals"]["allDetails"][0]
-        song_title = song["title"]
-        song_artist = song["artistName"]
-    else:
-        song_title = ""
-        song_artist = ""
-
-    return {
-        "callsign": callsign.upper(),
-        "dj": station["dj"]["name"],
-        "song_title": song_title,
-        "song_artist": song_artist,
-        "listeners": station["listenerCount"],
-    }
 
 def render_station_with_listeners(station):
     callsign = station["callsign"]

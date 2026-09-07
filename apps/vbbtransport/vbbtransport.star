@@ -87,12 +87,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "stop_id",
                 name = "Stop",
-                desc = "Transit stop to show departures for.",
+                desc = "VBB stop or station ID.",
                 icon = "bus",
-                handler = _search_stations,
+                default = "",
             ),
             schema.Dropdown(
                 id = "mode",
@@ -123,24 +123,6 @@ def _resolve_stop_id(raw):
         if type(decoded) == "dict" and "value" in decoded:
             return str(decoded["value"])
     return raw
-
-def _search_stations(query):
-    query = query.strip() if query else ""
-    if len(query) < 2:
-        return []
-    url = "{}/locations?query={}&results=8&poi=false&addresses=false&fuzzy=true&language=en".format(
-        VBB_API,
-        query,
-    )
-    resp = http.get(url, ttl_seconds = STATIONS_TTL)
-    if resp.status_code != 200:
-        return []
-    options = []
-    for r in resp.json():
-        if r.get("type") not in ("stop", "station"):
-            continue
-        options.append(schema.Option(display = r["name"], value = r["id"]))
-    return options
 
 def _fetch_departures(stop_id, mode = "all"):
     url = "{}/stops/{}/departures?duration=60&results=8{}".format(

@@ -13,18 +13,14 @@ load("time.star", "time")
 
 KEY = "446521baf8c38984"
 CLIENT = "pwhl"
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+LOGO_PREFIX = "https://assets.leaguestat.com/"
 
 # Scorebar: recent + upcoming games (windowed to keep the payload small).
 SCOREBAR_URL = (
     "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=scorebar" +
     "&numberofdaysback=21&numberofdaysahead=120&key=" + KEY + "&client_code=" + CLIENT
-)
-
-# Season list, used to find the current season for the favorite-team dropdown.
-# Hardcoding a season_id goes stale every year (and hides expansion teams).
-SEASONS_URL = (
-    "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=seasons" +
-    "&key=" + KEY + "&client_code=" + CLIENT
 )
 
 DEFAULT_LOCATION = '{"timezone": "America/New_York"}'
@@ -47,7 +43,9 @@ AMBER = "#ffb300"
 
 def main(config):
     team = config.get("team", "all")
-    tz = json.decode(config.get("location", DEFAULT_LOCATION))["timezone"]
+    location = json.decode(config.get("location", DEFAULT_LOCATION), {})
+    tz = location.get("timezone", "America/New_York") if type(location) == "dict" else "America/New_York"
+    tz = tz if type(tz) == "string" and tz else "America/New_York"
     now = time.now().in_location(tz)
 
     games = fetch_games()
@@ -55,7 +53,7 @@ def main(config):
         return message("No data")
 
     if team != "all":
-        games = [g for g in games if g["HomeID"] == team or g["VisitorID"] == team]
+        games = [g for g in games if g.get("HomeID") == team or g.get("VisitorID") == team]
 
     kind, game = pick_game(games, now)
     if game == None:
@@ -65,9 +63,16 @@ def main(config):
 
 def fetch_games():
     resp = http.get(SCOREBAR_URL, ttl_seconds = 60)
-    if resp.status_code != 200:
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return None
-    return json.decode(resp.body())["SiteKit"]["Scorebar"]
+    data = json.decode(body, None)
+    site = data.get("SiteKit", {}) if type(data) == "dict" else {}
+    games = site.get("Scorebar") if type(site) == "dict" else None
+    if type(games) != "list":
+        return None
+    required = ["GameDateISO8601", "VisitorLogo", "HomeLogo", "VisitorCode", "HomeCode", "VisitorGoals", "HomeGoals"]
+    return [game for game in games if type(game) == "dict" and all([field in game for field in required])]
 
 def parse_start(game):
     return time.parse_time(game["GameDateISO8601"], format = ISO_FMT)
@@ -217,12 +222,13 @@ def live_text(game):
     return game.get("PeriodNameShort", "") + " " + game.get("GameClock", "")
 
 def fetch_logo(url):
-    if url == "":
+    if type(url) != "string" or not url.startswith(LOGO_PREFIX):
         return None
     resp = http.get(url, ttl_seconds = 86400)
-    if resp.status_code != 200:
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_IMAGE_BYTES:
         return None
-    return resp.body()
+    return body
 
 def message(text):
     scale = 2 if is_2x() else 1
@@ -254,32 +260,18 @@ def get_schema():
     )
 
 def get_team_options():
-    options = [schema.Option(display = "All teams", value = "all")]
-    for t in fetch_current_teams():
-        options.append(schema.Option(display = t["name"], value = t["id"]))
-    return options
-
-def teams_url(season_id):
-    return (
-        "https://lscluster.hockeytech.com/feed/index.php?feed=modulekit&view=teamsbyseason" +
-        "&season_id=" + season_id + "&key=" + KEY + "&client_code=" + CLIENT
-    )
-
-def fetch_current_teams():
-    # Newest season first. A season can be published before its teams are
-    # entered, which returns an empty list, so fall back to the previous one.
-    for season_id in fetch_season_ids()[:4]:
-        resp = http.get(teams_url(season_id), ttl_seconds = 86400)
-        if resp.status_code != 200:
-            continue
-        teams = json.decode(resp.body())["SiteKit"]["Teamsbyseason"]
-        if len(teams) > 0:
-            return teams
-    return []
-
-def fetch_season_ids():
-    resp = http.get(SEASONS_URL, ttl_seconds = 86400)
-    if resp.status_code != 200:
-        return []
-    ids = [int(s["season_id"]) for s in json.decode(resp.body())["SiteKit"]["Seasons"]]
-    return [str(i) for i in sorted(ids, reverse = True)]
+    return [
+        schema.Option(display = "All teams", value = "all"),
+        schema.Option(display = "Boston Fleet", value = "1"),
+        schema.Option(display = "Minnesota Frost", value = "2"),
+        schema.Option(display = "Montréal Victoire", value = "3"),
+        schema.Option(display = "New York Sirens", value = "4"),
+        schema.Option(display = "Ottawa Charge", value = "5"),
+        schema.Option(display = "Toronto Sceptres", value = "6"),
+        schema.Option(display = "Seattle Torrent", value = "8"),
+        schema.Option(display = "Vancouver Goldeneyes", value = "9"),
+        schema.Option(display = "PWHL Detroit", value = "10"),
+        schema.Option(display = "PWHL Hamilton", value = "11"),
+        schema.Option(display = "PWHL Las Vegas", value = "12"),
+        schema.Option(display = "PWHL San Jose", value = "13"),
+    ]

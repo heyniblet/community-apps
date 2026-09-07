@@ -9,6 +9,7 @@ load("encoding/base64.star", "base64")
 load("encoding/csv.star", "csv")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -28,6 +29,8 @@ def main(config):
     show_sub_cfg = config.bool("show_sub", DEFAULT_SHOW_SUB)
     show_dub_cfg = config.bool("show_dub", DEFAULT_SHOW_DUB)
     image_cfg = config.str("image_type", DEFAULT_IMAGE_TYPE)
+    if lang_cfg not in ["en-US", "es-419"] or not re.match(r"^[a-z0-9-]{1,100}$", anime_cfg):
+        return show_error("Invalid anime settings")
 
     title_color_cfg = config.str("title_color", DEFAULT_TITLE_COLOR)
     sub_id_color_cfg = config.str("sub_id_color", DEFAULT_SUB_ID_COLOR)
@@ -233,22 +236,25 @@ def get_file_id_and_anime_name(anime_cfg):
         return None, None
 
     for anime in anime_csv:
-        if anime[2] != anime_cfg:
+        if len(anime) < 4 or anime[2] != anime_cfg:
             continue
 
-        return anime[0], anime[3]
+        if type(anime[0]) == "string" and re.match(r"^[A-Za-z0-9._-]{1,100}$", anime[0]) and type(anime[3]) == "string":
+            return anime[0], anime[3][:200]
+        return None, None
 
     return None, None
 
 def get_latest_episodes(lang_cfg, anime_cfg):
     url = "https://raw.githubusercontent.com/Schoperation/Tidbyt-Anime-Files/sensei/latest_episodes/{}.json".format(lang_cfg)
     resp = http.get(url = url, headers = {"Accept": "application/json", "User-Agent": "Crunchyroll Anime Checker - Tidbyt App"}, ttl_seconds = 300)
-    if resp.status_code != 200:
+    if resp.status_code != 200 or len(resp.body()) > 2097152:
         return None
 
-    latest_episodes = json.decode(resp.body())["latest_episodes"]
+    data = json.decode(resp.body())
+    latest_episodes = data.get("latest_episodes") if type(data) == "dict" else None
 
-    if anime_cfg not in latest_episodes:
+    if type(latest_episodes) != "dict" or anime_cfg not in latest_episodes or not valid_latest(latest_episodes[anime_cfg]):
         return None
 
     return latest_episodes[anime_cfg]
@@ -256,33 +262,40 @@ def get_latest_episodes(lang_cfg, anime_cfg):
 def get_poster(file_id, anime_cfg, image_cfg):
     url = "https://raw.githubusercontent.com/Schoperation/Tidbyt-Anime-Files/sensei/posters/{}.json".format(file_id)
     resp = http.get(url = url, headers = {"Accept": "application/json", "User-Agent": "Crunchyroll Anime Checker - Tidbyt App"}, ttl_seconds = 300)
-    if resp.status_code != 200:
+    if resp.status_code != 200 or len(resp.body()) > 8388608:
         return None
 
-    posters = json.decode(resp.body())["posters"]
+    data = json.decode(resp.body())
+    posters = data.get("posters") if type(data) == "dict" else None
+    if type(posters) != "dict":
+        return None
 
     poster = ""
     if anime_cfg not in posters:
-        poster = json.decode(resp.body())["default_poster_encoded"]
-    elif image_cfg == "poster_wide":
-        poster = posters[anime_cfg]["poster_wide_encoded"]
+        poster = data.get("default_poster_encoded", "")
     else:
-        poster = posters[anime_cfg]["poster_tall_encoded"]
+        anime_posters = posters[anime_cfg]
+        if type(anime_posters) != "dict":
+            return None
+        poster = anime_posters.get("poster_wide_encoded" if image_cfg == "poster_wide" else "poster_tall_encoded", "")
 
-    return base64.decode(poster)
+    return base64.decode(poster) if type(poster) == "string" and 0 < len(poster) and len(poster) <= 6291456 else None
 
 def get_thumbnail(file_id, anime_cfg, image_cfg, latest_episodes):
     url = "https://raw.githubusercontent.com/Schoperation/Tidbyt-Anime-Files/sensei/thumbnails/{}.json".format(file_id)
     resp = http.get(url = url, headers = {"Accept": "application/json", "User-Agent": "Crunchyroll Anime Checker - Tidbyt App"}, ttl_seconds = 300)
-    if resp.status_code != 200:
+    if resp.status_code != 200 or len(resp.body()) > 8388608:
         return None
 
-    thumbnails = json.decode(resp.body())["thumbnails"]
+    data = json.decode(resp.body())
+    thumbnails = data.get("thumbnails") if type(data) == "dict" else None
+    if type(thumbnails) != "dict":
+        return None
 
     thumbnail = ""
     if anime_cfg not in thumbnails:
-        thumbnail = json.decode(resp.body())["default_thumbnail_encoded"]
-        return base64.decode(thumbnail)
+        thumbnail = data.get("default_thumbnail_encoded", "")
+        return base64.decode(thumbnail) if type(thumbnail) == "string" and 0 < len(thumbnail) and len(thumbnail) <= 6291456 else None
 
     key = ""
     if image_cfg == "thumb_sub":
@@ -291,26 +304,23 @@ def get_thumbnail(file_id, anime_cfg, image_cfg, latest_episodes):
         key = "{s}-{e}".format(s = latest_episodes["dub"]["season"], e = latest_episodes["dub"]["episode"])
 
     if key == "0-0":
-        thumbnail = json.decode(resp.body())["default_thumbnail_encoded"]
+        thumbnail = data.get("default_thumbnail_encoded", "")
     else:
-        thumbnail = thumbnails[anime_cfg][key]["encoded"]
+        anime_thumbnails = thumbnails.get(anime_cfg)
+        episode = anime_thumbnails.get(key) if type(anime_thumbnails) == "dict" else None
+        thumbnail = episode.get("encoded", "") if type(episode) == "dict" else ""
 
-    return base64.decode(thumbnail)
+    return base64.decode(thumbnail) if type(thumbnail) == "string" and 0 < len(thumbnail) and len(thumbnail) <= 6291456 else None
 
 def get_sensei_list():
     anime_sensei_list_url = "https://raw.githubusercontent.com/Schoperation/Tidbyt-Anime-Files/sensei/anime_sensei_list.csv"
     resp = http.get(url = anime_sensei_list_url, headers = {"Accept": "application/json", "User-Agent": "Crunchyroll Anime Checker - Tidbyt App"}, ttl_seconds = 300)
-    if resp.status_code != 200:
+    if resp.status_code != 200 or len(resp.body()) > 524288:
         return None
 
     return csv.read_all(source = resp.body(), skip = 1, comma = "|")
 
 def get_schema():
-    anime_csv = get_sensei_list()
-    anime_options = [schema.Option(display = "Default (List N/A)", value = DEFAULT_ANIME)]
-    if anime_csv != None:
-        anime_options = [anime_to_schema_option(anime) for anime in anime_csv]
-
     config_fields = [
         schema.Dropdown(
             id = "lang",
@@ -329,13 +339,12 @@ def get_schema():
                 ),
             ],
         ),
-        schema.Dropdown(
+        schema.Text(
             id = "anime",
             name = "Anime",
-            desc = "The anime you want to check!",
+            desc = "Anime slug, for example one-piece.",
             icon = "tv",
             default = DEFAULT_ANIME,
-            options = anime_options,
         ),
         schema.Toggle(
             id = "show_sub",
@@ -412,11 +421,16 @@ def get_schema():
         fields = config_fields,
     )
 
-def anime_to_schema_option(anime):
-    return schema.Option(
-        display = anime[3],
-        value = anime[2],
-    )
+def valid_latest(latest):
+    if type(latest) != "dict":
+        return False
+    for kind in ["sub", "dub"]:
+        episode = latest.get(kind)
+        if type(episode) != "dict" or type(episode.get("title")) != "string" or len(episode["title"]) > 500:
+            return False
+        if type(episode.get("season")) not in ["int", "float"] or type(episode.get("episode")) not in ["int", "float"]:
+            return False
+    return True
 
 def show_error(message):
     return render.Root(

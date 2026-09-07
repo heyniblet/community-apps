@@ -8,6 +8,7 @@ Author: petergCA
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
+load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
@@ -22,6 +23,7 @@ RANGE_INTERVALS = {
 
 def main(config):
     symbol = config.get("symbol", "AAPL").upper().strip()
+    symbol = symbol if re.match("^[A-Z0-9.^=-]{1,20}$", symbol) else "AAPL"
     select_range = config.get("select_range", "1d")
     ttl = int(config.get("ttl", "900"))
     color_profit = config.get("color_profit", "#00ff00")
@@ -37,7 +39,10 @@ def main(config):
     if response.status_code != 200:
         return error_view(symbol, "HTTP %d" % response.status_code)
 
-    body = response.json()
+    raw = response.body()
+    body = json.decode(raw, {}) if raw and len(raw) <= 2 * 1024 * 1024 else {}
+    if type(body) != "dict":
+        return error_view(symbol, "BAD DATA")
     chart = body.get("chart", {})
     results = chart.get("result")
     if not results:
@@ -47,6 +52,7 @@ def main(config):
     meta = result.get("meta", {})
     quotes = result.get("indicators", {}).get("quote", [{}])[0]
     raw_closes = quotes.get("close") or []
+    raw_closes = raw_closes[:500] if type(raw_closes) == "list" else []
 
     closes = []
     for c in raw_closes:

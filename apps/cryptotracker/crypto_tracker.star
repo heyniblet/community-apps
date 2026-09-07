@@ -5,11 +5,10 @@ Description: Displays crypto prices in USD over the last 24 hours.
 Author: Ethan Fuerst (@ethanfuerst)
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -118,76 +117,51 @@ def display_chart(c_data, x_lim, y_lim):
 
 def main(config):
     symbol = config.str("symbol", DEFAULT_SYMBOL)
-    tr_format_price = config.str("tr_format_price", False) == "true"
-    tr_format_pchange = config.str("tr_format_pchange", False) == "true"
-    tr_format_percent = config.str("tr_format_percent", False) == "true"
+    if symbol not in ["BTC", "ETH", "BNB", "ADA", "SOL"]:
+        return error_display("Invalid symbol")
+    tr_format_price = config.bool("tr_format_price", False)
+    tr_format_pchange = config.bool("tr_format_pchange", False)
+    tr_format_percent = config.bool("tr_format_percent", False)
     interval = "15min"
 
-    API_KEY = config.get("api_key")
-    API_URL = "https://www.alphavantage.co/query?function=CRYPTO_INTRADAY&symbol={s}&market=USD&interval={i}&outputsize=full&apikey={a}".format(s = symbol, i = interval, a = API_KEY)
-
-    cache_name = "{}_price_data".format(symbol)
-    cached_data = cache.get(cache_name)
-    if cached_data != None:
-        print("Hit! Displaying cached data from Alphavantage.")
-        r = json.decode(cached_data)
-    else:
-        print("Miss! Calling Alphavantage API.")
-        rep = http.get(API_URL, ttl_seconds = 60 * 15)
-        r = rep.json()
-
-        if rep.status_code != 200:
-            if cached_data != None:
-                print("Using cached data")
-                r = json.decode(cached_data)
-            else:
-                fail("Alphavantage API request failed with status %d", rep.status_code)
-
-        if "Note" in r:
-            if cached_data != None:
-                print("Using cached data")
-                r = json.decode(cached_data)
-            else:
-                print("Alphavantage API request failed with note %s" % r["Note"])
-                return render.Root(
-                    child = render.WrappedText("API Limit Reached", color = "#FF0000"),
-                )
-
-        if "Error Message" in r:
-            if cached_data != None:
-                print("Using cached data")
-                r = json.decode(cached_data)
-            else:
-                fail("Alphavantage API request failed with error message %s" % r["Error Message"])
-
-        if "Information" in r:
-            if cached_data != None:
-                print("Using cached data")
-                r = json.decode(cached_data)
-            else:
-                print("Alphavantage API request failed with information %s" % r["Information"])
-                return render.Root(
-                    child = render.WrappedText("API Info: %s" % r["Information"], color = "#FF0000"),
-                )
+    api_key = config.get("api_key", "")
+    if not api_key or not re.match(r"^[A-Za-z0-9]{1,128}$", api_key):
+        return error_display("API key required")
+    api_url = "https://www.alphavantage.co/query?function=CRYPTO_INTRADAY&symbol={s}&market=USD&interval={i}&outputsize=compact&apikey={a}".format(s = symbol, i = interval, a = api_key)
+    rep = http.get(api_url)
+    if rep.status_code != 200 or len(rep.body()) > 2097152:
+        return error_display("Crypto data unavailable")
+    r = rep.json()
+    if type(r) != "dict":
+        return error_display("Crypto data unavailable")
+    if "Note" in r:
+        return error_display("API limit reached")
+    if "Error Message" in r or "Information" in r:
+        return error_display("API plan or key error")
 
     timeseries = r.get("Time Series Crypto (15min)")
-    if not timeseries:
-        return render.Root(
-            child = render.WrappedText("No Data Available", color = "#FF0000"),
-        )
+    if type(timeseries) != "dict" or not timeseries:
+        return error_display("No data available")
 
-    dates = [val for val in timeseries.keys()]
-
-    y = [float(timeseries[date]["1. open"]) for date in sorted(dates)][-96:]
+    dates = [date for date in timeseries.keys() if type(date) == "string" and type(timeseries[date]) == "dict"]
+    y = []
+    for date in sorted(dates)[-96:]:
+        value = timeseries[date].get("1. open")
+        if type(value) == "string" and re.match(r"^[0-9]+(?:\.[0-9]+)?$", value):
+            y.append(float(value))
+    if len(y) < 2 or y[0] <= 0:
+        return error_display("No data available")
     first_val = y[0]
     y_transformed = [price - first_val for price in y]
 
-    x = [float(i) for i in range(0, len(y) + 1)]
+    x = [float(i) for i in range(0, len(y))]
 
     chart_data = [(x_val, y_val) for x_val, y_val in zip(x, y_transformed)]
 
     x_lim = (0.0, float(len(y_transformed)))
     y_lim = (min(y_transformed), max(y_transformed))
+    if y_lim[0] == y_lim[1]:
+        y_lim = (y_lim[0] - 1.0, y_lim[1] + 1.0)
 
     price_change = y[-1] - y[0]
     if price_change < 0.0:
@@ -238,6 +212,9 @@ def main(config):
             ],
         ),
     )
+
+def error_display(message):
+    return render.Root(child = render.WrappedText(message, color = "#FF0000", font = "tom-thumb"))
 
 def get_schema():
     crypto_options = [

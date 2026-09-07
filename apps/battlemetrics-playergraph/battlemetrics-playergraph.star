@@ -1,6 +1,4 @@
 load("api.star", "fetch_24h_history", "fetch_server_name")
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("render.star", "render")
 load("schema.star", "schema")
 load("utils.star", "round_up_y_max", "truncate")
@@ -123,7 +121,7 @@ def render_graph(values, h_lines_count, show_v_lines, v_lines_count):
         ],
     )
 
-def render_missing_server_id():
+def render_missing_server_id(detail = "SERVER ID"):
     return render.Root(
         child = render.Column(
             expanded = True,
@@ -133,7 +131,7 @@ def render_missing_server_id():
                 render.Text("BattleMetrics", font = "tb-8", color = "#ffffff"),
                 render.Box(height = 4),
                 render.Text("MISSING", font = "tb-8", color = "#ff3333"),
-                render.Text("SERVER ID", font = "tb-8", color = "#ff3333"),
+                render.Text(detail, font = "tb-8", color = "#ff3333"),
             ],
         ),
     )
@@ -169,38 +167,42 @@ def render_error_state(name):
 
 def main(config):
     server_id = config.get("server_id")
-    if not server_id:
+    if type(server_id) != "string" or not server_id.isdigit() or len(server_id) > 20:
         return render_missing_server_id()
+    api_token = config.get("api_token")
+    if type(api_token) != "string" or not api_token or len(api_token) > 2048 or "\r" in api_token or "\n" in api_token:
+        return render_missing_server_id("API TOKEN")
 
     custom_title = config.get("custom_title") or ""
+    custom_title = custom_title[:160] if type(custom_title) == "string" else ""
     use_marquee = config.bool("title_marquee")
     show_v_lines = config.bool("show_v_lines")
-    v_lines_count = int(config.get("v_lines_count") or "2")
-    h_lines_count = int(config.get("h_lines_count") or "3")
+    v_lines_value = str(config.get("v_lines_count") or "2")
+    h_lines_value = str(config.get("h_lines_count") or "3")
+    v_lines_count = int(v_lines_value) if v_lines_value in ["1", "2", "3"] else 2
+    h_lines_count = int(h_lines_value) if h_lines_value in ["1", "2", "3", "4"] else 3
 
-    history = fetch_24h_history(server_id)
+    history = fetch_24h_history(server_id, api_token)
     if history == None or len(history) == 0:
-        cached_json = cache.get("bm_history_" + server_id)
-        if cached_json != None:
-            history = json.decode(cached_json)
-        else:
-            cached_name = cache.get("bm_history_name_" + server_id)
-            if custom_title != "":
-                display_name = custom_title
-            elif cached_name != None:
-                display_name = cached_name
-            else:
-                display_name = "Unknown"
-            return render_error_state(display_name)
+        return render_error_state(custom_title if custom_title else "Unknown")
 
     # Sort by timestamp ascending (ISO 8601 sorts lexicographically = chronologically)
-    pairs = sorted([[p["attributes"]["timestamp"], p["attributes"]["value"]] for p in history])
+    pairs = []
+    for point in history[:100]:
+        attrs = point.get("attributes") if type(point) == "dict" else None
+        timestamp = attrs.get("timestamp") if type(attrs) == "dict" else None
+        value = attrs.get("value") if type(attrs) == "dict" else None
+        if type(timestamp) == "string" and len(timestamp) <= 40 and type(value) in ["int", "float"] and value >= 0:
+            pairs.append([timestamp, value])
+    if not pairs:
+        return render_error_state(custom_title if custom_title else "Unknown")
+    pairs = sorted(pairs)
     values = [pair[1] for pair in pairs]
 
     if custom_title != "":
         display_name = custom_title
     else:
-        name = fetch_server_name(server_id)
+        name = fetch_server_name(server_id, api_token)
         display_name = name if name != None else "Unknown"
 
     return render.Root(
@@ -267,6 +269,13 @@ def get_schema():
                     schema.Option(display = "2", value = "2"),
                     schema.Option(display = "3", value = "3"),
                 ],
+            ),
+            schema.Text(
+                id = "api_token",
+                name = "API token",
+                desc = "BattleMetrics API token from an API-enabled account",
+                icon = "key",
+                secret = True,
             ),
         ],
     )

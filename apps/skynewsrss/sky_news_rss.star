@@ -32,7 +32,8 @@ SPACER_COLOR = "#000"
 ARTICLE_LINESPACING = 0
 ARTICLE_AREA_HEIGHT = 24
 
-RSS_STUB = "http://feeds.skynews.com/feeds/rss/{}.xml"
+RSS_STUB = "https://feeds.skynews.com/feeds/rss/{}.xml"
+FEEDS = ["home", "uk", "world", "us", "politics", "technology", "business", "entertainment", "strange"]
 
 SECTION_TITLE = {
     "home": "Home",
@@ -48,8 +49,11 @@ SECTION_TITLE = {
 
 def main(config):
     edition = config.get("news_edition", DEFAULT_NEWS)
+    if edition not in FEEDS:
+        edition = DEFAULT_NEWS
 
-    articlecount = int(config.get("articlecount", DEFAULT_ARTICLE_COUNT))
+    article_count_value = str(config.get("articlecount", DEFAULT_ARTICLE_COUNT))
+    articlecount = int(article_count_value) if article_count_value in ["1", "2", "3"] else 3
     articles = get_cacheable_data(edition.lower(), articlecount)
 
     if canvas.is2x():
@@ -224,15 +228,18 @@ def get_cacheable_data(url, articlecount):
     articles = []
 
     res = http.get(RSS_STUB.format(url), ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
     data = res.body()
+    if res.status_code != 200 or not data or len(data) > 256 * 1024 or "<item" not in data:
+        return []
 
     data_xml = xpath.loads(data)
 
     for i in range(1, articlecount + 1):
         title_query = "//item[{}]/title".format(str(i))
         desc_query = "//item[{}]/description".format(str(i))
-        articles.append((data_xml.query(title_query), str(data_xml.query(desc_query)).replace("None", "")))
+        title = clean_text(str(data_xml.query(title_query)))[:300]
+        desc = clean_text(str(data_xml.query(desc_query)).replace("None", ""))[:500]
+        if title:
+            articles.append((title, desc))
 
     return articles

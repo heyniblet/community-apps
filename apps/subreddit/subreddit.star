@@ -8,6 +8,7 @@ Author: Petros Fytilis
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/reddit_icon.png", REDDIT_ICON_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -38,6 +39,7 @@ def main(config):
     loc = json.decode(location)
     timezone = loc["timezone"]
     subreddit = (config.get("subreddit") or DEFAULT_SUBREDDIT).strip()
+    subreddit = subreddit if re.match("^[A-Za-z0-9_]{1,21}$", subreddit) else DEFAULT_SUBREDDIT
     is_24h_format = config.bool("is_24h_format", False)
 
     return render.Root(
@@ -120,22 +122,25 @@ def _render_post_title(subreddit):
     )
 
 def _fetch_post_title(subreddit):
-    print("Calling Reddit API for <{}>.".format(subreddit))
     rep = http.get(
         REDDIT_API_URL_TEMPLATE.format(subreddit),
-        headers = {"User-agent": "PostmanRuntime/7.28.4"},
+        headers = {"User-Agent": "Niblet display app (+https://github.com/heyniblet/community-apps)"},
         ttl_seconds = CACHE_TTL_SECONDS,
     )
     if rep.status_code != STATUS_OK:
-        print("Reddit request failed with status {}.".format(rep.status_code))
         return "Could not retrieve Reddit data"
-    return _parse_post_title(rep.json())
+    body = rep.body()
+    data = json.decode(body, {}) if body and len(body) <= 256 * 1024 else {}
+    return _parse_post_title(data)
 
-def _parse_post_title(json):
-    if json["data"] and json["data"]["children"] and len(json["data"]["children"]) > 0:
-        post = json["data"]["children"][-1]
-        if post["data"] and post["data"]["title"]:
-            return post["data"]["title"]
+def _parse_post_title(data):
+    listing = data.get("data", {}) if type(data) == "dict" else {}
+    children = listing.get("children", []) if type(listing) == "dict" else []
+    if type(children) == "list" and children and type(children[0]) == "dict":
+        post = children[0].get("data", {})
+        title = post.get("title") if type(post) == "dict" else None
+        if type(title) == "string":
+            return title[:500]
     return "No post was found"
 
 def get_schema():

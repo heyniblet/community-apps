@@ -28,6 +28,18 @@ JELLYFIN_ICON_2X = JELLYFIN_ICON_2X_ASSET.readall()
 MAX_TEXT_LENGTH = 1000
 GET_TOP = 15
 
+def server_url(value):
+    value = (value or "").strip().rstrip("/")
+    if not value.startswith("https://") or "@" in value or "?" in value or "#" in value or " " in value or "\t" in value or "\n" in value:
+        return None
+    return value
+
+def safe_id(value):
+    return type(value) == "string" and len(value) > 0 and len(value) <= 128 and all([char.isalnum() or char in "-_" for char in value.elems()])
+
+def parse_window(value, fallback):
+    return int(value) if value.isdigit() and len(value) <= 4 and int(value) > 0 else fallback
+
 def main(config):
     scale = 2 if canvas.is2x() else 1
     jellyfin_server_url = config.str("jellyfin_server_url", "")
@@ -47,14 +59,17 @@ def main(config):
     show_playing = config.bool("show_playing", False)
     fit_screen = config.bool("fit_screen", True)
     debug_output = config.bool("debug_output", False)
-    release_window = int(config.str("release_window", "90"))
-    added_window = int(config.str("added_window", "30"))
+    release_window = parse_window(config.str("release_window", "90"), 90)
+    added_window = parse_window(config.str("added_window", "30"), 30)
+
+    normalized_server_url = server_url(jellyfin_server_url) if jellyfin_server_url else ""
+    if jellyfin_server_url and not normalized_server_url:
+        return display_message(True, [{"message": "Use a public HTTPS Jellyfin URL", "color": "#FF0000"}], False, scale)
+    jellyfin_server_url = normalized_server_url
 
     if show_only_artwork:
         show_heading = False
         show_summary = False
-
-    ttl_seconds = 5
 
     endpoints = []
 
@@ -79,13 +94,11 @@ def main(config):
         endpoint_map = endpoints[random_endpoint_index]
 
     if debug_output:
-        print("------------------------------")
-        print("CONFIG - server: " + jellyfin_server_url)
         print("CONFIG - endpoint: " + str(endpoint_map))
 
-    return get_text(jellyfin_server_url, jellyfin_api_key, endpoint_map, debug_output, fit_screen, filter_movie, filter_tv, filter_music, show_heading, show_only_artwork, show_summary, heading_color, font_color, ttl_seconds, release_window, added_window, scale)
+    return get_text(jellyfin_server_url, jellyfin_api_key, endpoint_map, debug_output, fit_screen, filter_movie, filter_tv, filter_music, show_heading, show_only_artwork, show_summary, heading_color, font_color, release_window, added_window, scale)
 
-def get_text(server_url, api_key, endpoint_map, debug_output, fit_screen, filter_movie, filter_tv, filter_music, show_heading, show_only_artwork, show_summary, heading_color, font_color, ttl_seconds, release_window, added_window, scale):
+def get_text(server_url, api_key, endpoint_map, debug_output, fit_screen, filter_movie, filter_tv, filter_music, show_heading, show_only_artwork, show_summary, heading_color, font_color, release_window, added_window, scale):
     base_url = server_url
     if base_url.endswith("/"):
         base_url = base_url[0:len(base_url) - 1]
@@ -107,13 +120,17 @@ def get_text(server_url, api_key, endpoint_map, debug_output, fit_screen, filter
     if filter_music:
         include_types.append("MusicAlbum")
     include_types_str = ",".join(include_types)
+    if not include_types_str:
+        return display_message(debug_output, [{"message": "Select at least one media type", "color": "#FF0000"}], False, scale)
 
     if endpoint_map["id"] == 1:  # Playing
         url = base_url + "/Sessions"
-        content = get_data(url, debug_output, headers, ttl_seconds)
+        content = get_data(url, debug_output, headers)
         if content:
-            sessions = json.decode(content)
-            for s in sessions:
+            sessions = json.decode(content, None)
+            for s in sessions if type(sessions) == "list" else []:
+                if type(s) != "dict":
+                    continue
                 if s.get("NowPlayingItem"):
                     items.append(s["NowPlayingItem"])
 
@@ -122,44 +139,51 @@ def get_text(server_url, api_key, endpoint_map, debug_output, fit_screen, filter
         min_date_str = min_date.format("2006-01-02")
 
         url = base_url + "/Items?SortBy=PremiereDate&SortOrder=Descending&Recursive=true&IncludeItemTypes=" + include_types_str + "&MinPremiereDate=" + min_date_str + "&Limit=" + str(GET_TOP)
-        content = get_data(url, debug_output, headers, ttl_seconds)
+        content = get_data(url, debug_output, headers)
         if content:
-            items = json.decode(content).get("Items", [])
+            data = json.decode(content, None)
+            items = data.get("Items", []) if type(data) == "dict" else []
 
         if not items:
             url = base_url + "/Items?SortBy=PremiereDate&SortOrder=Descending&Recursive=true&IncludeItemTypes=" + include_types_str + "&Limit=" + str(GET_TOP)
-            content = get_data(url, debug_output, headers, ttl_seconds)
+            content = get_data(url, debug_output, headers)
             if content:
-                items = json.decode(content).get("Items", [])
+                data = json.decode(content, None)
+                items = data.get("Items", []) if type(data) == "dict" else []
 
     elif endpoint_map["id"] == 3:  # Recently Added
         min_date = time.now() - time.parse_duration("%dh" % (added_window * 24))
         min_date_str = min_date.format("2006-01-02T15:04:05Z")  # Jellyfin often expects ISO for MinDateCreated
 
         url = base_url + "/Items?SortBy=DateCreated&SortOrder=Descending&Recursive=true&IncludeItemTypes=" + include_types_str + "&MinDateCreated=" + min_date_str + "&Limit=" + str(GET_TOP)
-        content = get_data(url, debug_output, headers, ttl_seconds)
+        content = get_data(url, debug_output, headers)
         if content:
-            items = json.decode(content).get("Items", [])
+            data = json.decode(content, None)
+            items = data.get("Items", []) if type(data) == "dict" else []
 
         if not items:
             url = base_url + "/Items?SortBy=DateCreated&SortOrder=Descending&Recursive=true&IncludeItemTypes=" + include_types_str + "&Limit=" + str(GET_TOP)
-            content = get_data(url, debug_output, headers, ttl_seconds)
+            content = get_data(url, debug_output, headers)
             if content:
-                items = json.decode(content).get("Items", [])
+                data = json.decode(content, None)
+                items = data.get("Items", []) if type(data) == "dict" else []
 
     elif endpoint_map["id"] == 4:  # Played
         url = base_url + "/Items?SortBy=DatePlayed&SortOrder=Descending&Recursive=true&IncludeItemTypes=" + include_types_str + "&Limit=" + str(GET_TOP)
-        content = get_data(url, debug_output, headers, ttl_seconds)
+        content = get_data(url, debug_output, headers)
         if content:
-            items = json.decode(content).get("Items", [])
+            data = json.decode(content, None)
+            items = data.get("Items", []) if type(data) == "dict" else []
 
     elif endpoint_map["id"] == 5:  # Library
         url = base_url + "/Library/VirtualFolders"
-        content = get_data(url, debug_output, headers, ttl_seconds)
+        content = get_data(url, debug_output, headers)
         if content:
-            folders = json.decode(content)
+            folders = json.decode(content, None)
             valid_folders = []
-            for f in folders:
+            for f in folders if type(folders) == "list" else []:
+                if type(f) != "dict" or not safe_id(f.get("ItemId")):
+                    continue
                 collection_type = f.get("CollectionType", "")
                 if (filter_movie and collection_type == "movies") or (filter_tv and collection_type == "tvshows") or (filter_music and collection_type == "music"):
                     valid_folders.append(f)
@@ -167,10 +191,12 @@ def get_text(server_url, api_key, endpoint_map, debug_output, fit_screen, filter
             if len(valid_folders) > 0:
                 folder = valid_folders[random.number(0, len(valid_folders) - 1)]
                 url = base_url + "/Items?ParentId=" + folder["ItemId"] + "&Recursive=true&IncludeItemTypes=" + include_types_str + "&Limit=50"
-                content = get_data(url, debug_output, headers, ttl_seconds)
+                content = get_data(url, debug_output, headers)
                 if content:
-                    items = json.decode(content).get("Items", [])
+                    data = json.decode(content, None)
+                    items = data.get("Items", []) if type(data) == "dict" else []
 
+    items = [item for item in items[:GET_TOP] if type(item) == "dict" and safe_id(item.get("Id"))] if type(items) == "list" else []
     if not items:
         return display_message(debug_output, [{"message": "No results for " + endpoint_map["title"], "color": "#FF0000"}], False, scale)
 
@@ -206,7 +232,7 @@ def get_text(server_url, api_key, endpoint_map, debug_output, fit_screen, filter
     if show_summary:
         img_url = base_url + "/Items/" + item["Id"] + "/Images/Backdrop?maxWidth=64"
 
-    img_data = get_data(img_url, debug_output, headers, ttl_seconds)
+    img_data = get_data(img_url, debug_output, headers)
 
     using_portrait_banner = False
     if not img_data:
@@ -329,11 +355,13 @@ def wrap(string, line_length):
     lines.append(cur)
     return "\n".join(lines)
 
-def get_data(url, debug_output, headers = {}, ttl_seconds = 20):
-    res = http.get(url, headers = headers, ttl_seconds = ttl_seconds)
+def get_data(url, debug_output, headers = {}):
+    if not url.startswith("https://"):
+        return None
+    res = http.get(url, headers = headers)
     if res.status_code != 200:
         if debug_output:
-            print("Error " + str(res.status_code) + " on " + url)
+            print("Jellyfin request failed with status " + str(res.status_code))
         return None
     return res.body()
 
@@ -341,7 +369,7 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Text(id = "jellyfin_server_url", name = "Jellyfin Server URL", desc = "e.g. http://192.168.1.100:8096", icon = "globe"),
+            schema.Text(id = "jellyfin_server_url", name = "Jellyfin Server URL", desc = "Public HTTPS Jellyfin or reverse-proxy URL", icon = "globe"),
             schema.Text(id = "jellyfin_api_key", name = "API Key", desc = "Jellyfin API Key", icon = "key", secret = True),
             schema.Text(id = "release_window", name = "Release Window (days)", desc = "Look for items released in the last X days.", icon = "calendar", default = "90"),
             schema.Text(id = "added_window", name = "Added Window (days)", desc = "Look for items added in the last X days.", icon = "calendar", default = "30"),

@@ -306,11 +306,15 @@ def get_leaders(statName):
     full_URL = "https://statsapi.mlb.com/api/v1/stats/leaders?sportId=1&leaderCategories=%s&season=%s&hydrate=team&limit=5" % (statName, today.year)
 
     #print(full_URL)
-    rep = http.get(url = full_URL, ttl_seconds = 43200)  #grab data twice a day
+    rep = http.get(
+        url = full_URL,
+        headers = {"User-Agent": "Niblet/1.0 (hello@heyniblet.com)"},
+        ttl_seconds = 43200,
+    )  #grab data twice a day
     if rep.status_code != 200:
         return ["Error getting data"]
     else:
-        data = rep.json()["leagueLeaders"]
+        data = rep.json().get("leagueLeaders", [])
         if data == []:
             return no_stat_text
         else:
@@ -323,9 +327,9 @@ def get_leaders(statName):
                 if x.get("leaders") != None:
                     for (idx2, player) in enumerate(x["leaders"]):
                         rank = int(player["rank"])
-                        name = player["person"]["fullName"]
-                        team = player.get("team", {"abbreviation": "?"})["abbreviation"]  #player["team"]["abbreviation"]
-                        value = player["value"]
+                        name = player.get("person", {}).get("fullName", "Unknown")
+                        team = player.get("team", {}).get("abbreviation", "?")
+                        value = player.get("value", "?")
                         stats_tmp.append([rank, name, team, value])  #this becomes
                         if idx2 == 2:  #don't get more than 3 players in case of ties
                             break

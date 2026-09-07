@@ -12,7 +12,6 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-production = True
 debug = False  #  debug mode will not hit network apis
 print_debug = False
 
@@ -156,7 +155,7 @@ def main(config):
     # get preferences
     units_pref = config.get("h_units", "feet")
     time_format = config.get("time_format", "24HR")
-    station_id = config.get("station_id", "")
+    station_id = config.get("station_id", "1613198")
     station_name = config.get("station_name")  #  we want this to be blank or None
     color_label = config.get("label_color", "#0a0")  # green
     color_low = config.get("low_color", "#A00")  # red
@@ -166,28 +165,6 @@ def main(config):
 
     # get our station_id
     debug_print("station id from config.get: " + station_id)
-    if station_id == "none" or station_id == "" or not station_id:  # if manual input is empty load from local selection
-        debug_print("getting local_station_id")
-        if production:
-            local_selection = config.get("local_station_id", '{"display": "Kahului Harbor", "value": "1613198"}')
-        else:
-            local_selection = config.get("local_station_id", "1613198")  # default is Waimea
-
-        if local_selection == "None Found":
-            local_selection = "1613198"  # config.get bug ?
-        debug_print("Local selection : " + local_selection)
-
-        # this is needed for locationbased selection in production environment
-        if "value" in local_selection:
-            station_id = json.decode(local_selection)["value"]
-            if station_name == None or station_name == "":
-                if "display" in local_selection:
-                    station_name = json.decode(local_selection)["display"]
-                else:
-                    station_name = station_id
-        else:
-            station_id = local_selection  # san fran
-
     debug_print("using station_id: " + station_id)
 
     ################################ CACHINE CODE
@@ -444,28 +421,6 @@ def get_schema():
         schema.Option(display = "AM/PM", value = "AMPM"),
     ]
     fields = []
-    if not production:
-        stations_list = get_stations((default_location))  # locationbased schema don't work so use default location
-        fields.append(
-            schema.Dropdown(
-                id = "local_station_id",
-                name = "Local Tide Station",
-                icon = "monument",
-                desc = "Debug Location Stations",
-                options = stations_list,
-                default = "None Found",
-            ),
-        )
-    else:  # in production, locationbased schema fields work
-        fields.append(
-            schema.LocationBased(
-                id = "local_station_id",
-                name = "Local Tide Station",
-                icon = "monument",
-                desc = "Location Based Stations",
-                handler = get_stations,
-            ),
-        )
     fields.append(
         schema.Text(
             id = "station_name",
@@ -530,7 +485,8 @@ def get_schema():
             id = "station_id",
             name = "Manual Station ID Input",
             icon = "monument",
-            desc = "Optional manual station id",
+            desc = "NOAA tide prediction station ID",
+            default = "1613198",
         ),
     )
 

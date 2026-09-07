@@ -5,9 +5,9 @@ Description: View schedules and data for a Rachio sprinkler system.
 Authors: Matt Fischer and Rob Ison
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/rachio_icon.png", RACHIO_ICON_ASSET = "file")
-load("math.star", "math")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -17,10 +17,11 @@ RACHIO_ICON = RACHIO_ICON_ASSET.readall()
 RACHIO_BLUE = "#0070D2"
 RACHIO_SECONDARY_COLOR = "#00A676"
 
-ACCURACY_IN_MINUTES = 3  #We'll round to the nearest 3 minutes when calling Rachio API
+ACCURACY_IN_MINUTES = 3  # Round requests to stable three-minute cache buckets.
 LONG_TTL_SECONDS = 7200
 RACHIO_URL = "https://api.rach.io/1/public"
 SHORT_TTL_SECONDS = 600
+MAX_RESPONSE_BYTES = 512 * 1024
 
 SCHED_START = "SCHEDULE_STARTED"
 SCHED_STOP = "SCHEDULE_COMPLETED"
@@ -52,9 +53,9 @@ def main(config):
         return display_error_screen(now, "Please enter your API Key", "It can be found in the Rachio App", delay, screen_width, font_height, font, font_width)
 
     devices = get_devices(api_key)
-    selected_device = config.str("device")
+    selected_device = config.str("device", "").strip()
 
-    if (not devices or selected_device == None or selected_device == ""):
+    if not devices or not valid_device_id(selected_device) or not any([device["id"] == selected_device for device in devices]):
         if not devices:
             # No device selected, and no device available from the list, send an error
             return display_error_screen(now, "No devices found.", "Check API key and device selection", delay, screen_width, font_height, font, font_width)
@@ -62,7 +63,7 @@ def main(config):
             selected_device = devices[0]["id"]
 
     # If we use the time to the millisecond, nothing will ever be cached and we'll hit our limit of rachio requests in a day
-    # So we'll round off to the nearest X minutes (They provide enough calls to give you 1 per minutes.)
+    # Use stable time buckets so repeated renders share the same API response.
     # But in addition, let's go a few minutes into the future, no point in ever making a call that could miss the most recent event.
 
     # Use the 'now' variable already defined at line 52
@@ -73,7 +74,7 @@ def main(config):
         month = api_time.month,
         day = api_time.day,
         hour = api_time.hour,
-        minute = round_to_nearest_X(api_time.minute, ACCURACY_IN_MINUTES),
+        minute = api_time.minute - api_time.minute % ACCURACY_IN_MINUTES,
         second = 0,
         location = tz,
     )
@@ -101,8 +102,8 @@ def get_device_name(devices, selected_device):
 
     return ""
 
-def round_to_nearest_X(number_to_round, nearest_number):
-    return int(nearest_number * math.round(number_to_round / nearest_number))
+def valid_device_id(value):
+    return type(value) == "string" and len(value) > 0 and len(value) <= 64 and all([char.isalnum() or char in "-_" for char in value.codepoints()])
 
 def add_padding_to_child_element(element, left = 0, top = 0, right = 0, bottom = 0):
     padded_element = render.Padding(
@@ -153,7 +154,7 @@ def render_rachio(tz, config, device_name, recent_events, current_events, now, d
     if not show_recent_events:
         if skip_when_empty:
             return []
-        return display_error_screen(now, "No Events within a week.", "", delay, screen_width, font_height, font, font_width, icon_width)
+        return display_error_screen(now, "No Events within a week.", "", delay, screen_width, font_height, font, font_width)
 
     # 2. Get our main event data
     latest_event = recent_events[len(recent_events) - 1]
@@ -225,12 +226,8 @@ def get_events(deviceId, api_key, start, end):
     event_url = "%s/device/%s/event?startTime=%d&endTime=%d" % (RACHIO_URL, deviceId, start_time, end_time)
 
     event_response = http.get(url = event_url, headers = get_headers(api_key), ttl_seconds = SHORT_TTL_SECONDS)
-
-    if event_response.status_code != 200:
-        print("GET %s failed with status %d: %s" % (event_url, event_response.status_code, event_response.body()))
-        return None
-
-    return event_response.json()
+    events = decode_response(event_response)
+    return events if type(events) == "list" else None
 
 def get_selected_events(tz, events, current):
     SUBTYPE_MAP = {
@@ -247,9 +244,14 @@ def get_selected_events(tz, events, current):
     else:
         selected_sub_types = [SCHED_START, SCHED_STOP, WEATHER_SKIP, WEATHER_CLIMATE_SKIP]
 
+    if type(events) != "list":
+        return []
     selected_events = []
 
     for event in events:
+        if type(event) != "dict" or type(event.get("eventDate")) not in ["int", "float"]:
+            continue
+
         # .get() returns None if the key doesn't exist, preventing a crash
         sub_type = event.get("subType")
 
@@ -264,7 +266,7 @@ def get_selected_events(tz, events, current):
                 type = sub_type,
                 display_type = display_name,
                 date = parsedDate,
-                summary = event.get("summary", ""),
+                summary = event.get("summary", "") if type(event.get("summary", "")) == "string" else "",
                 eventDate = event["eventDate"],
                 zoneNumber = event.get("zoneNumber", 0),
             )
@@ -286,68 +288,31 @@ def get_devices(api_key):
     # cache for 1 hour, this should never change
     response = http.get(url = info_url, headers = get_headers(api_key), ttl_seconds = LONG_TTL_SECONDS)
 
-    if response.status_code != 200:
-        print("Failed to retrieve person id: %d %s" % (response.status_code, response.body()))
+    data = decode_response(response)
+    if type(data) != "dict":
         return None
-    else:
-        data = response.json()
-        person_id = data.get("id")
-        if not person_id:
-            return None
-        else:
-            person_url = "%s/person/%s" % (RACHIO_URL, person_id)
-
-            # cache for 1 hour, this should never change
-            person_response = http.get(url = person_url, headers = get_headers(api_key), ttl_seconds = LONG_TTL_SECONDS)
-
-            if person_response.status_code != 200:
-                print("Failed to retrieve person data: %d %s" % (person_response.status_code, person_response.body()))
-                return None
-            else:
-                # Parse and print the response for the second call
-                person_data = person_response.json()
-
-                # Extract the 'devices' array
-                devices = person_data.get("devices", [])
-
-            if not devices:
-                print("No devices found: %s" % person_data)
-                return None
-            else:
-                # List to store device ids
-                device_ids = []
-
-                # Loop through each device and extract the 'id' field
-                for device in devices:
-                    deviceId = device.get("id")
-                    if deviceId:
-                        new_device = {"id": deviceId, "name": device.get("name"), "status": device.get("status")}
-                        device_ids.append(deviceId)
-                        device_information.append(new_device)
+    person_id = data.get("id")
+    if not valid_device_id(person_id):
+        return None
+    person_url = "%s/person/%s" % (RACHIO_URL, person_id)
+    person_response = http.get(url = person_url, headers = get_headers(api_key), ttl_seconds = LONG_TTL_SECONDS)
+    person_data = decode_response(person_response)
+    devices = person_data.get("devices", []) if type(person_data) == "dict" else []
+    if type(devices) != "list":
+        return None
+    for device in devices:
+        if type(device) != "dict" or not valid_device_id(device.get("id")):
+            continue
+        name = device.get("name", "Rachio")
+        device_information.append({"id": device["id"], "name": name[:80] if type(name) == "string" else "Rachio"})
 
     return device_information
 
-def generate_option_list_of_devices(api_key):
-    devices = get_devices(api_key)
-
-    if (devices == None or len(devices) == 0):
-        return []
-
-    options = [
-        schema.Option(display = device["name"], value = device["id"])
-        for device in devices
-    ]
-
-    return [
-        schema.Dropdown(
-            id = "device",
-            name = "Device",
-            desc = "Choose the device to display",
-            icon = "sprayCan",
-            options = options,
-            default = options[0].value,
-        ),
-    ]
+def decode_response(response):
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    return json.decode(body, None)
 
 def get_schema():
     scroll_speed_options = [
@@ -397,10 +362,12 @@ def get_schema():
                 icon = "flipboard",
                 default = True,
             ),
-            schema.Generated(
+            schema.Text(
                 id = "device",
-                source = "api_key",
-                handler = generate_option_list_of_devices,
+                name = "Device ID (optional)",
+                desc = "Leave blank to use the first device on your Rachio account",
+                icon = "sprayCan",
+                default = "",
             ),
         ],
     )

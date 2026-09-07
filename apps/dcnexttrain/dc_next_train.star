@@ -11,30 +11,34 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 WMATA_BASE_URL = "https://api.wmata.com/StationPrediction.svc/json/GetPrediction/"
-CACHE_TTL = 30
 
 def main(config):
-    # Get options from schemas
-    selectedGroup = config.get("groupCode")
-    selectedStop = config.get("stationCode") or "A01"  #I think there is a race condition happening between this and the API call.  This prevents an error on first opening of the file
-    selectedLine = config.get("metroLine")
-    selectedCars = config.bool("displayCars")
-    selectedView = config.get("viewOption")
+    selectedGroup = config.get("groupCode") or "ALL"
+    selectedStop = config.get("stationCode") or "A01"
+    selectedLine = config.get("metroLine") or "ALL"
+    if selectedLine == "RL":
+        selectedLine = "RD"  # Legacy value used by earlier releases.
+    selectedCars = config.bool("displayCars", True)
+    selectedView = config.get("viewOption") or "4"
 
-    API_KEY = config.get("userAPI")
-    if API_KEY == None:
-        API_KEY = "e13626d03d8e4c03ac07f95541b3091b"  #this is the public test API key
+    api_key = config.get("userAPI")
+    if type(api_key) != "string" or not api_key:
+        return render_message("Configure WMATA key")
+    if len(api_key) > 512 or "\r" in api_key or "\n" in api_key:
+        return render_message("Invalid WMATA key")
+    if selectedStop not in [option.value for option in StationsOptions]:
+        return render_message("Invalid station")
+    if selectedGroup not in ["ALL", "1", "2"] or selectedLine not in ["ALL", "RD", "OR", "BL", "GR", "YL", "SV"] or selectedView not in ["2", "3", "3a", "4", "5"]:
+        return render_message("Invalid settings")
 
     # Call the WMATA API
-    WMATA_URL = WMATA_BASE_URL + selectedStop
-
-    response = http.get(WMATA_URL, headers = {"api_key": API_KEY}, ttl_seconds = CACHE_TTL)
-    if response.status_code != 200:
-        return render.Root(
-            child = render.Text("Error!"),
-        )
-
-    trainListing = response.json()["Trains"]
+    response = http.get(WMATA_BASE_URL + selectedStop, headers = {"api_key": api_key})
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return render_message("WMATA unavailable")
+    payload = json.decode(response.body(), None)
+    trainListing = payload.get("Trains") if type(payload) == "dict" else None
+    if type(trainListing) != "list":
+        return render_message("Invalid WMATA data")
 
     # Filter data to user constraints
     trainDestination = []
@@ -42,27 +46,27 @@ def main(config):
     trainCars = []
     trainLine = []
 
-    for train in trainListing:
-        if train["Group"] == selectedGroup or selectedGroup == "ALL":
-            if train["Line"] == selectedLine or selectedLine == "ALL":
-                #TODO:  Add a filter here for minimum time to arrive
-                trainDestination.append(train["Destination"])  #"DestinationName" Is the long form
+    for train in trainListing[:100]:
+        if type(train) != "dict":
+            continue
+        group = train.get("Group")
+        line = train.get("Line")
+        destination = train.get("Destination")
+        arrival = train.get("Min")
+        cars = train.get("Car")
+        if group not in ["1", "2"] or line not in ["RD", "OR", "BL", "GR", "YL", "SV"] or type(destination) != "string" or type(arrival) != "string" or type(cars) != "string":
+            continue
+        if (selectedGroup == "ALL" or group == selectedGroup) and (selectedLine == "ALL" or line == selectedLine):
+            trainDestination.append(destination[:40] or "Unknown")
+            arrival = arrival[:3]
+            trainArrival.append((" " * (3 - len(arrival))) + arrival)
+            trainCars.append(cars[:2] if selectedCars else "")
+            trainLine.append(line)
+            if len(trainArrival) == 5:
+                break
 
-                #Make the string the same number of characters since api returns "ARR","BRD","XX","X"
-                if train["Min"].count("") == 4:
-                    trainArrival.append(train["Min"])
-                elif train["Min"].count("") == 3:
-                    trainArrival.append(" " + train["Min"])
-                elif train["Min"].count("") == 2:
-                    trainArrival.append("  " + train["Min"])
-
-                #Setting this to be "" was easier than having two rendering variants.  It adds an extra padding, but it's fine.
-                if selectedCars == True:
-                    trainCars.append(train["Car"])
-                else:
-                    trainCars.append("")
-
-                trainLine.append(train["Line"])
+    if not trainArrival:
+        return render_message("No trains available")
 
     selectedFont = "5x8"  # 5x8 or tom-thumb
 
@@ -83,6 +87,9 @@ def main(config):
         finishedDisplay = render.Text("Hello")
 
     return render.Root(child = finishedDisplay)
+
+def render_message(message):
+    return render.Root(child = render.WrappedText(content = message, align = "center", color = "#ff0"))
 
 def generateDisplay2(trainDestination, trainArrival, trainCars, trainLine, selectedCars):
     trainRows = 2
@@ -125,7 +132,7 @@ def generateDisplay2(trainDestination, trainArrival, trainCars, trainLine, selec
         Cars = trainCars[row]
         Line = trainLine[row]
 
-        if Line in LINE_COLORS:
+        if Line in ColorMapping:
             LineColor = ColorMapping[Line]
             TextColor = TextColorMapping[Line]
         else:
@@ -204,7 +211,7 @@ def generateDisplay3(trainDestination, trainArrival, trainCars, trainLine, selec
         Cars = trainCars[row]
         Line = trainLine[row]
 
-        if Line in LINE_COLORS:
+        if Line in ColorMapping:
             LineColor = ColorMapping[Line]
             TextColor = TextColorMapping[Line]
         else:
@@ -306,7 +313,7 @@ def generateDisplay4(trainDestination, trainArrival, trainCars, trainLine, selec
         Cars = trainCars[row]
         Line = trainLine[row]
 
-        if Line in LINE_COLORS:
+        if Line in ColorMapping:
             LineColor = ColorMapping[Line]
         else:
             LineColor = "#bf5abc"
@@ -376,7 +383,7 @@ def generateDisplay5(trainDestination, trainArrival, trainCars, trainLine, selec
         Cars = trainCars[row]
         Line = trainLine[row]
 
-        if Line in LINE_COLORS:
+        if Line in ColorMapping:
             LineColor = ColorMapping[Line]
         else:
             LineColor = "#bf5abc"
@@ -481,7 +488,7 @@ LineOptions = [
     ),
     schema.Option(
         display = "Red",
-        value = "RL",
+        value = "RD",
     ),
     schema.Option(
         display = "Orange",

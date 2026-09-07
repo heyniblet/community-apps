@@ -22,7 +22,6 @@ REFERENCE_DATE = time.parse_time("2023-01-01T00:00:00Z")
 
 # other config
 HTTP_OK = 200
-CACHE_TIMEOUT = 24 * 3600  #  24 hours
 
 def main(config):
     """ gets the country based on the current configuration
@@ -38,33 +37,39 @@ def main(config):
 
     # get current country index
     # it will be the number of hours since the reference date
-    frequency = int(config.get("frequency", "24"))
+    frequency_config = config.get("frequency", "24")
+    frequency = int(frequency_config) if frequency_config in ["0", "1", "24"] else 24
     country_index = int((time.now() - REFERENCE_DATE).hours // frequency) if frequency != 0 else -1
 
     # get the region selected
     region = config.get("region") or "all"
+    region = region if region in ["all", "africa", "americas", "asia", "europe", "oceania"] else "all"
 
     # get the API key
     api_key = config.get("api_key") or "rc_live_demo"
+    if type(api_key) != "string" or not api_key or len(api_key) > 256:
+        return render.Root(child = render.WrappedText("Configure a REST Countries API key", width = 64, align = "center"))
 
     # get the country for the current config
     country = get_country(region, country_index, api_key)
 
     # parse country information
-    capitals = country.get("capitals")
-    if type(capitals) == "list" and len(capitals) > 0:
-        capital_city = capitals[0].get("name") or "No Capital City"
+    capitals = country.get("capitals") if type(country) == "dict" else None
+    if type(capitals) == "list" and len(capitals) > 0 and type(capitals[0]) == "dict":
+        capital_city = str(capitals[0].get("name") or "No Capital City")[:100]
     else:
         capital_city = "No Capital City"
 
     # get the common name
-    names = country.get("names")
+    names = country.get("names") if type(country) == "dict" else None
+    names = names if type(names) == "dict" else {"common": "Country unavailable"}
     lang = config.get("language") or "eng"
+    lang = lang if lang in ["eng", "native", "deu", "fra", "ita", "jpn", "spa"] else "eng"
     if lang == "eng":
         country_name = names
     elif lang == "native":
         native = names.get("native")
-        if native:
+        if type(native) == "dict" and native:
             country_name = native.values()[0]
         else:
             country_name = None
@@ -76,7 +81,7 @@ def main(config):
             country_name = None
     if not country_name:
         country_name = names
-    country_name = country_name.get("common")
+    country_name = str(country_name.get("common") or "Country unavailable")[:100] if type(country_name) == "dict" else "Country unavailable"
 
     # look up the flag
     flag = get_flag(country)
@@ -126,15 +131,19 @@ def get_country(region, country_index, api_key):
         a dict "country" object
     """
 
-    # get the base URL based on region selected
-    base_url = get_url(region)
     headers = {"Authorization": "Bearer " + api_key}
 
     # paginate to collect all countries (max 5 pages = 500 countries)
     all_countries = []
     for _ in range(5):
-        url = base_url + "&offset=" + str(len(all_countries))
-        response = http.get(url, headers = headers, ttl_seconds = CACHE_TIMEOUT)
+        params = {
+            "response_fields": COUNTRIES_API_FIELDS,
+            "limit": str(COUNTRIES_API_PAGE_SIZE),
+            "offset": str(len(all_countries)),
+        }
+        if region != "all":
+            params["region"] = region
+        response = http.get(COUNTRIES_API_BASE, headers = headers, params = params)
 
         if response.status_code != HTTP_OK:
             return {
@@ -148,11 +157,16 @@ def get_country(region, country_index, api_key):
             }
 
         data = response.json()
-        objects = data.get("data").get("objects")
-        all_countries.extend(objects)
+        page = data.get("data") if type(data) == "dict" else None
+        objects = page.get("objects") if type(page) == "dict" else None
+        if type(objects) != "list":
+            break
+        for country in objects[:COUNTRIES_API_PAGE_SIZE]:
+            if type(country) == "dict" and get_cca3(country):
+                all_countries.append(country)
 
-        meta = data.get("data").get("meta")
-        if not meta.get("more"):
+        meta = page.get("meta") if type(page) == "dict" else None
+        if type(meta) != "dict" or not meta.get("more"):
             break
 
     # sort by country code for consistent ordering
@@ -160,6 +174,12 @@ def get_country(region, country_index, api_key):
 
     # count how many results we have
     num_countries = len(sorted_countries)
+    if num_countries == 0:
+        return {
+            "names": {"common": "No countries found"},
+            "codes": {"alpha_3": ""},
+            "capitals": [{"name": "Check API configuration"}],
+        }
 
     # get the country based on index modulo how many countries there are for this region
     if country_index < 0:
@@ -283,13 +303,9 @@ def get_schema():
     )
 
 def get_cca3(country):
-    return country.get("codes").get("alpha_3")
-
-def get_url(region):
-    url = COUNTRIES_API_BASE + "?response_fields=" + COUNTRIES_API_FIELDS + "&limit=" + str(COUNTRIES_API_PAGE_SIZE)
-    if region != "all":
-        url += "&region=" + region
-    return url
+    codes = country.get("codes") if type(country) == "dict" else None
+    code = codes.get("alpha_3") if type(codes) == "dict" else None
+    return code if type(code) == "string" and len(code) == 3 else ""
 
 def get_flag(country):
     """ gets the flag based on the country
@@ -300,15 +316,7 @@ def get_flag(country):
         a flag image as bytes
     """
 
-    # try to get the flag from the URL first
-    flag = country.get("flag")
-    url = flag.get("url_png") if type(flag) == "dict" else None
-    if url:
-        response = http.get(url, ttl_seconds = CACHE_TIMEOUT)
-        if response.status_code == 200:
-            return response.body()
-
-    # fallback to built-in flags
+    # Bundled flags avoid following an API-controlled URL.
     country_code = get_cca3(country)
     flag = FLAGS.get(country_code) or DEFAULT_FLAG
     return flag.readall()

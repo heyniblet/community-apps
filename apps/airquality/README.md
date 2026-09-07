@@ -26,13 +26,11 @@ We currently use the [forecast endpoint](https://openweathermap.org/api/air-poll
 
 OpenWeather requires an API key to work. You can sign-up for a free account and create as many keys as you need.
 
-_Note: to run the code locally you will need to sign-up and provide a key in the `OW_DEV_API_KEY` variable._
+To run the app locally, pass your own key through the `api_key` configuration field. Do not add it to the source tree.
 
 ### Rate Limiting
 
-The API is rate limited, the free plan supports 60 calls/minute, and a total of 1 million calls per month.
-
-We currently cache the results for 6 hours. This means that each installation will require at most 4 calls each day. At this rate, we can support around 5,500 installations without reaching the monthly limit.
+OpenWeather applies plan-specific rate limits. Refresh and cache cadence is deployment policy rather than app source; each installation uses its owner's key.
 
 ---
 
@@ -46,16 +44,12 @@ The user can also override the name of the displayed location (to show something
 
 ## Error Handling
 
-The app has safeguards in place to identify potential errors and always display something on the screen. For instance, API errors will display an "Unknown" AQI level.
-
-The only situation where `fail` is called is if you try to run the app locally without providing an API key in the `OW_DEV_API_KEY` variable.
+Invalid configuration, rejected credentials, malformed responses, and unavailable data render a concise error instead of exposing upstream payloads.
 
 ---
 
-## Future Improvements
+## Pollutant View
 
 The OpenWeather API returns other meaningful data about polluting gases, which are used to calculate the AQI level.
 
-We found it hard to display this data in the app because of the size constraints and to avoid the excessive use of `Marquee` widgets.
-
-This is something that can be further explored in the future, by adding an option to let the user choose between the forecast or this "detailed" view (similar to the Strava app).
+The pollutant view exposes SO2, NO2, CO, PM2.5, PM10, and O3 alongside the forecast view.

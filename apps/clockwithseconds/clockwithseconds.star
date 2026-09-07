@@ -33,26 +33,16 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 DEFAULT_CLOCK_COLOR = "#09ED20"
-DEFAULT_TIME_FORMAT = "false"
-DEFAULT_LOCATION = """
-{
-    "lat": "38.5465",
-    "lng": "-121.7465",
-    "description": "Davis, CA",
-    "locality": "Davis",
-    "timezone": "America/Los_Angeles"
-}
-"""
 
 def main(config):
-    time_format_24 = config.get("24_hour_time", DEFAULT_TIME_FORMAT)
+    time_format_24 = config.bool("24_hour_time", False)
     am_pm_option = config.get("am_pm_option", "no_am_pm")
     clock_color = config.get("clock_color", DEFAULT_CLOCK_COLOR)
     time_offset = config.get("time_offset", 0)
-    loc = config.get("location", DEFAULT_LOCATION)
-    blink_colon = config.get("blink_colon", "false")
-    location = json.decode(loc)
-    timezone = location["timezone"]
+    loc = config.get("location")
+    blink_colon = config.bool("blink_colon", False)
+    location = json.decode(loc) if loc else {}
+    timezone = location.get("timezone", time.tz())
     local_time = time.now().in_location(timezone)
     hour = local_time.hour
     minute = local_time.minute
@@ -63,8 +53,7 @@ def main(config):
     sec = second - 1
     min = minute
     hr = hour
-    for x in range(120):
-        x = x
+    for _ in range(30):
         sec += 1
         if sec > 59:
             sec -= 60
@@ -72,13 +61,18 @@ def main(config):
         if min > 59:
             min -= 60
             hr += 1
-        if hr > 12 and time_format_24 == "false":
-            hr -= 12
+        if hr > 23:
+            hr -= 24
 
-        hr_str = "0" + str(hr) if hr < 10 else str(hr)
+        display_hr = hr
+        if not time_format_24:
+            display_hr = hr % 12
+            display_hr = 12 if display_hr == 0 else display_hr
+
+        hr_str = "0" + str(display_hr) if display_hr < 10 else str(display_hr)
         min_str = "0" + str(min) if min < 10 else str(min)
         sec_str = "0" + str(sec) if sec < 10 else str(sec)
-        if blink_colon == "true":
+        if blink_colon:
             if sec % 2 == 0:
                 the_current_time = hr_str + ":" + min_str + ":" + sec_str
             else:
@@ -87,15 +81,15 @@ def main(config):
             the_current_time = hr_str + ":" + min_str + ":" + sec_str
 
         left_margin = 9
-        if time_format_24 == "false":
+        if not time_format_24:
             left_margin = 3
             if am_pm_option == "am_pm":
-                if hour > 12:
+                if hr >= 12:
                     the_current_time = the_current_time + "pm"
                 else:
                     the_current_time = the_current_time + "am"
             elif am_pm_option == "AM_PM":
-                if hour > 12:
+                if hr >= 12:
                     the_current_time = the_current_time + "PM"
                 else:
                     the_current_time = the_current_time + "AM"
@@ -109,7 +103,7 @@ def main(config):
 
     return render.Root(
         delay = 1000,
-        max_age = 120,
+        max_age = 30,
         child = render.Animation(children = time_frames),
         # child = animation.Transformation(
         #     child =
@@ -203,20 +197,6 @@ time_offset_options = [
     ),
 ]
 
-def color_options(custom_colors):
-    if custom_colors == "true":
-        return [
-            schema.Color(
-                id = "clock_color",
-                name = "Clock Color",
-                desc = "Color of the Time",
-                icon = "brush",
-                default = DEFAULT_CLOCK_COLOR,
-            ),
-        ]
-    else:
-        return []
-
 am_pm_options = [
     schema.Option(
         display = "Do not show AM or PM",
@@ -269,20 +249,15 @@ def get_schema():
                 name = "Time Offset",
                 desc = "Adjust + or - Seconds",
                 icon = "clock",
-                default = time_offset_options[5].value,
+                default = time_offset_options[10].value,
                 options = time_offset_options,
             ),
-            schema.Toggle(
-                id = "custom_colors",
-                name = "Use Custom Colors",
-                desc = "A toggle to enable custom colors",
-                icon = "gear",
-                default = False,
-            ),
-            schema.Generated(
-                id = "generated",
-                source = "custom_colors",
-                handler = color_options,
+            schema.Color(
+                id = "clock_color",
+                name = "Clock Color",
+                desc = "Color of the Time",
+                icon = "brush",
+                default = DEFAULT_CLOCK_COLOR,
             ),
         ],
     )

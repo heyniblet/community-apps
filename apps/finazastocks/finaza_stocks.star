@@ -14,7 +14,7 @@ load("time.star", "time")
 
 SYMBOL_B64 = SYMBOL_B64_ASSET.readall()
 
-STOCK_QUOTE_URL = "https://finance-api.sapphire-digital.co/api/v1/multiquote?symbols=<symbols>&key=tidbyt"
+STOCK_QUOTE_URL = "https://query1.finance.yahoo.com/v7/finance/spark?symbols=<symbols>&range=1d&interval=1d"
 
 # https://github.com/tidbyt/pixlet/blob/main/docs/widgets.md
 # https://tidbyt.dev/docs/publish/publishing-apps
@@ -56,7 +56,9 @@ def main(config):
         #rate_cached = cache.get("sym_rate")
 
         # remove any empty symbols
-        SYMBOLS = [x for x in SYMBOLS if x != None]
+        SYMBOLS = [x for x in SYMBOLS if x]
+        if not SYMBOLS:
+            SYMBOLS = ["GOOG", "AMZN", "MSFT", "TSLA", "NVDA", "AAPL"]
 
         # convert python string list to comma separated string and remove last comma from string
         SYMBOLS = ",".join(SYMBOLS).rstrip(",")
@@ -67,7 +69,7 @@ def main(config):
         print(SYMBOLS)
 
         msg = ""
-        rep = http.get(STOCK_QUOTE_URL_FINAL, ttl_seconds = 500)
+        rep = http.get(STOCK_QUOTE_URL_FINAL, headers = {"User-Agent": "Mozilla/5.0"}, ttl_seconds = 500)
         msg_up = ""
         msg_down = ""
 
@@ -76,12 +78,14 @@ def main(config):
             msg = "Please configure symbols in the applet settings."
             fail("API request failed with status %d", rep.status_code)
         else:
-            for stock in rep.json()["quotes"]:
-                msg = msg + stock["symbol"] + ":$" + str(stock["latestPrice"]) + " "
-                if stock["change"] > 0:
-                    msg_up = msg_up + stock["symbol"] + ":$" + str(stock["latestPrice"]) + " "
+            for stock in rep.json()["spark"]["result"]:
+                quote = stock["response"][0]["meta"]
+                price = quote["regularMarketPrice"]
+                msg = msg + stock["symbol"] + ":$" + str(price) + " "
+                if price > quote["chartPreviousClose"]:
+                    msg_up = msg_up + stock["symbol"] + ":$" + str(price) + " "
                 else:
-                    msg_down = msg_down + stock["symbol"] + ":$" + str(stock["latestPrice"]) + " "
+                    msg_down = msg_down + stock["symbol"] + ":$" + str(price) + " "
             msg = msg.rstrip(" ")
 
             #msg_up = msg_up.rstrip(" ")

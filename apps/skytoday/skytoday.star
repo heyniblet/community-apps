@@ -1099,13 +1099,39 @@ TREE_LEAF_COLS = {
 # veiny rather than blobby.
 TREE_BRANCH_PX = [
     # left limb + twigs
-    (3, 8), (3, 7), (2, 6), (2, 5), (1, 4), (1, 3), (0, 2),
-    (3, 4), (3, 3), (2, 2),
+    (3, 8),
+    (3, 7),
+    (2, 6),
+    (2, 5),
+    (1, 4),
+    (1, 3),
+    (0, 2),
+    (3, 4),
+    (3, 3),
+    (2, 2),
     # center leader (wiggles as it climbs)
-    (4, 8), (5, 8), (4, 7), (4, 6), (4, 5), (4, 4), (5, 3), (5, 2), (4, 1), (4, 0),
+    (4, 8),
+    (5, 8),
+    (4, 7),
+    (4, 6),
+    (4, 5),
+    (4, 4),
+    (5, 3),
+    (5, 2),
+    (4, 1),
+    (4, 0),
     # right limb + twigs
-    (6, 8), (6, 7), (7, 6), (7, 5), (8, 4), (8, 3), (9, 2), (9, 1),
-    (6, 4), (6, 3), (7, 2),
+    (6, 8),
+    (6, 7),
+    (7, 6),
+    (7, 5),
+    (8, 4),
+    (8, 3),
+    (9, 2),
+    (9, 1),
+    (6, 4),
+    (6, 3),
+    (7, 2),
 ]
 TREE_BRANCH_TIPS = [(0, 2), (2, 2), (4, 0), (9, 1), (7, 2)]
 
@@ -2123,6 +2149,7 @@ def main(config):
     # legible even on a dark night sky.
     have_temp = show_temp and temp != None
     bar_static = None
+    sock_x = 0
     if have_temp or have_wind:
         bar_kids = [
             render.Padding(pad = (0, 25, 0, 0), child = render.Box(width = WIDTH, height = 7, color = "#0d1330e6")),
@@ -2305,7 +2332,7 @@ def _demo_fields(demo_on):
             id = "demo_elev",
             name = "Sun elevation (°)",
             desc = "Sky look: -90 deep night, 0 horizon, 90 high noon. Ignored if lat+lng set below.",
-            icon = "solidSun",
+            icon = "sun",
             default = "20",
         ),
         schema.Text(
@@ -2587,10 +2614,5 @@ def get_schema():
                 icon = "flask",
                 default = False,
             ),
-            schema.Generated(
-                id = "demo_generated",
-                source = "demo_mode",
-                handler = _demo_fields,
-            ),
-        ],
+        ] + _demo_fields("true"),
     )

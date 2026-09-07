@@ -2475,10 +2475,8 @@ def getStationsNearby(location):
 
 def main(config):
     #print("1. Parameter received: %s" % config.get("divaCode"))
-    if config.get("divaCode"):
-        DIVA = json.decode(config.get("divaCode"))["value"]
-    else:
-        DIVA = WELLKNOWN_DIVA
+    diva_raw = config.get("divaCode")
+    DIVA = json.decode(diva_raw)["value"] if diva_raw and diva_raw.startswith("{") else (diva_raw or WELLKNOWN_DIVA)
     DESIRED_LINE = (config.get("line") or "U1").upper()
     strWalkingTime = config.get("walkingDistance") or "5"
     walkingTime = int(strWalkingTime) if strWalkingTime.isdigit() else 5
@@ -2542,12 +2540,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Text(
                 id = "divaCode",
                 name = "Station to monitor",
-                desc = "Write an address in Vienna to look for stations nearby and select one.",
+                desc = "Wiener Linien DIVA station code.",
                 icon = "mapLocationDot",
-                handler = getStationsNearby,
+                default = WELLKNOWN_DIVA,
             ),
             schema.Text(
                 id = "line",

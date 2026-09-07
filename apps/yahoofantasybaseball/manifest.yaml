@@ -2,7 +2,7 @@
 id: yahoofantasymlb
 name: YahooFantasyMLB
 summary: Fantasy Standings & Scores
-desc: Display standings or scores for a Yahoo Fantasy Baseball league (MLB).
+desc: Display standings or scores for a Yahoo Fantasy Baseball league (MLB). Fantasy data provided by Yahoo Fantasy (https://sports.yahoo.com/fantasy/).
 author: jweier
 fileName: yahoofantasymlb.star
 packageName: yahoofantasymlb

@@ -198,24 +198,22 @@ SEVERITIES = {
     20: "Closed",
 }
 
-# Cache response for all users. It's always the same info with the same inputs so
-# no need to fetch repeatedly.
 def fetch_response(config):
     app_key = config.get("app_key") or ""  # fall back to anonymous quota
+    params = {}
+    if app_key:
+        params["app_key"] = app_key
     resp = http.get(
         url = STATUS_URL % ",".join(["tube", "elizabeth-line", "overground", "dlr", "tram"]),
-        params = {
-            "app_key": app_key,
-        },
+        params = params,
         headers = {
             "User-Agent": USER_AGENT,
         },
-        ttl_seconds = 60,
     )
     if resp.status_code != 200:
-        print("TFL status request failed with status code ", resp.status_code)
         return None
-    return resp.json()
+    data = resp.json()
+    return data[:32] if type(data) == "list" else None
 
 def fetch_lines(config):
     lines = []
@@ -223,27 +221,21 @@ def fetch_lines(config):
     if not resp:
         return None
     for line in resp:
-        if "id" not in line:
-            print("TFL status request did not contain line id")
+        if type(line) != "dict" or "id" not in line:
             continue
         id = line["id"]
 
-        if "lineStatuses" not in line:
-            print("TFL status request did not contain status")
+        if type(line.get("lineStatuses")) != "list":
             continue
         if len(line["lineStatuses"]) == 0:
-            print("TFL status request did not contain any status")
             continue
-        if "statusSeverity" not in line["lineStatuses"][0]:
-            print("TFL status request did not contain severity for line")
+        if type(line["lineStatuses"][0]) != "dict" or "statusSeverity" not in line["lineStatuses"][0]:
             continue
         severity = line["lineStatuses"][0]["statusSeverity"]
 
         if id not in LINES:
-            print("Unknown line ID ", id)
             continue
         if severity not in SEVERITIES:
-            print("Unknown severity level ", severity)
             continue
 
         lines.append({

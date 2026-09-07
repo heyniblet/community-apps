@@ -48,7 +48,7 @@ FONT = "tb-8"
 
 MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
-TTL_SECONDS = 300  # cache the iCal fetch for 5 minutes
+MAX_ICAL_BYTES = 1024 * 1024
 
 # Two-line phrases shown on days with zero events scheduled.
 # Selected by date ordinal (stable all day, changes at midnight).
@@ -108,17 +108,18 @@ def main(config):
         loc = json.decode(location_str)
         if loc != None:
             tz_from_loc = loc.get("timezone")
-            if tz_from_loc and tz_from_loc != "":
+            if tz_from_loc and time.is_valid_timezone(tz_from_loc):
                 tz = tz_from_loc
 
     now = time.now().in_location(tz)
 
     ical_url = config.get("ical_url")
-    if not ical_url:
+    if not valid_ical_url(ical_url):
         return render_no_url()
 
     alert_enabled = config.bool("alert_enabled", True)
-    alert_window_mins = int(config.get("alert_window") or "5")
+    alert_window = str(config.get("alert_window") or "5")
+    alert_window_mins = int(alert_window) if alert_window in ["1", "2", "3", "4", "5"] else 5
 
     events = fetch_events(tz, ical_url, now)
     event = select_event(events, now)
@@ -574,10 +575,19 @@ def select_event(events, now):
 # ---------------------------------------------------------------------------
 
 def fetch_events(tz, ical_url, now):
-    resp = http.get(ical_url, ttl_seconds = TTL_SECONDS)
+    resp = http.get(ical_url)
     if resp.status_code != 200:
         return []
-    return parse_ical(resp.body(), tz, now)
+    body = resp.body()
+    if not body or len(body) > MAX_ICAL_BYTES or "BEGIN:VCALENDAR" not in body[:1024]:
+        return []
+    return parse_ical(body, tz, now)
+
+def valid_ical_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://"):
+        return False
+    parts = value.split("/")
+    return len(parts) >= 3 and parts[2] and ":" not in parts[2] and not any([c in value for c in ["@", "\\", " ", "\t", "\r", "\n", "#"]])
 
 def collect_recurrence_overrides(lines, tz):
     # Pre-scan: find VEVENTs that carry RECURRENCE-ID (exception overrides).

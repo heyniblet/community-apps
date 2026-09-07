@@ -20,6 +20,8 @@ PURPLE_BIRD_JUMP = PURPLE_BIRD_JUMP_ASSET.readall()
 
 EBIRD_URL = "https://api.ebird.org/v2"
 MAX_API_RESULTS = "300"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_SIGHTINGS = 300
 
 # Config defaults
 DEFAULT_LOCATION = {
@@ -50,14 +52,19 @@ def get_params(config):
     params = {}
 
     location = config.get("location")
-    loc = json.decode(location) if location else DEFAULT_LOCATION
-    params["lat"] = str(loc["lat"])
-    params["lng"] = str(loc["lng"])
-    params["tz"] = loc["timezone"] if time.is_valid_timezone(loc["timezone"]) else DEFAULT_LOCATION["timezone"]
+    loc = json.decode(location, None) if location else DEFAULT_LOCATION
+    if type(loc) != "dict":
+        loc = DEFAULT_LOCATION
+    params["lat"] = str(loc.get("lat", DEFAULT_LOCATION["lat"]))[:24]
+    params["lng"] = str(loc.get("lng", DEFAULT_LOCATION["lng"]))[:24]
+    timezone = loc.get("timezone", DEFAULT_LOCATION["timezone"])
+    params["tz"] = timezone if type(timezone) == "string" and time.is_valid_timezone(timezone) else DEFAULT_LOCATION["timezone"]
 
-    params["dist"] = config.get("distance") or DEFAULT_DISTANCE
-    params["back"] = config.get("back") or DEFAULT_BACK
-    params["includeProvisional"] = str(config.get("provisional") or DEFAULT_PROVISIONAL)
+    distance = config.get("distance") or DEFAULT_DISTANCE
+    back = config.get("back") or DEFAULT_BACK
+    params["dist"] = distance if distance in ["1", "2", "5", "10", "25", "50"] else DEFAULT_DISTANCE
+    params["back"] = back if back in ["1", "2", "3", "4", "5", "6"] else DEFAULT_BACK
+    params["includeProvisional"] = "true" if config.bool("provisional", DEFAULT_PROVISIONAL) else "false"
     params["maxResults"] = MAX_API_RESULTS
 
     return params
@@ -73,22 +80,23 @@ def get_notable_sightings(params, ebird_key):
       a list of notable sightings species codes
     """
 
-    notable_params = params
+    notable_params = dict(params)
     notable_params.pop("maxResults", None)
 
     ebird_recent_notable_route = "/data/obs/geo/recent/notable"
     url = EBIRD_URL + ebird_recent_notable_route
     headers = {"X-eBirdApiToken": ebird_key}
 
-    response = http.get(url, params = params, headers = headers, ttl_seconds = 10800)
-    log(ebird_recent_notable_route + " cache status " + response.headers.get("Tidbyt-Cache-Status"))
+    response = http.get(url, params = notable_params, headers = headers)
+    log(ebird_recent_notable_route + " cache status " + (response.headers.get("Tidbyt-Cache-Status") or "none"))
 
     # e-bird API request failed
     if response.status_code != 200:
         return []
 
-    notable_sightings = response.json()
-    notable_list = [s.get("speciesCode") for s in notable_sightings]
+    body = response.body()
+    notable_sightings = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    notable_list = [s.get("speciesCode") for s in notable_sightings[:MAX_SIGHTINGS] if type(s) == "dict"] if type(notable_sightings) == "list" else []
     log("number of notable sightings: " + str(len(notable_list)))
 
     return notable_list
@@ -109,8 +117,8 @@ def get_recent_birds(params, ebird_key):
     headers = {"X-eBirdApiToken": ebird_key}
 
     log(ebird_recent_obs_route + " params: " + str(params))
-    response = http.get(url, params = params, headers = headers, ttl_seconds = 10800)
-    log(ebird_recent_obs_route + " cache status " + response.headers.get("Tidbyt-Cache-Status"))
+    response = http.get(url, params = params, headers = headers)
+    log(ebird_recent_obs_route + " cache status " + (response.headers.get("Tidbyt-Cache-Status") or "none"))
 
     # e-bird API request failed
     if response.status_code != 200:
@@ -119,8 +127,9 @@ def get_recent_birds(params, ebird_key):
             "locName": "API status code = " + str(response.status_code),
         }]
 
-    sightings = response.json()
-    return sightings
+    body = response.body()
+    sightings = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    return [s for s in sightings[:MAX_SIGHTINGS] if type(s) == "dict"] if type(sightings) == "list" else []
 
 def parse_birds(sightings, tz):
     """Parse ebird response data.
@@ -147,8 +156,8 @@ def parse_birds(sightings, tz):
     random_sighting = random.number(0, number_of_sightings - 1)
     data = sightings[random_sighting]
 
-    sighting["bird"] = data.get("comName") or "Unknown bird"
-    sighting["loc"] = data.get("locName") or "Location unknown"
+    sighting["bird"] = str(data.get("comName") or "Unknown bird")[:120]
+    sighting["loc"] = str(data.get("locName") or "Location unknown")[:160]
     sighting["species"] = data.get("speciesCode") or "Unknown species code"
     if data.get("obsDt"):
         sighting["date"] = time.parse_time(data.get("obsDt"), format = "2006-01-02 15:04", location = tz)
@@ -168,17 +177,19 @@ def main(config):
 
     ebird_key = config.get("ebird_api_key")
     if not ebird_key:
-        ebird_key = "BIRDERROR-NO-API-KEY"
         log("unable to retrieve from local config")
 
     params = get_params(config)
     timezone = params.pop("tz")
-    response = get_recent_birds(params, ebird_key)
+    response = get_recent_birds(params, ebird_key) if ebird_key else [{
+        "comName": "Setup needed",
+        "locName": "Add an eBird API key",
+    }]
     sighting = parse_birds(response, timezone)
     bird_formatted, bird_font = format_bird_name(sighting.get("bird"))
 
     # if this is a notable sighting, render an excitable bird
-    notable_list = get_notable_sightings(params, ebird_key)
+    notable_list = get_notable_sightings(params, ebird_key) if ebird_key else []
     if sighting.get("species") in notable_list:
         bird_image = PURPLE_BIRD_JUMP
         sighting["notable"] = True

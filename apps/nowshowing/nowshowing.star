@@ -5,96 +5,48 @@ Description: Displays current movies in theaters.
 Author: Robert Ison
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-load("xpath.star", "xpath")  #XPath Expressions to read XML RSS Feed
 
-MOVIE_DATASET_URL = "https://www.moviefone.com/feeds/movie-reviews.rss"
-MOVIE_DATASET_CACHE_NAME = "NowShowing_MovieDataSetCache"
-SINGLE_MOVIE_CACHE_NAME = "NowShowing_SingleMovieDataCache"
-MOVIE_REVIEW_SUBSTRING = "Movie Review: "
-JSON_PROPERTY_DATA_DOWNLOADED_DATE = "Date_Downloaded"
-SINGLE_MOVIE_CACHE = 1200  #20 Minutes
-MOVIE_DATASET_CACHE = 172800  # 48 Hours
+MOVIE_DATASET_URL = "https://www.moviefone.com/movies/in-theaters/"
+SINGLE_MOVIE_CACHE = 1200  # 20 minutes
+MOVIE_DATASET_CACHE = 3600
+REQUEST_HEADERS = {"user-agent": "Mozilla/5.0 (compatible; Niblet/1.0; +https://heyniblet.com)"}
 
 def get_movie_data():
-    display_movie = cache.get(SINGLE_MOVIE_CACHE_NAME)
-
-    if display_movie != None:
-        #print("Got Movie from Single Movie Cache: %s" % display_movie)
-        return json.decode(display_movie)
-
-    movie_data = cache.get(MOVIE_DATASET_CACHE_NAME)
-
-    if movie_data != None:
-        movie_data = json.decode(movie_data)
-
-        #If the Date of the original download it too old, we'll throw it away
-        if time.now().unix - movie_data[JSON_PROPERTY_DATA_DOWNLOADED_DATE] > MOVIE_DATASET_CACHE - 20:
-            movie_data = None
-
-    if movie_data == None:
-        #print("Movie Dataset Not cached -- fetching new.")
-        # since we will cache the data we need out of here after manipulating it, we don't need to cache this URL
-        resp = http.get(MOVIE_DATASET_URL, headers = {
-            "accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
-        })
-
-        if resp.status_code == 200:
-            movie_info_xml_body = resp.body()
-        else:
-            movie_info_xml_body = None
-
-        if movie_info_xml_body != None:
-            number_of_listings = movie_info_xml_body.count("<item>")
-        else:
-            number_of_listings = 0
-
-        # set up the dataset we'll cache and use for displaying
-        movie_data = {
-            "movies": {},
-            JSON_PROPERTY_DATA_DOWNLOADED_DATE: time.now().unix,
-        }
-
-        for i in range(1, number_of_listings + 1):
-            current_query = "//item[" + str(i) + "]/description"
-            current_description = xpath.loads(movie_info_xml_body).query(current_query)
-            current_query = "//item[" + str(i) + "]/title"
-            current_title = xpath.loads(movie_info_xml_body).query(current_query)
-            current_query = "//item[" + str(i) + "]/enclosure/@url"
-            current_movie_image_path = xpath.loads(movie_info_xml_body).query(current_query)
-
-            # let's only capture movie reviews (and hope they don't change their format down the road.)
-            if current_title.find(MOVIE_REVIEW_SUBSTRING) != -1:
-                current_title = current_title.replace(MOVIE_REVIEW_SUBSTRING, "")
-                current_title = current_title.replace("'", "").replace("’", "").replace("‘", "").replace("\"", "")
-                current_title = current_title.strip()
-                movie_data["movies"][current_title.strip()] = {"title": current_title.strip(), "description": current_description, "image": current_movie_image_path, "display_count": 0}
-
-    # Now we have movie_data by recent download or cache
-
-    # Sorting the movies by display_count
-    sorted_movies = dict(sorted(movie_data["movies"].items(), key = lambda item: item[1]["display_count"], reverse = False))
-
-    # Updating the movie_data dictionary with the sorted movies
-    movie_data["movies"] = sorted_movies
-
-    # get the movie name of the top one on the list (the one displayed the fewest times since we downloaded the dataset)
-    display_movie_name = list(movie_data["movies"].keys())[0]
-
-    if display_movie_name in movie_data["movies"]:
-        movie_data["movies"][display_movie_name]["display_count"] += 1
-
-    cache.set(SINGLE_MOVIE_CACHE_NAME, json.encode(movie_data["movies"][display_movie_name]), ttl_seconds = SINGLE_MOVIE_CACHE)
-    cache.set(MOVIE_DATASET_CACHE_NAME, json.encode(movie_data), ttl_seconds = MOVIE_DATASET_CACHE)
-
-    # return the movie that has been displayed the fewest times so far since we downloaded this dataset
-    return movie_data["movies"][display_movie_name]
+    fallback = {"title": "Movies", "description": "Listings unavailable", "image": ""}
+    resp = http.get(MOVIE_DATASET_URL, headers = REQUEST_HEADERS, ttl_seconds = MOVIE_DATASET_CACHE)
+    if resp.status_code != 200:
+        return fallback
+    body = resp.body()
+    if not body or len(body) > 2000000:
+        return fallback
+    scripts = re.findall(r'<script type="application/ld\+json">([\s\S]*?)</script>', body)
+    if not scripts:
+        return fallback
+    prefix = '<script type="application/ld+json">'
+    data = json.decode(scripts[0][len(prefix):-len("</script>")])
+    main_entity = data.get("mainEntity", {}) if type(data) == "dict" else {}
+    items = main_entity.get("itemListElement", []) if type(main_entity) == "dict" else []
+    movies = []
+    for entry in items[:50]:
+        movie = entry.get("item", {}) if type(entry) == "dict" else {}
+        title = movie.get("name") if type(movie) == "dict" else None
+        if type(title) != "string" or not title.strip():
+            continue
+        rating = movie.get("aggregateRating", {})
+        rating = rating.get("ratingValue") if type(rating) == "dict" else None
+        description = "In theaters" if rating == None else "In theaters • {}/10".format(rating)
+        image = movie.get("image", "")
+        image = image if type(image) == "string" and image.startswith("https://cdn.moviefone.com/") else ""
+        movies.append({"title": title[:120], "description": description, "image": image})
+    if not movies:
+        return fallback
+    return movies[int(time.now().unix // SINGLE_MOVIE_CACHE) % len(movies)]
 
 def main(config):
     #get the movie data for a single movie that we will display
@@ -107,11 +59,12 @@ def main(config):
     display_items = []
 
     # do we display the movie image?
-    if config.bool("artwork", True):
+    if config.bool("artwork", True) and movie_data["image"]:
         movie_image_url = movie_data["image"]
-        artwork = http.get(movie_image_url, ttl_seconds = MOVIE_DATASET_CACHE).body()
-        artwork_image = render.Image(src = artwork, width = 64, height = 32)
-        display_items.append(artwork_image)
+        artwork_resp = http.get(movie_image_url, ttl_seconds = 86400)
+        artwork = artwork_resp.body() if artwork_resp.status_code == 200 else None
+        if artwork and len(artwork) <= 2000000:
+            display_items.append(render.Image(src = artwork, width = 64, height = 32))
 
     # do we append black overlay?
     if config.bool("cc", False):
@@ -128,7 +81,6 @@ def main(config):
 
     # append description
     description = movie_data["description"]
-    print(description)
     description = render.Marquee(
         width = 64,
         offset_start = 40,

@@ -8,6 +8,7 @@ Author: siva801
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/pihole_logo.png", PIHOLE_LOGO_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -20,6 +21,8 @@ GREEN = "#00cc00"
 RED = "#ff4136"
 
 TTL_SECONDS = 60
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_PLOT_POINTS = 288
 
 version_options = [
     schema.Option(
@@ -32,55 +35,59 @@ version_options = [
     ),
 ]
 
+def response_json(resp):
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        print("Pi-hole request failed with status %d" % resp.status_code)
+        return None
+    payload = resp.json()
+    return payload if type(payload) == "dict" else None
+
+def normalize_host(value):
+    value = value.strip().rstrip("/")
+    if not value.startswith("https://") or len(value) > 512 or "@" in value or "?" in value or "#" in value:
+        return None
+    return value
+
 def get_pihole_stats(endpoint, api_key, ttl):
     resp = http.get("%s/admin/api.php" % endpoint, params = {"summaryRaw": "", "auth": api_key}, ttl_seconds = ttl)
-    if resp.status_code != 200:
-        print("PiHole request failed with status %d", resp.status_code)
-        summary = None
-    else:
-        summary = resp.json()
+    summary = response_json(resp)
 
     resp = http.get("%s/admin/api.php" % endpoint, params = {"overTimeData10mins": "", "auth": api_key}, ttl_seconds = ttl)
-    if resp.status_code != 200:
-        print("PiHole request failed with status %d", resp.status_code)
-        plot_data = None
-    else:
-        plot_data = resp.json()
+    plot_data = response_json(resp)
     return summary, plot_data
 
 def get_pihole_v6_stats(endpoint, api_key, ttl):
-    resp = http.post("%s/api/auth" % endpoint, json_body = {"password": api_key}, ttl_seconds = ttl)
-    if resp.status_code != 200:
-        print("PiHole request failed with status %d", resp.status_code)
-    sid = resp.json()["session"]["sid"]
+    resp = http.post("%s/api/auth" % endpoint, json_body = {"password": api_key})
+    auth = response_json(resp)
+    session = auth.get("session") if auth else None
+    sid = session.get("sid") if type(session) == "dict" else None
+    if not sid:
+        return None, None
+    headers = {"X-FTL-SID": sid}
 
-    resp = http.get("%s/api/stats/summary" % endpoint, params = {"sid": sid}, ttl_seconds = ttl)
-    if resp.status_code != 200:
-        print("PiHole request failed with status %d", resp.status_code)
-        summary = None
-    else:
-        summary = resp.json()
+    resp = http.get("%s/api/stats/summary" % endpoint, headers = headers, ttl_seconds = ttl)
+    summary = response_json(resp)
 
-    resp = http.get("%s/api/history" % endpoint, params = {"sid": sid}, ttl_seconds = ttl)
-    if resp.status_code != 200:
-        print("PiHole request failed with status %d", resp.status_code)
-        plot_data = None
-    else:
-        plot_data = resp.json()
+    resp = http.get("%s/api/history" % endpoint, headers = headers, ttl_seconds = ttl)
+    plot_data = response_json(resp)
+    http.delete("%s/api/auth" % endpoint, headers = headers)
     return summary, plot_data
 
 def main(config):
     host = config.str("host", HOST)
     api_key = config.str("api_key", API_KEY)
     version = config.str("version", VERSION)
-    ttl = int(config.get("ttl", TTL_SECONDS))
+    ttl_value = str(config.get("ttl", TTL_SECONDS))
+    ttl = int(ttl_value) if re.match(r"^\d{1,4}$", ttl_value) else TTL_SECONDS
+    ttl = max(30, min(3600, ttl))
 
     total_queries = 0
     total_ads = 0
     query_plot = []
     ad_plot = []
 
-    if config.str("host", HOST) == "" or config.str("api_key", API_KEY) == "":
+    if not host or not api_key:
         return render.Root(
             render.Column(
                 expanded = True,
@@ -112,8 +119,9 @@ def main(config):
         )
 
     else:
-        if not host.startswith("http"):
-            host = "http://" + host
+        host = normalize_host(host)
+        if not host or version not in ["v5", "v6"]:
+            return render.Root(child = render.WrappedText("Use a public HTTPS Pi-hole URL", color = RED, align = "center"))
         summary, plot_data = get_pihole_stats(host, api_key, ttl) if version == "v5" else get_pihole_v6_stats(host, api_key, ttl)
 
         if not summary or not plot_data:
@@ -130,26 +138,41 @@ def main(config):
                 ),
             )
 
-        total_queries = summary["dns_queries_today"] if version == "v5" else summary["queries"]["total"]
-        total_ads = summary["ads_blocked_today"] if version == "v5" else summary["queries"]["blocked"]
-        ads_percentage = summary["ads_percentage_today"] if version == "v5" else summary["queries"]["percent_blocked"]
+        queries = summary.get("queries") if version == "v6" else None
+        if version == "v6" and type(queries) != "dict":
+            return render.Root(child = render.WrappedText("Invalid Pi-hole data", color = RED, align = "center"))
+        total_queries = summary.get("dns_queries_today") if version == "v5" else queries.get("total")
+        total_ads = summary.get("ads_blocked_today") if version == "v5" else queries.get("blocked")
+        ads_percentage = summary.get("ads_percentage_today") if version == "v5" else queries.get("percent_blocked")
+        if type(total_queries) not in ["int", "float"] or type(total_ads) not in ["int", "float"] or type(ads_percentage) not in ["int", "float"]:
+            return render.Root(child = render.WrappedText("Invalid Pi-hole data", color = RED, align = "center"))
 
         if version == "v5":
-            query_plot_time_buckets = sorted(plot_data["domains_over_time"].keys())
+            domains_over_time = plot_data.get("domains_over_time")
+            ads_over_time = plot_data.get("ads_over_time")
+            if type(domains_over_time) != "dict" or type(ads_over_time) != "dict":
+                return render.Root(child = render.WrappedText("Invalid Pi-hole history", color = RED, align = "center"))
+            query_plot_time_buckets = sorted(domains_over_time.keys())[-MAX_PLOT_POINTS:]
             for idx, time_bucket in enumerate(query_plot_time_buckets):
                 if idx >= len(query_plot):
-                    query_plot.append(plot_data["domains_over_time"][time_bucket])
+                    query_plot.append(domains_over_time[time_bucket])
                 else:
-                    query_plot[idx] = plot_data["domains_over_time"][time_bucket]
-            ad_plot_time_buckets = sorted(plot_data["ads_over_time"].keys())
+                    query_plot[idx] = domains_over_time[time_bucket]
+            ad_plot_time_buckets = sorted(ads_over_time.keys())[-MAX_PLOT_POINTS:]
             for idx, time_bucket in enumerate(ad_plot_time_buckets):
                 if idx >= len(ad_plot):
-                    ad_plot.append(plot_data["ads_over_time"][time_bucket])
+                    ad_plot.append(ads_over_time[time_bucket])
                 else:
-                    ad_plot[idx] = plot_data["ads_over_time"][time_bucket]
+                    ad_plot[idx] = ads_over_time[time_bucket]
         else:
-            query_plot = [x["total"] for x in plot_data["history"]]
-            ad_plot = [x["blocked"] for x in plot_data["history"]]
+            history = plot_data.get("history")
+            if type(history) != "list":
+                return render.Root(child = render.WrappedText("Invalid Pi-hole history", color = RED, align = "center"))
+            query_plot = [x.get("total", 0) for x in history[-MAX_PLOT_POINTS:] if type(x) == "dict"]
+            ad_plot = [x.get("blocked", 0) for x in history[-MAX_PLOT_POINTS:] if type(x) == "dict"]
+
+        query_plot = [value for value in query_plot if type(value) in ["int", "float"]] or [0]
+        ad_plot = [value for value in ad_plot if type(value) in ["int", "float"]] or [0]
 
         return render.Root(
             render.Column(
@@ -193,7 +216,7 @@ def main(config):
                                         height = 14,
                                         color = GREEN,
                                         fill = True,
-                                        y_lim = (0, max(query_plot)),
+                                        y_lim = (0, max(1, max(query_plot))),
                                     ),
                                     render.Plot(
                                         data = list(enumerate(ad_plot)),
@@ -202,7 +225,7 @@ def main(config):
                                         color = RED,
                                         fill = True,
                                         fill_color = "#660500",
-                                        y_lim = (0, max(ad_plot)),
+                                        y_lim = (0, max(1, max(ad_plot))),
                                     ),
                                 ],
                             ),
@@ -219,13 +242,13 @@ def get_schema():
             schema.Text(
                 id = "host",
                 name = "Host",
-                desc = "Pi-hole Host name/ip[:port]",
+                desc = "Public HTTPS URL for your Pi-hole reverse proxy",
                 icon = "computer",
             ),
             schema.Text(
                 id = "api_key",
-                name = "API Key",
-                desc = "Pi-hole API Key",
+                name = "API Key or App Password",
+                desc = "Pi-hole v5 API key or v6 application password",
                 icon = "key",
                 secret = True,
             ),

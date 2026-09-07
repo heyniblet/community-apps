@@ -16,6 +16,7 @@ load("images/recent_orders.png", RECENT_ORDERS_ASSET = "file")
 load("images/recent_sales.png", RECENT_SALES_ASSET = "file")
 load("images/trends_animated_background.gif", TRENDS_ANIMATED_BACKGROUND_ASSET = "file")
 load("images/trends_container.png", TRENDS_CONTAINER_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -25,7 +26,6 @@ TRENDS_ANIMATED_BACKGROUND = TRENDS_ANIMATED_BACKGROUND_ASSET.readall()
 
 # CONFIG
 SHOPIFY_COUNTER_API_HOST = "https://www.shopcounter.app"
-CACHE_TTL = 30
 
 # COLORS
 COLOR_LIME = "#D0F224"
@@ -57,15 +57,15 @@ IMAGE_RECENT_SALES = RECENT_SALES_ASSET.readall()
 APP_ID = "shopify_order_trends"
 
 def api_fetch(counter_id, request_config):
-    print("Calling Counter API.")
-    url = "{}/tidbyt/api/{}/{}".format(SHOPIFY_COUNTER_API_HOST, counter_id, APP_ID)
-    rep = http.post(url, body = json.encode({"config": request_config}), headers = {"Content-Type": "application/json"}, ttl_seconds = CACHE_TTL)
-    if rep.status_code != 200:
-        print("Counter API request failed with status {}".format(rep.status_code))
+    if type(counter_id) != "string" or not re.match(r"^[A-Za-z0-9_-]{1,128}$", counter_id):
         return None
-    api_response = rep.json()
-
-    return api_response
+    url = "{}/tidbyt/api/{}/{}".format(SHOPIFY_COUNTER_API_HOST, counter_id, APP_ID)
+    rep = http.post(url, body = json.encode({"config": request_config}), headers = {"Content-Type": "application/json"})
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > 256 * 1024:
+        return None
+    api_response = json.decode(body, {})
+    return api_response if type(api_response) == "dict" else None
 
 # Error View
 # Renders an error message
@@ -127,11 +127,15 @@ def main(config):
     if not api_response:
         return error_view()
 
-    api_data = api_response["data"]
-    daily = api_data["daily"]
-    weekly = api_data["weekly"]
-    monthly = api_data["monthly"]
-    yearly = api_data["yearly"]
+    api_data = api_response.get("data", {})
+    if type(api_data) != "dict":
+        return error_view()
+    daily = bounded_value(api_data.get("daily"))
+    weekly = bounded_value(api_data.get("weekly"))
+    monthly = bounded_value(api_data.get("monthly"))
+    yearly = bounded_value(api_data.get("yearly"))
+    if None in [daily, weekly, monthly, yearly]:
+        return error_view()
 
     return render.Root(
         child = render.Stack(
@@ -211,6 +215,9 @@ def period_label(period):
     if period == "yearly":
         return "YEARLY"
     return "DAILY"
+
+def bounded_value(value):
+    return str(value)[:40] if type(value) in ["string", "int", "float"] else None
 
 def period_color(period):
     if period == "daily":
@@ -296,6 +303,7 @@ def get_schema():
                 name = "Counter ID",
                 desc = "Unique ID of the counter set up in the Counter app for Shopify",
                 icon = "shopify",
+                secret = True,
             ),
         ],
     )

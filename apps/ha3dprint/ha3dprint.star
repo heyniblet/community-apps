@@ -39,8 +39,9 @@ C_ACTIVE_STATUSES = [
     "paused",
     "cancelling",
 ]
+MAX_RESPONSE_BYTES = 1024 * 1024
 
-def fetch_ha_data(ha_url, ha_token, name_entity, progress_entity, remaining_time_entity, end_time_entity, status_entity, cache_duration):
+def fetch_ha_data(ha_url, ha_token, name_entity, progress_entity, remaining_time_entity, end_time_entity, status_entity):
     """Fetch printer data from Home Assistant REST API using template endpoint for efficiency"""
     headers = {
         "Authorization": "Bearer " + ha_token,
@@ -83,32 +84,25 @@ def fetch_ha_data(ha_url, ha_token, name_entity, progress_entity, remaining_time
         template_url = base_url + "/api/template"
         payload = {"template": template}
 
-        resp = http.post(template_url, headers = headers, json_body = payload, ttl_seconds = cache_duration)
-
-        print(resp.body())
+        resp = http.post(template_url, headers = headers, json_body = payload)
 
         # Correctly return printer entity fields
         if resp.status_code == 200:
             # Parse the JSON response from the template
             response_body = resp.body()
-            if response_body:
-                data = json.decode(response_body)
+            if response_body and len(response_body) <= MAX_RESPONSE_BYTES:
+                data = json.decode(response_body, {})
+                if type(data) != "dict" or any([key not in data for key in ["name", "progress", "remaining_time", "end_time", "status"]]):
+                    return None
                 return (
-                    data.get("name", defaults["name"]),
-                    data.get("progress", defaults["progress"]),
-                    data.get("remaining_time", defaults["remaining_time"]),
-                    data.get("end_time", defaults["end_time"]),
-                    data.get("status", defaults["status"]),
-                    data.get("last_changed", 0),
+                    safe_scalar(data.get("name"), defaults["name"]),
+                    safe_scalar(data.get("progress"), defaults["progress"]),
+                    safe_scalar(data.get("remaining_time"), defaults["remaining_time"]),
+                    safe_scalar(data.get("end_time"), defaults["end_time"]),
+                    safe_scalar(data.get("status"), defaults["status"]),
+                    safe_number(data.get("last_changed")),
                 )
-    return (
-        defaults["name"],
-        defaults["progress"],
-        defaults["remaining_time"],
-        defaults["end_time"],
-        defaults["status"],
-        0,
-    )
+    return None
 
 # convert color specification from JSON to hex string
 def to_rgb(color, combine = None, combine_level = 0.5):
@@ -216,9 +210,9 @@ def renderProgress(label, progress_value, padding, bar_color):
     )
 
 def main(config):
-    ha_url = config.str("haUrl", "http://homeassistant.local:8123")
-    ha_token = config.str("haApiKey", "APIKEY")
-    max_print_age_hours_str = config.str("maxPrintAgeHours", "4")
+    ha_url = normalized_url(config.str("haUrl", "") or "")
+    ha_token = config.str("haApiKey", "") or ""
+    max_print_age_hours_str = config.str("maxPrintAgeHours", "4") or "4"
 
     # Safe float parsing: allow only digits and one dot
     max_print_age_hours = 4.0
@@ -237,13 +231,16 @@ def main(config):
             break
     if valid:
         max_print_age_hours = float(s)
+    max_print_age_hours = min(max(max_print_age_hours, 0), 168)
     max_print_age_seconds = int(max_print_age_hours * 3600)
     name_entity = config.str("task_name", "task_name")
     progress_entity = config.str("progress", "test_progress")
     remaining_time_entity = config.str("remaining_time", "test_remaining_time")
     status_entity = config.str("status", "test_status")
     end_time_entity = config.str("end_time", "")
-    cache_duration = 4
+    required_entities = [name_entity, progress_entity, remaining_time_entity, status_entity]
+    if not ha_url or not valid_token(ha_token) or not all([valid_entity(value) for value in required_entities]) or (end_time_entity and not valid_entity(end_time_entity)):
+        return render.Root(child = render.WrappedText(content = "Configure public HTTPS Home Assistant, token, and entities", width = 64, color = RED))
 
     # Always fetch printer data for rendering
     result = fetch_ha_data(
@@ -254,10 +251,9 @@ def main(config):
         remaining_time_entity,
         end_time_entity,
         status_entity,
-        cache_duration,
     )
     if result == None or len(result) < 6:
-        result = ("Printer", "0", "0", C_DEFAULT_END_TIME, "Unknown", 0)
+        return render.Root(child = render.WrappedText(content = "Home Assistant unavailable", width = 64, color = RED))
     (name, progress, remaining_time, end_time, status, last_changed_ts) = result
 
     # Check if we should render anything
@@ -269,7 +265,6 @@ def main(config):
     # Check status
     if st_norm in ["offline", "unavailable", "off", "none", "unknown"]:
         skip_render = True
-        print("Printer is offline/off ({}), skipping render".format(st_norm))
 
     # Check end_time using Starlark's time.parse_time and duration
     if not skip_render:
@@ -283,17 +278,6 @@ def main(config):
                 ts = int(float(end_time_str))
                 if ts > 0:
                     end_dt = time.from_timestamp(ts)
-
-            # Fallback to ISO string parsing
-            if not end_dt:
-                if "T" not in end_time_str:
-                    end_time_str = end_time_str.replace(" ", "T")
-                valid_iso = len(end_time_str) == 19 and end_time_str[10] == "T"
-                valid_iso_z = len(end_time_str) == 20 and end_time_str[10] == "T" and end_time_str.endswith("Z")
-                if valid_iso:
-                    end_dt = time.parse_time(end_time_str + "Z")
-                elif valid_iso_z:
-                    end_dt = time.parse_time(end_time_str)
 
         # Fallback to last_changed if print is not active
         is_active = st_norm in C_ACTIVE_STATUSES
@@ -309,7 +293,6 @@ def main(config):
             # Only skip if the print is NOT active and it finished too long ago
             if not is_active and diff_seconds < -max_print_age_seconds:
                 skip_render = True
-                print("Print finished {} hours ago (status={}), skipping render".format(max_print_age_hours, status))
 
     if skip_render:
         return []
@@ -404,7 +387,7 @@ def main(config):
 
 def get_schema():
     fields = [
-        schema.Text(id = "haUrl", name = "Home Assistant URL", desc = "Base URL of your Home Assistant instance (e.g. http://homeassistant.local:8123)", icon = "server"),
+        schema.Text(id = "haUrl", name = "Home Assistant URL", desc = "Public HTTPS root URL, such as a Home Assistant Cloud remote URL.", icon = "server"),
         schema.Text(id = "haApiKey", name = "Home Assistant API Key", desc = "Long-Lived Access Token from Home Assistant user profile", icon = "key", secret = True),
         schema.Text(id = "task_name", name = "Task Name", desc = "Currently Printing Task", icon = "file"),
         schema.Text(id = "progress", name = "Print Progress", desc = "Entity ID for print progress (%)", icon = "percent"),
@@ -415,3 +398,28 @@ def get_schema():
     ]
 
     return schema.Schema(version = "1", fields = fields)
+
+def normalized_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://") or any([char in value for char in [" ", "\t", "\r", "\n", "?", "#"]]):
+        return ""
+    parts = value.split("/", 3)
+    host = parts[2].lower() if len(parts) >= 3 else ""
+    if not host or "@" in host or ":" in host:
+        return ""
+    return value.rstrip("/")
+
+def valid_entity(value):
+    return type(value) == "string" and len(value) >= 3 and len(value) <= 128 and "." in value and all([char.isalnum() or char in "._-" for char in value.elems()])
+
+def valid_token(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 4096 and not any([char in value for char in ["\r", "\n"]])
+
+def safe_scalar(value, fallback):
+    return str(value)[:200] if type(value) in ["string", "int", "float"] else fallback
+
+def safe_number(value):
+    if type(value) in ["int", "float"]:
+        return value
+    if type(value) == "string" and value.replace(".", "", 1).isdigit():
+        return value
+    return 0

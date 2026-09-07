@@ -5,7 +5,9 @@ Description: Shows the tide height throughout the day of the ocean based on the 
 Author: k.wajdowicz
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -22,7 +24,7 @@ TIMEZONE_MAP = {
 def main(config):
     station_id = config.get("stationid") or config.get("station")
 
-    if station_id == None:
+    if type(station_id) != "string" or not re.match("^[0-9]{7}$", station_id):
         return station_not_found(station_id)
 
     station_timezone = get_station_timezone(station_id)
@@ -222,13 +224,11 @@ def get_schema():
 def get_tide_data(stationId, date, interval):
     url = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=%s&end_date=%s&station=%s&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=%s&units=english&application=DataAPI_Sample&format=json" % (date, date, stationId, interval)
 
-    print("Calling tide API: %s" % url)
     response = http.get(url, ttl_seconds = 86400)
-    if response.status_code != 200 or "error" in response.json():
-        print("tide request failed with status %d" % response.status_code)
+    body = response.body()
+    data = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 512 * 1024 else {}
+    if type(data) != "dict" or "error" in data or type(data.get("predictions")) != "list":
         return None
-    data = response.json()
-
     return data
 
 def get_date(current_offset_time):
@@ -239,7 +239,9 @@ def get_data_points(today):
     max = 0
     min = 0
 
-    for p in today["predictions"]:
+    for p in today["predictions"][:200]:
+        if type(p) != "dict" or type(p.get("t")) != "string" or type(p.get("v")) != "string":
+            continue
         time = p["t"][11:].split(":")
         hours = int(time[0]) + (int(time[1]) / 60)
         value = float(p["v"])
@@ -254,7 +256,7 @@ def get_data_points(today):
 def get_current_state(data, current_time):
     current = None
     next = None
-    for p in data["predictions"]:
+    for p in data["predictions"][:200]:
         if p["t"][11:] < current_time.format("15:04"):
             current = p["v"]
         elif next == None:
@@ -271,12 +273,13 @@ def calculate_hours(timestamp):
 
 def get_station_timezone(id):
     url = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/%s.json" % id
-    print("Calling station API: %s" % url)
     response = http.get(url, ttl_seconds = 86400)
-    if response.status_code != 200:
-        print("station request failed with status %d" % response.status_code)
+    body = response.body()
+    data = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 256 * 1024 else {}
+    stations = data.get("stations", []) if type(data) == "dict" else []
+    if type(stations) != "list" or not stations or type(stations[0]) != "dict":
         return None
-    zone = response.json()["stations"][0]["timezone"]
+    zone = stations[0].get("timezone")
     if zone in TIMEZONE_MAP:
         tz = TIMEZONE_MAP[zone]
 

@@ -15,6 +15,8 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("xpath.star", "xpath")
 
+FEEDS = ["home", "uk", "world", "us", "business", "politics", "technology", "entertainment", "strange"]
+
 BLUE_BACKGROUND = BLUE_BACKGROUND_ASSET.readall()
 GLASS_HIGHLIGHT = GLASS_HIGHLIGHT_ASSET.readall()
 GRADIENT_LINE = GRADIENT_LINE_ASSET.readall()
@@ -31,7 +33,13 @@ SPLASH_SCREEN = SPLASH_SCREEN_ASSET.readall()
 def main(config):
     feedchoice = config.get("feedchoice", "home")
     fontsize = config.get("fontsize", "tb-8")
-    articles = get_cacheable_data(feedchoice, 1, config)
+    if feedchoice not in FEEDS:
+        feedchoice = "home"
+    if fontsize not in ["tb-8", "tom-thumb"]:
+        fontsize = "tb-8"
+    articles = get_cacheable_data(feedchoice, 1)
+    if not articles:
+        return connectionError(config)
 
     if fontsize == "tb-8":
         return render.Root(
@@ -296,20 +304,23 @@ def connectionError(config):
         ),
     )
 
-def get_cacheable_data(url, articlecount, config):
+def get_cacheable_data(url, articlecount):
     articles = []
 
     res = http.get("https://feeds.skynews.com/feeds/rss/" + url + ".xml".format(url), ttl_seconds = 900)
-    if res.status_code != 200:
-        return connectionError(config)
     data = res.body()
+    if res.status_code != 200 or not data or len(data) > 256 * 1024 or "<item" not in data:
+        return []
 
     data_xml = xpath.loads(data)
 
     for i in range(1, articlecount + 1):
         title_query = "//item[{}]/title".format(str(i))
         desc_query = "//item[{}]/description".format(str(i))
-        articles.append((data_xml.query(title_query), str(data_xml.query(desc_query)).replace("None", "")))
+        title = str(data_xml.query(title_query))[:300]
+        desc = str(data_xml.query(desc_query)).replace("None", "")[:500]
+        if title:
+            articles.append((title, desc))
 
     return articles
 

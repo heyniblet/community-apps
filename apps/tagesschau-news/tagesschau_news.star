@@ -1,9 +1,12 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/ard_logo_white.svg", ARD_LOGO_WHITE = "file")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
 def is_breaking(newsEntry):
+    if type(newsEntry) != "dict":
+        return False
     if "breakingNews" in newsEntry and newsEntry["breakingNews"]:
         return True
 
@@ -25,12 +28,14 @@ def get_most_important_headline():
         ttl_seconds = 300,
     )
 
-    data = response.json()
-    if "news" in data:
-        for entry in data["news"]:
+    body = response.body()
+    data = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
+    news = data.get("news", []) if type(data) == "dict" else []
+    if type(news) == "list" and news:
+        for entry in news[:100]:
             if is_breaking(entry):
                 return entry
-        return data["news"][0]
+        return news[0]
     return None
 
 def main(config):
@@ -52,9 +57,9 @@ def main(config):
             "Cannot refresh news",
             font = font_small,
         ))
-    title = headline["title"]
-    topline = headline["topline"]
-    date = headline["date"]
+    title = str(headline.get("title", ""))[:500]
+    topline = str(headline.get("topline", ""))[:200]
+    date = headline.get("date")
     formatted_date = format_time(date) if date else "No time available"
     news_is_urgent = is_breaking(headline)
 

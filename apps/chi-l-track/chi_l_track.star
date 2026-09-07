@@ -6,17 +6,17 @@ Author: FabioCZ
 """
 
 load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-CTA_ARRIVAL_URL = "http://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
+CTA_ARRIVAL_URL = "https://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
 
-CTA_L_STATON_LIST_URL = "https://data.cityofchicago.org/resource/8pix-ypme.json"
-
-def getApiUrl(predConfig, key):
-    return CTA_ARRIVAL_URL + "?stpid=" + predConfig.stopId + "&rt=" + predConfig.route + "&key=" + key + "&outputType=JSON"
+MAX_RESPONSE_BYTES = 512 * 1024
+ROUTES = ["Red", "Blue", "Brn", "G", "Org", "P", "Pink", "Y"]
 
 def getPredictionTime(arrivalTimeStr):
     now = time.now()
@@ -83,27 +83,33 @@ def getPredictionSuffix(route, destinationName, destinationId, isScheduled):
         return ""
 
 def getPredictions(predConfig, apiKey):
+    if not re.match(r"^[0-9]{5}$", predConfig.stopId) or predConfig.route not in ROUTES:
+        return None
     preds = []
-    respJson = {}
-    resp = http.get(getApiUrl(predConfig, apiKey), ttl_seconds = 45)
+    resp = http.get(
+        CTA_ARRIVAL_URL,
+        params = {"stpid": predConfig.stopId, "rt": predConfig.route, "key": apiKey, "outputType": "JSON"},
+    )
+    body = resp.body()
 
-    if resp.status_code != 200:
-        fail("CTA request failed with: %d, %s", resp.status_code, resp.body())
-    if resp.body()[0] == "<":
-        fail("CTA request failed - we got a bad xml response")
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
 
-    respJson = resp.json()
-    if "eta" not in respJson["ctatt"]:
+    respJson = json.decode(body, None)
+    ctatt = respJson.get("ctatt") if type(respJson) == "dict" else None
+    if type(ctatt) != "dict" or str(ctatt.get("errCd") or "0") != "0":
+        return None
+    if type(ctatt.get("eta")) != "list":
         return preds
 
-    for pred in respJson["ctatt"]["eta"]:
-        if pred["rt"] == predConfig.route:
+    for pred in ctatt["eta"][:20]:
+        if type(pred) == "dict" and pred.get("rt") == predConfig.route and type(pred.get("arrT")) == "string" and re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$", pred["arrT"]):
             time = getPredictionTime(pred["arrT"])
-            isDelayed = pred["isDly"] == "1"
-            isScheduled = pred["isSch"] == "1"
-            suffix = getPredictionSuffix(pred["rt"], pred["destNm"], pred["destSt"], isScheduled)
+            isDelayed = pred.get("isDly") == "1"
+            isScheduled = pred.get("isSch") == "1"
+            suffix = getPredictionSuffix(pred["rt"], str(pred.get("destNm") or ""), str(pred.get("destSt") or ""), isScheduled)
             if not isScheduled or predConfig.showSched:
-                preds.append(struct(time = time, isDelayed = isDelayed, isScheduled = isScheduled, suffix = suffix, direction = pred["trDr"]))
+                preds.append(struct(time = time, isDelayed = isDelayed, isScheduled = isScheduled, suffix = suffix, direction = str(pred.get("trDr") or "")))
 
     return preds
 
@@ -239,6 +245,8 @@ def renderPredictions(r, predConfig, apiKey):
             color = "#f00",
         )
     preds = getPredictions(predConfig, apiKey)
+    if preds == None:
+        return r.Box(width = 64, height = 14, child = r.Text("CTA unavailable", font = "tom-thumb", color = "#f00"))
     routeColor = getRouteColor(predConfig.route)
     destName = getDestName(predConfig, preds)
     return r.Row(
@@ -325,7 +333,7 @@ def main(config):
     secondLineConfig = struct(stopId = config.str("secondStop", "30112"), route = config.str("secondRoute", "Blue"), showSched = config.bool("secondShowSched", False))
     apiKey = config.get("api_key")
 
-    if not apiKey:
+    if not apiKey or len(apiKey) > 512:
         return render.Root(child = render.Text("CTA API Key not set"))
 
     return render.Root(
@@ -339,28 +347,7 @@ def main(config):
         ),
     )
 
-def directionName(dirId):
-    if dirId == "W":
-        return "West"
-    if dirId == "E":
-        return "East"
-    if dirId == "S":
-        return "South"
-    if dirId == "N":
-        return "North"
-    else:
-        return "??"
-
-def getStationOptions():
-    resp = http.get(CTA_L_STATON_LIST_URL, ttl_seconds = 86400)  # 1 day
-    if resp.status_code != 200:
-        fail("Failed to get L station list %d %s", resp.status_code, resp.body())
-    stationsJson = resp.json()
-    options = [schema.Option(display = x["station_descriptive_name"] + " - " + directionName(x["direction_id"]), value = x["stop_id"]) for x in stationsJson]
-    return options
-
 def get_schema():
-    stopOptions = getStationOptions()
     routeOptions = [
         schema.Option(
             display = "Red",
@@ -399,13 +386,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "firstStop",
                 name = "First Stop",
-                desc = "The ID of stop in the top slot.",
+                desc = "Five-digit CTA platform stop ID for the top slot.",
                 icon = "locationDot",
-                default = stopOptions[0].value,
-                options = stopOptions,
+                default = "30162",
             ),
             schema.Dropdown(
                 id = "firstRoute",
@@ -422,13 +408,12 @@ def get_schema():
                 icon = "clock",
                 default = False,
             ),
-            schema.Dropdown(
+            schema.Text(
                 id = "secondStop",
                 name = "Second Stop",
-                desc = "The ID of stop in the bottom slot.",
+                desc = "Five-digit CTA platform stop ID for the bottom slot.",
                 icon = "locationDot",
-                default = stopOptions[1].value,
-                options = stopOptions,
+                default = "30161",
             ),
             schema.Dropdown(
                 id = "secondRoute",

@@ -23,6 +23,7 @@ DEFAULT_LOCATION = """
 """
 
 DEFAULT_ROUTE = "36"
+API_BASE = "https://www.ctabustracker.com/bustime/api/v3"
 
 def get_schema():
     return schema.Schema(
@@ -35,10 +36,12 @@ def get_schema():
                 icon = "key",
                 secret = True,
             ),
-            schema.Generated(
+            schema.Text(
                 id = "route",
-                source = "api_key",
-                handler = get_bus_route_options,
+                name = "Bus Route",
+                desc = "CTA route ID, such as 36, X9, or J14.",
+                icon = "bus",
+                default = DEFAULT_ROUTE,
             ),
             schema.Location(
                 id = "location",
@@ -61,13 +64,30 @@ def main(config):
     route = config.get("route", DEFAULT_ROUTE)
     hide = config.bool("hide", True)
     location = config.get("location", DEFAULT_LOCATION)
+    if not api_key or len(api_key) > 256:
+        return render.Root(child = render.Text("CTA API Key not set"))
+    if not route or len(route) > 10:
+        return render.Root(child = render.Text("Invalid route"))
+    for c in route.elems():
+        if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+            return render.Root(child = render.Text("Invalid route"))
+    if len(location) > 2048 or not location.startswith("{"):
+        return render.Root(child = render.Text("Invalid location"))
     loc = json.decode(location)
+    if type(loc) != "dict" or "lat" not in loc or "lng" not in loc:
+        return render.Root(child = render.Text("Invalid location"))
+    if float(loc["lat"]) < -90 or float(loc["lat"]) > 90 or float(loc["lng"]) < -180 or float(loc["lng"]) > 180:
+        return render.Root(child = render.Text("Invalid location"))
+
+    full_route = get_bus_route(route, api_key)
+    if not full_route:
+        return render.Root(child = render.Text("Route unavailable"))
 
     directions = get_bus_route_directions(route, api_key) or []
 
-    stops = [get_nearest_stop(route, direction["dir"], loc, api_key) for direction in directions]
+    stops = [get_nearest_stop(route, direction["dir"], loc, api_key) for direction in directions[:2] if type(direction) == "dict" and direction.get("dir")]
 
-    potential_arrivals = [get_arrivals(route, stop, api_key) for stop in stops]
+    potential_arrivals = [get_arrivals(route, stop, api_key, full_route) for stop in stops if stop]
 
     arrivals = []
 
@@ -106,10 +126,8 @@ def main(config):
             ),
         )
     elif hide:
-        print("no arrival [hide]")
         return []
     else:
-        print("no arrival [show]")
         return render.Root(
             delay = 75,
             max_age = 60,
@@ -117,42 +135,10 @@ def main(config):
                 expanded = True,
                 main_align = "center",
                 children = [
-                    render_no_arrival(route, api_key),
+                    render_no_arrival(full_route),
                 ],
             ),
         )
-
-######################
-# Build Config options
-######################
-def get_bus_route_options(api_key):
-    if not api_key:
-        return [
-            schema.Option(
-                display = "No Routes Available",
-                value = "No Routes Available",
-            ),
-        ]
-
-    routes = get_bus_routes(api_key)
-
-    options = [
-        schema.Option(
-            display = route["route"] + " - " + route["name"],
-            value = route["route"],
-        )
-        for route in routes
-    ]
-    return [
-        schema.Dropdown(
-            id = "route",
-            name = "Bus Route",
-            desc = "The CTA Bus Route to get departure schedule for.",
-            icon = "bus",
-            default = DEFAULT_ROUTE,
-            options = options,
-        ),
-    ]
 
 ######################
 # Utility methods
@@ -182,22 +168,28 @@ def get_nearest_stop(route, direction, current_location, api_key):
         return None
 
     response = http.get(
-        "https://ctabustracker.com/bustime/api/v2/getstops",
+        API_BASE + "/getstops",
         params = {
             "key": api_key,
             "format": "json",
             "rt": route,
             "dir": direction,
         },
-        ttl_seconds = 3600,
     )
 
-    stops = response.json()["bustime-response"]["stops"]
+    if response.status_code != 200 or len(response.body()) > 1024 * 1024:
+        return None
+    data = response.json().get("bustime-response", {})
+    if type(data) != "dict" or type(data.get("stops")) != "list":
+        return None
+    stops = data["stops"][:500]
 
     shortest_distance = 0.0
     nearest_stop = {}
 
     for stop in stops:
+        if type(stop) != "dict" or "lat" not in stop or "lon" not in stop or not stop.get("stpid"):
+            continue
         distance_from_user_to_stop = get_distance(
             float(stop["lat"]),
             float(stop["lon"]),
@@ -222,15 +214,12 @@ def build_route_arrival_time(arrival):
     else:
         return time
 
-def get_arrivals(route, nearest_stop, api_key):
-    full_route = get_bus_route(route, api_key)
-
-    if not api_key:
+def get_arrivals(route, nearest_stop, api_key, full_route):
+    if not api_key or not nearest_stop:
         return None
 
     response = http.get(
-        "https://ctabustracker.com/bustime/api/v2/getpredictions",
-        ttl_seconds = 10,
+        API_BASE + "/getpredictions",
         params = {
             "key": api_key,
             "format": "json",
@@ -240,17 +229,24 @@ def get_arrivals(route, nearest_stop, api_key):
         },
     )
 
-    arrivals = response.json()["bustime-response"]
-
-    if "error" in arrivals:
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return None
+    arrivals = response.json().get("bustime-response", {})
+    if type(arrivals) != "dict":
         return None
 
-    times = [build_route_arrival_time(arrival) for arrival in arrivals["prd"]]
+    if "error" in arrivals or type(arrivals.get("prd")) != "list" or not arrivals["prd"]:
+        return None
+
+    predictions = [arrival for arrival in arrivals["prd"][:2] if type(arrival) == "dict" and "prdctdn" in arrival and "des" in arrival and "rt" in arrival]
+    if not predictions:
+        return None
+    times = [build_route_arrival_time(arrival) for arrival in predictions]
 
     return {
-        "destination": arrivals["prd"][0]["des"],
+        "destination": str(predictions[0]["des"])[:100],
         "times": times,
-        "route": arrivals["prd"][0]["rt"],
+        "route": str(predictions[0]["rt"])[:10],
         "route_color": full_route["color"],
     }
 
@@ -262,13 +258,22 @@ def get_bus_route(route, api_key):
     for rt in routes:
         route_map[rt["route"]] = rt
 
-    return route_map[route]
+    return route_map.get(route)
 
 def build_route(route):
+    color = str(route["rtclr"])
+    if color.startswith("#"):
+        color = color[1:]
+    if len(color) != 6:
+        color = "666666"
+    for c in color.elems():
+        if c not in "0123456789abcdefABCDEF":
+            color = "666666"
+            break
     return {
-        "route": route["rt"],
-        "name": route["rtnm"],
-        "color": route["rtclr"],
+        "route": str(route["rt"])[:10],
+        "name": str(route["rtnm"])[:100],
+        "color": "#" + color,
     }
 
 def get_bus_routes(api_key):
@@ -276,15 +281,19 @@ def get_bus_routes(api_key):
         return None
 
     response = http.get(
-        "https://ctabustracker.com/bustime/api/v2/getroutes",
+        API_BASE + "/getroutes",
         params = {
             "key": api_key,
             "format": "json",
         },
-        ttl_seconds = 3600,
     )
-    data = response.json()["bustime-response"]["routes"]
-    routes = [build_route(route) for route in data]
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return []
+    body = response.json().get("bustime-response", {})
+    if type(body) != "dict" or type(body.get("routes")) != "list":
+        return []
+    data = body["routes"][:500]
+    routes = [build_route(route) for route in data if type(route) == "dict" and "rt" in route and "rtnm" in route and "rtclr" in route]
     return routes
 
 def get_bus_route_directions(route, api_key):
@@ -292,23 +301,22 @@ def get_bus_route_directions(route, api_key):
         return None
 
     response = http.get(
-        "https://ctabustracker.com/bustime/api/v2/getdirections",
+        API_BASE + "/getdirections",
         params = {
             "rt": route,
             "key": api_key,
             "format": "json",
         },
-        ttl_seconds = 3600,
     )
-    data = response.json()["bustime-response"]["directions"]
-    return data
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return []
+    data = response.json().get("bustime-response", {})
+    return data.get("directions", []) if type(data) == "dict" and type(data.get("directions")) == "list" else []
 
 ######################
 # Render methods
 ######################
-def render_no_arrival(route, api_key):
-    full_route = get_bus_route(route, api_key)
-
+def render_no_arrival(full_route):
     background_color = render.Box(
         width = 22,
         height = 11,

@@ -6,7 +6,7 @@ desc: Shows whether a drawbridge is open or not, and when it is expected to rise
 author: sumara523
 fileName: drawbridge_status.star
 packageName: drawbridgestatus
-recommendedInterval: 5
+recommendedInterval: 1
 category: transit
 tags:
   - utility

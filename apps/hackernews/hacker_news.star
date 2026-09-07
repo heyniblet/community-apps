@@ -11,28 +11,39 @@ load("render.star", "render")
 
 YC_ICON = YC_ICON_ASSET.readall()
 
-TOP_STORIES_DATA_ENDPOINT = "https://hn-top-tidbyt-prod.nkcmr.dev/top-stories.json"
+TOP_STORIES_ENDPOINT = "https://hacker-news.firebaseio.com/v0/topstories.json"
+ITEM_ENDPOINT = "https://hacker-news.firebaseio.com/v0/item/{}.json"
+CACHE_TTL = 300
+STORY_COUNT = 3
+
+def get_json(url):
+    resp = http.get(url, ttl_seconds = CACHE_TTL)
+    if resp.status_code != 200:
+        fail("Data request failed with status {}".format(resp.status_code))
+    return resp.json()
 
 def main():
-    resp = http.get(TOP_STORIES_DATA_ENDPOINT)
-    if resp.status_code != 200:
-        fail("Data request failed with status %d", resp.status_code)
-
-    stories = resp.json()["stories"]
+    stories = []
+    for story_id in get_json(TOP_STORIES_ENDPOINT)[:STORY_COUNT]:
+        story = get_json(ITEM_ENDPOINT.format(int(story_id)))
+        if story != None:
+            stories.append(story)
+    if len(stories) == 0:
+        fail("Hacker News returned no stories")
 
     story_widgets = []
     for i in range(len(stories)):
         column_widgets = [
-            render.WrappedText(stories[i]["title"], font = "5x8"),
+            render.WrappedText(stories[i].get("title", "Untitled"), font = "5x8"),
             render.Box(width = 1, height = 2),  # padding
             render.Row(children = [
                 render.Text("points:   ", font = "tom-thumb", color = "#ccc"),
-                render.Text("%d" % (stories[i]["score"]), font = "tom-thumb", color = "#f60"),
+                render.Text("%d" % (stories[i].get("score", 0)), font = "tom-thumb", color = "#f60"),
             ]),
             render.Box(width = 1, height = 1),  # padding
             render.Row(children = [
                 render.Text("comments: ", font = "tom-thumb", color = "#ccc"),
-                render.Text("%d" % (stories[i]["descendants"]), font = "tom-thumb", color = "#f60"),
+                render.Text("%d" % (stories[i].get("descendants", 0)), font = "tom-thumb", color = "#f60"),
             ]),
         ]
         if i < (len(stories) - 1):

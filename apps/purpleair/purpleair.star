@@ -16,11 +16,11 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 RANGE = RANGE_ASSET.readall()
+MAX_RESPONSE_BYTES = 256 * 1024
 
 # DEFAULTS
 
 DEFAULT_SENSOR_ID = None
-DEFAULT_LOCATION_BASED_SENSOR = '{"display": "SF Maritime NHP", "value": 70251}'
 TEMP_UNIT_F = "F"
 TEMP_UNIT_C = "C"
 DEFAULT_TEMP_UNIT = TEMP_UNIT_F
@@ -30,14 +30,12 @@ PARTICLE_SENSOR_B = "Sensor B"
 
 # MAIN APP
 
-api_key = None
-
 def main(config):
-    api_key = config.get("api_key")
+    api_key = config.str("api_key", "").strip()
     sensor_id = get_sensor_id(config)
-    show_title = get_cfg_value(config, "show_title", True)
-    show_temp = get_cfg_value(config, "show_temp", True)
-    show_name = get_cfg_value(config, "show_name", True)
+    show_title = config.bool("show_title", True)
+    show_temp = config.bool("show_temp", True)
+    show_name = config.bool("show_name", True)
 
     temp_unit = config.get("temp_unit")
     if temp_unit == None:
@@ -54,32 +52,27 @@ def main(config):
 
     # Fetch the air info
     data = None
-    if api_key != None and sensor_id != None:
-        # [0] = data, [1] = was_cached
+    if api_key and sensor_id != None:
         data = fetch_sensor_data(api_key, PUBLIC_SENSOR + sensor_id + FETCH_SENSOR_FIELDS, {})
 
     if data == None:
-        print("No data returned for sensor %s" % sensor_id)
         aqi = AQI_ERROR
         temp = 0
         humidity = 0
         name = ""
 
-    elif len(data) != 2 or data[0] == None:
-        print("Data in incorrect format or missing")
-
     else:
-        name = data[0].get("name", "")
-        temp = data[0].get("temperature", 0)
-        humidity = data[0].get("humidity", 0)
+        name = data.get("name", "")
+        temp = data.get("temperature", 0)
+        humidity = data.get("humidity", 0)
 
-        pm_a = data[0].get("pm_a", 0)
-        pm_b = data[0].get("pm_b", 0)
-        confidence = data[0].get("confidence", 0)
-        confidenceAuto = data[0].get("confidenceAuto", -1)
+        pm_a = data.get("pm_a", 0)
+        pm_b = data.get("pm_b", 0)
+        confidence = data.get("confidence", 0)
+        confidenceAuto = data.get("confidenceAuto", -1)
         aqi = epa_AQI(pm_a, pm_b, humidity, particle_sensor, confidence, confidenceAuto)
 
-        if data[0].get("locationType", 0) == 1:
+        if data.get("locationType", 0) == 1:
             name = "%s\n(inside)" % name
 
     return render.Root(
@@ -106,11 +99,6 @@ def main(config):
             ],
         ),
     )
-
-def get_cfg_value(config, key, default):
-    value = config.get(key)
-    value = json.decode(value) if value else default
-    return value
 
 def get_schema():
     return schema.Schema(
@@ -180,60 +168,39 @@ def get_schema():
 
 # Return the sensor id to use based on configuration options
 def get_sensor_id(config):
-    sensor = DEFAULT_SENSOR_ID
-
-    # User can specify the sensor id directly
-    id_option = config.get("sensor_id_direct")
-    if id_option != None and id_option != "":
-        sensor = str(json.decode(id_option))
-        print("Sensor direct: %s" % id_option)
-
-    print("Using sensor: %s" % sensor)
-    return sensor
+    sensor = config.str("sensor_id_direct", "").strip()
+    return sensor if sensor.isdigit() and len(sensor) <= 12 else DEFAULT_SENSOR_ID
 
 # DATA
 
-# Returns a tuple: (data, was_cached)
 # Sample call:
 # https://api.purpleair.com/v1/sensors/12345?fields=name,temperature,humidity,pm2.5_cf_1_a,pm2.5_cf_1_b,confidence,confidence_auto,location_type
 def fetch_sensor_data(api_key, url, params):
-    air_dict = {}
     headers = {"X-API-Key": api_key}
     rep = http.get(url, params = params, headers = headers, ttl_seconds = 1800)  # 30 min cache
-    if rep.status_code != 200:
-        print("Request failed with status %d" % rep.status_code)
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return None
-    else:
-        data = rep.json()
-        sensor = data.get("sensor", None)
+    data = json.decode(body, None)
+    sensor = data.get("sensor") if type(data) == "dict" else None
+    if type(sensor) != "dict":
+        return None
 
-        if sensor != None:
-            name = sensor.get("name", "")
+    name = sensor.get("name", "")
+    name = name if type(name) == "string" else ""
+    return {
+        "name": name[:80],
+        "temperature": max(number(sensor.get("temperature")) - 8, 0),
+        "humidity": max(number(sensor.get("humidity")) + 4, 0),
+        "pm_a": number(sensor.get("pm2.5_cf_1_a")),
+        "pm_b": number(sensor.get("pm2.5_cf_1_b")),
+        "confidence": number(sensor.get("confidence")),
+        "confidenceAuto": number(sensor.get("confidence_auto"), -1),
+        "locationType": number(sensor.get("location_type")),
+    }
 
-            temp = sensor.get("temperature", 0)
-            temp = max(temp - 8, 0)  # Temp reported 8F higher so adjust
-
-            humidity = sensor.get("humidity", 0)
-            humidity = max(humidity + 4, 0)  # Humidity reported 4F lower so adjust
-
-            pm_a = sensor.get("pm2.5_cf_1_a", 0)
-            pm_b = sensor.get("pm2.5_cf_1_b", 0)
-            confidence = sensor.get("confidence", 0)
-            confidenceAuto = sensor.get("confidence_auto", -1)
-            locationType = sensor.get("location_type", 0)
-
-            air_dict = {
-                "name": name,
-                "temperature": temp,
-                "humidity": humidity,
-                "pm_a": pm_a,
-                "pm_b": pm_b,
-                "confidence": confidence,
-                "confidenceAuto": confidenceAuto,
-                "locationType": locationType,
-            }
-
-        return (air_dict, False)
+def number(value, default = 0):
+    return value if type(value) in ["int", "float"] else default
 
 # AQI & CALCULATIONS
 
@@ -559,7 +526,6 @@ def render_animation(aqi, temp, humidity, name, show_title = True, show_temp = T
 
 PUBLIC_SENSOR = "https://api.purpleair.com/v1/sensors/"
 FETCH_SENSOR_FIELDS = "?fields=name,temperature,humidity,pm2.5_cf_1_a,pm2.5_cf_1_b,confidence,confidence_auto,location_type"
-CACHE_KEY_DATA = "purpleAirData"
 BACKGROUND_COLOR = "#21024D"
 
 # Images

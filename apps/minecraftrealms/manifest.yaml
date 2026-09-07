@@ -7,6 +7,8 @@ author: Michael Maxwell
 recommendedInterval: 5
 fileName: minecraft_realms.star
 packageName: minecraftrealms
+broken: true
+brokenReason: Requires a Niblet-owned Xbox title registration and tenant-isolated native OAuth flow; the bundled encrypted client credentials are not usable by Niblet.
 category: utilities
 tags:
   - gaming

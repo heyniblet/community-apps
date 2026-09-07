@@ -6,7 +6,8 @@ desc: Shows the current date converted into various other regular calendars.
 author: dinosaursrarr
 fileName: calendars.star
 packageName: calendars
-recommendedInterval: 5
+recommendedInterval: 240
+supports2x: true
 category: utilities
 tags:
   - tech

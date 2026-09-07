@@ -493,10 +493,5 @@ def get_schema():
                     schema.Option(display = "River/Stream", value = "1"),
                 ],
             ),
-            schema.Generated(
-                id = "param_code",
-                source = "water_body_type",
-                handler = param_options_for_water_body,
-            ),
-        ],
+        ] + param_options_for_water_body("0"),
     )

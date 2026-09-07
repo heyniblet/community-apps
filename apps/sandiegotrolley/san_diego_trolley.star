@@ -1,9 +1,4 @@
-"""
-Applet: San Diego Trolley
-Summary: Trolley arrival times
-Description: Shows scheduled and, when possible, real-time arrival times for San Diego MTS Trolleys.
-Author: Alex Serriere
-"""
+"""Show scheduled and real-time San Diego MTS trolley arrivals."""
 
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -11,151 +6,93 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-# Need to convert from a string to none value
 NONE_STR = "__NONE__"
-
 DEFAULT_STOP_ID_1 = "MTS_75078"
 DEFAULT_STOP_ID_2 = "MTS_75079"
+API_URL = "https://realtime.sdmts.com/api/api/where/arrivals-and-departures-for-stop"
+ROUTE_COLORS = {"Blue": "#0000FF", "Green": "#009900", "Orange": "#FF6600", "Silver": "#B4BCC2"}
 
-ROUTE_COLORS = {
-    "Blue": "#0000FF",
-    "Green": "#009900",
-    "Orange": "#FF6600",
-    "Silver": "#B4BCC2",
-    "Black": "#000000",  #error state
-}
+def config_value(value, default):
+    if type(value) != "string" or not value.strip():
+        return default
+    value = value.strip()
+    if value.startswith("{"):
+        option = json.decode(value, {})
+        value = option.get("value") if type(option) == "dict" else None
+    return value.strip() if type(value) == "string" and value.strip() else default
 
-def none_str_to_none_val(maybe_none_str):
-    if maybe_none_str == NONE_STR:
-        return None
-    return maybe_none_str
+def valid_stop(stop_id):
+    return len(stop_id) <= 40 and all([stop_id[i].isalnum() or stop_id[i] in ["_", "-"] for i in range(len(stop_id))])
 
-def search_stops(prefix, config):
-    if not prefix:
-        return []
-
+def get_arrivals(stop_id, api_key, now):
     response = http.get(
-        "https://realtime.sdmts.com/api/api/where/stops-for-location.json?key=" + get_api_key(config) + "&query=" + prefix,
-        ttl_seconds = 30,
+        "%s/%s.json" % (API_URL, stop_id),
+        params = {"key": api_key},
+        headers = {"Accept": "application/json"},
     )
-    if response.status_code != 200 or not response.body():
-        print("Could not access transit data. HTTP Status: " + str(response.status_code))
-        return []
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 2097152:
+        return {}
+    payload = json.decode(body, {})
+    data = payload.get("data") if type(payload) == "dict" else None
+    entry = data.get("entry") if type(data) == "dict" else None
+    events = entry.get("arrivalsAndDepartures") if type(entry) == "dict" else None
+    if type(events) != "list":
+        return {}
 
-    data = json.decode(response.body())["data"]
-    stops = data["stops"]
-
-    options = []
-    for stop in stops:
-        options.append(schema.Option(display = stop["name"], value = stop["id"]))
-    return options
-
-def get_api_key(config):
-    return config.get("mts_api_key") or "NONE"
-
-def get_arrivals_for_stop(stop_id, config):
-    now = time.now().unix
-    response = http.get("https://realtime.sdmts.com/api/api/where/arrivals-and-departures-for-stop/" + stop_id + ".json?key=" + get_api_key(config), ttl_seconds = 30)
-    if response.status_code != 200 or not response.body():
-        print("Could not access transit data. HTTP Status: " + str(response.status_code))
-        return {"No Data": {"Black": ["0", "0", "0"]}}
-    raw_stops = response.body()
-
-    arrivals_and_departures = json.decode(raw_stops)["data"]["entry"]["arrivalsAndDepartures"]
-
-    arrivals_by_heading = dict()
-
-    for event in arrivals_and_departures:
-        arrival_time_from_now = int((event["scheduledArrivalTime"] / 1000 - now) / 60)
-        if event["predicted"]:
-            arrival_time_from_now = int((event["predictedArrivalTime"] / 1000 - now) / 60)
-
-        if arrival_time_from_now <= 0:
+    arrivals = {}
+    for event in events[:200]:
+        if type(event) != "dict":
             continue
+        timestamp = event.get("predictedArrivalTime") if event.get("predicted") else event.get("scheduledArrivalTime")
+        if type(timestamp) not in ["int", "float"]:
+            continue
+        minutes = int((timestamp / 1000 - now) / 60)
+        if minutes <= 0 or minutes > 240:
+            continue
+        heading = str(event.get("tripHeadsign") or "Trolley")[:80]
+        route = str(event.get("routeShortName") or "Line")[:20]
+        times = arrivals.setdefault(heading, {}).setdefault(route, [])
+        if len(times) < 4:
+            times.append(str(minutes))
+    return arrivals
 
-        arrivals_by_heading.setdefault(event["tripHeadsign"], {}).setdefault(event["routeShortName"], []).append(str(arrival_time_from_now))
-
-    # Debug log
-    for heading, arrivals in arrivals_by_heading.items():
-        for route, times in arrivals.items():
-            print(heading, route, times)
-
-    return arrivals_by_heading
-
-def show_arrivals_at_stop(stop_data):
-    children = []
-    for heading, arrivals in stop_data.items():
-        for route, times in arrivals.items():
-            children.append(
-                render.Row(children = [
-                    render.Padding(child = render.Box(width = 4, height = 12, color = ROUTE_COLORS[route]), pad = 2),
-                    render.Column(children = [
-                        render.Text(str(heading)),
-                        render.Text(",".join(times), color = "#f2711c"),
-                    ]),
+def show_stop(arrivals):
+    rows = []
+    for heading in sorted(arrivals.keys())[:6]:
+        for route in sorted(arrivals[heading].keys())[:4]:
+            rows.append(render.Row(children = [
+                render.Padding(child = render.Box(width = 4, height = 12, color = ROUTE_COLORS.get(route, "#B4BCC2")), pad = 2),
+                render.Column(children = [
+                    render.Text(heading),
+                    render.Text(",".join(arrivals[heading][route]), color = "#f2711c"),
                 ]),
-            )
-
-    return render.Column(children)
-
-def show_arrivals(stops_data):
-    children = []
-    for stop in stops_data:
-        children.append(show_arrivals_at_stop(stop))
-        if len(children) <= len(stops_data) - 1:
-            children.append(
-                render.Box(
-                    height = 1,
-                    width = 64,
-                    color = "#fff",
-                ),
-            )
-
-    return render.Marquee(
-        height = 32,
-        child = render.Column(children),
-        scroll_direction = "vertical",
-    )
+            ]))
+    return render.Column(children = rows or [render.WrappedText("No upcoming trolleys", width = 64, align = "center")])
 
 def main(config):
-    stop1 = none_str_to_none_val(config.get("stop1", DEFAULT_STOP_ID_1))
-    stop2 = none_str_to_none_val(config.get("stop2", DEFAULT_STOP_ID_2))
-    stops_arrivals = []
-    if stop1:
-        stops_arrivals.append(get_arrivals_for_stop(stop1, config))
-    if stop2:
-        stops_arrivals.append(get_arrivals_for_stop(stop2, config))
+    stop1 = config_value(config.get("stop1"), DEFAULT_STOP_ID_1)
+    stop2 = config_value(config.get("stop2"), DEFAULT_STOP_ID_2)
+    api_key = config_value(config.get("mts_api_key"), "OBAKEY")
+    stops = [stop for stop in [stop1, stop2] if stop != NONE_STR]
+    if not stops or any([not valid_stop(stop) for stop in stops]) or len(api_key) > 256:
+        return render.Root(child = render.WrappedText("Configure valid MTS stops", width = 64, align = "center"))
+    now = time.now().unix
+    children = []
+    for stop in stops:
+        if children:
+            children.append(render.Box(height = 1, width = 64, color = "#fff"))
+        children.append(show_stop(get_arrivals(stop, api_key, now)))
     return render.Root(
-        child = show_arrivals(stops_arrivals),
+        child = render.Marquee(height = 32, child = render.Column(children = children), scroll_direction = "vertical"),
         delay = 150,
-        max_age = 30,
+        max_age = 60,
         show_full_animation = True,
     )
 
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Typeahead(
-                id = "stop1",
-                name = "Top station",
-                desc = "The first station to show",
-                icon = "arrowUp",
-                handler = search_stops,
-            ),
-            schema.Typeahead(
-                id = "stop2",
-                name = "Bottom station",
-                desc = "The second station to show",
-                icon = "arrowDown",
-                handler = search_stops,
-            ),
-            schema.Text(
-                id = "mts_api_key",
-                name = "MTS API Key",
-                desc = "An MTS API key to access the MTS API.",
-                icon = "key",
-                secret = True,
-            ),
-        ],
-    )
+    return schema.Schema(version = "1", fields = [
+        schema.Text(id = "stop1", name = "Top station", desc = "MTS stop ID for the first station.", icon = "arrowUp", default = DEFAULT_STOP_ID_1),
+        schema.Text(id = "stop2", name = "Bottom station", desc = "MTS stop ID for the second station, or __NONE__.", icon = "arrowDown", default = DEFAULT_STOP_ID_2),
+        schema.Text(id = "mts_api_key", name = "MTS API Key", desc = "Optional OneBusAway API key from MTS.", icon = "key", secret = True),
+    ])

@@ -820,7 +820,6 @@ def get_bg_image(selected_game, level_number, t, is_24_hour_format = True, has_l
         ],
     )
 
-
 def sprite_get_frames(selected_game, level_number, time_box):
     """Gets an array of sprite animation frames
 

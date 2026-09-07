@@ -7,36 +7,38 @@ Author: @Mad-Chemist
 
 load("http.star", "http")
 load("render.star", "render")
+load("xpath.star", "xpath")
 
-URL = "https://api.feedly.com/v3/mixes/contents?streamId=feed%2Fhttps%3A%2F%2Frantingly.com%2Ffeed%2F"
+URL = "https://rantingly.com/feed/"
+MAX_RESPONSE_BYTES = 128 * 1024
 
 def main():
-    print("Fetching Rantingly")
-    rep = http.get(URL, ttl_seconds = 300)
-    if rep.status_code != 200:
-        fail("Rantingly request failed with status %d", rep.status_code)
+    rep = http.get(URL, ttl_seconds = 600)
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return message("News unavailable")
+    titles = xpath.loads(body).query_all("//rss/channel/item/title")
+    titles = [title[:240] for title in titles[:3] if type(title) == "string" and title]
+    if len(titles) == 0:
+        return message("News unavailable")
 
-    d = rep.json()
-    rantinglyNews_lineone = d["items"][0]["title"]
-    rantinglyNews_linetwo = d["items"][1]["title"]
-    rantinglyNews_linethree = d["items"][2]["title"]
-
-    print("Successful Fetch")
+    children = []
+    for index, title in enumerate(titles):
+        if index > 0:
+            children.append(render.Text("-------"))
+        children.append(render.WrappedText(content = title, font = "tom-thumb"))
 
     return render.Root(
         delay = 100,
-        show_full_animation = bool("true"),
+        show_full_animation = True,
         child = render.Marquee(
             scroll_direction = "vertical",
             height = 35,
             child = render.Column(
-                children = [
-                    render.WrappedText(content = rantinglyNews_lineone, font = "tom-thumb"),
-                    render.Text("-------"),
-                    render.WrappedText(content = rantinglyNews_linetwo, font = "tom-thumb"),
-                    render.Text("-------"),
-                    render.WrappedText(content = rantinglyNews_linethree, font = "tom-thumb"),
-                ],
+                children = children,
             ),
         ),
     )
+
+def message(text):
+    return render.Root(child = render.Box(child = render.WrappedText(content = text, align = "center")))

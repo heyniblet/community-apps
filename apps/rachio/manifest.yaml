@@ -4,7 +4,7 @@ name: Rachio
 summary: Rachio sprinkler system
 desc: View schedules and data for a Rachio sprinkler system.
 author: Matt Fischer and Rob Ison
-recommendedInterval: 5
+recommendedInterval: 10
 supports2x: true
 fileName: rachio.star
 packageName: rachio

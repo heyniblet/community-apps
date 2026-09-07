@@ -3,7 +3,7 @@ id: battlemetrics-playergraph
 packageName: battlemetrics-playergraph
 name: BattleMetrics PlayerGraph
 summary: Player count 1d graph
-desc: Show the last 1d graph of the player count for a server on BattleMetrics.
+desc: Show the last 1d graph of the player count for a server on BattleMetrics. Requires an API token from a BattleMetrics account with API access.
 author: beryxz
 fileName: battlemetrics-playergraph.star
 category: gaming

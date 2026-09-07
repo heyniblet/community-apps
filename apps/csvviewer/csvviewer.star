@@ -23,11 +23,19 @@ def get_csv_data(csv_url):
     if csv_url == SAMPLE_PUBLISHED_CSV:
         return csv.read_all(SAMPLE_PUBLISHED_CSV_DATA)
 
-    rep = http.get(csv_url, ttl_seconds = 300)  # cache for 5 minutes
-    if rep.status_code != 200:
-        fail("HTTP GET request to specified CSV URL failed with status %d", rep.status_code)
+    if not valid_https_url(csv_url):
+        return [["CSV URL must use HTTPS"]]
+    rep = http.get(csv_url)
+    if rep.status_code != 200 or len(rep.body()) > 524288:
+        return [["CSV unavailable"]]
 
     return csv.read_all(rep.body())
+
+def valid_https_url(url):
+    if type(url) != "string" or len(url) > 2048 or not url.startswith("https://") or any([char in url for char in [" ", "\t", "\r", "\n"]]):
+        return False
+    parts = url.split("/")
+    return len(parts) >= 3 and parts[2] != "" and "@" not in parts[2] and ":" not in parts[2]
 
 def parse_int_from_config(config, config_id, default_value):
     unparsed_value = config.str(config_id, "")
@@ -73,6 +81,9 @@ def resize_data(data, target_height, target_width):
 def get_data_rows_cols(config):
     csv_url = config.str("csv_url", SAMPLE_PUBLISHED_CSV)
     csv_data = get_csv_data(csv_url)
+    csv_data = [[str(cell)[:1000] for cell in row] for row in csv_data if type(row) == "list"]
+    if not csv_data or max([len(row) for row in csv_data]) == 0:
+        csv_data = [[""]]
 
     # Skip the offsets if specified
     row_offset = parse_int_from_config(config, "row_offset", 0)
@@ -86,8 +97,8 @@ def get_data_rows_cols(config):
     # If row/col counts have been specified, pull those. Default to size of data from URL
     default_row_count = len(csv_data)
     default_col_count = max([len(row) for row in csv_data])
-    row_count = int(config.str("row_count", default_row_count))
-    col_count = int(config.str("col_count", default_col_count))
+    row_count = parse_int_from_config(config, "row_count", default_row_count)
+    col_count = parse_int_from_config(config, "col_count", default_col_count)
     if row_count == 0:
         row_count = default_row_count
     if col_count == 0:
@@ -277,12 +288,9 @@ def render_grid(data, row_count, col_count, config):
             # Change the width if we're going to expand to the right
             text = extract_text_color_and_background(cell_value)[0]
             if text != None and text != "" and expand_to_neighboring_cells:
-                print("Text: %s" % text)
-
                 # Count how many cells (and associated pixels) are to the right that are blank
                 for i in range(c + 1, col_count):
                     if data[r][i] == "":
-                        print("expanding into col: %d" % i)
                         col_width += col_widths[i]
                         skip_next_columns += 1
                     else:
@@ -298,8 +306,6 @@ def render_grid(data, row_count, col_count, config):
                 height = row_height,
             )
 
-            if r == 4:
-                print("holding box width: %i", col_width)
             cols.append(holding_box)
 
         row = render.Row(children = cols)
@@ -379,7 +385,7 @@ def get_schema():
             schema.Text(
                 id = "csv_url",
                 name = "CSV Url",
-                desc = "The link to download ths CSV file",
+                desc = "Direct HTTPS link to a CSV file",
                 icon = "link",
             ),
             schema.Dropdown(

@@ -76,14 +76,6 @@ measurement_options = [
     schema.Option(value = "imperial", display = "Imperial System"),
 ]
 
-sort_options = [
-    schema.Option(value = "Name", display = "Sort by Mountain Name"),
-    schema.Option(value = "Range", display = "Sort by Range name"),
-    schema.Option(value = "Elevation", display = "Sort by Mountain Elevation"),
-    schema.Option(value = "Hiking Distance", display = "Sort by Hiking Distance"),
-    schema.Option(value = "Class", display = "Sort by Class"),
-]
-
 scroll_speed_options = [
     schema.Option(
         display = "Slow Scroll",
@@ -1159,7 +1151,7 @@ def show_instructions_screen(config, layout):
     header = "Colorado 14ers"
     instructions_1 = "Screen represents State of Colorado. Random mountain is picked from a group (visited, unvisited, or all peaks). You decide if the selected mountain's outline appears."
     instructions_2 = " You check peaks you've visited. All peaks are displayed and color-coded based on your choices. Default Red is Denver, yellow is visited, grey is unvisited."
-    instructions_3 = " You can sort the list of peaks by name, range, distance, elevation or class. "
+    instructions_3 = " Mark each peak you have visited in the app settings. "
     return render.Root(
         render.Column(
             children = [
@@ -1293,14 +1285,6 @@ def get_schema():
                 default = measurement_options[0].value,
             ),
             schema.Dropdown(
-                id = "sort",
-                name = "Sort List of Mountains",
-                desc = "",
-                icon = "sort",
-                options = sort_options,
-                default = sort_options[0].value,
-            ),
-            schema.Dropdown(
                 id = "display",
                 name = "Display",
                 desc = "What to Display?",
@@ -1308,10 +1292,5 @@ def get_schema():
                 options = display_options,
                 default = display_options[0].value,
             ),
-            schema.Generated(
-                id = "visited",
-                source = "sort",
-                handler = get_sorted_mountain_toggles,
-            ),
-        ],
+        ] + get_sorted_mountain_toggles("Name"),
     )

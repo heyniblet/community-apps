@@ -1,8 +1,8 @@
 ---
 id: met-eireann
 name: Met Eireann
-summary: Met Eireann weather
-desc: Forecast from Met Eireann.
+summary: Weather for Irish locations
+desc: Forecast for Irish locations using MET Norway Locationforecast 2.0.
 author: vincentezw
 recommendedInterval: 5
 fileName: met_eireann.star

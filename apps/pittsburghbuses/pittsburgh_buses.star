@@ -25,11 +25,7 @@ TIMES_TTL_SECONDS = 15
 # use a long TTL for the stop name since they change very rarely
 STOP_NAME_TTL_SECONDS = 600
 
-PRT_API_URL = "http://realtime.portauthority.org/bustime/api/v3/"
-PTR_RT_LIMIT_URL = "&rt={rtlimit}"
-PRT_API_COMMON_PARAMS = "&format=json&rtpidatafeed=Port%20Authority%20Bus&key={key}"
-PRT_GET_TIMES_URL = "getpredictions?stpid={stopid}"
-PRT_GET_STOPS_URL = "getstops?stpid={stopid}"
+PRT_API_URL = "https://truetime.portauthority.org/bustime/api/v3/"
 
 def render_header(stop_name, inbound = True):
     """
@@ -88,14 +84,16 @@ def render_line_time(line, time, full):
     # render a box of the right size to keep the spacing correct.
     if line == None or time == None:
         return render.Box(width = LINE_WIDTH + MIN_WIDTH, height = ROW_HEIGHT)
+    line = str(line)
+    time = str(time)
 
     # Contrary to the docs, full can be an empty string.
-    if full == "":
+    if type(full) != "string" or full not in ROUTE_COLORS:
         full = "N/A"
 
     # If time won't fit, put a ? since any time longer than 999 minutes probably
     # isn't worth showing anyway.
-    t = int(time) if time != "DUE" else 0
+    t = int(time) if time.isdigit() else 0 if time == "DUE" else 999
     if t > 999:
         time = "?"
 
@@ -198,12 +196,23 @@ def validate_prt_response(rep):
     """
     if rep.status_code != 200:
         return False, None
+    body = rep.body().strip()
+    if len(body) > 524288 or not body.startswith("{") or not body.endswith("}"):
+        return False, None
     json = rep.json()
-    if "bustime-response" not in json:
+    if type(json) != "dict" or type(json.get("bustime-response")) != "dict":
         return False, json
     if "error" in json["bustime-response"]:
         return False, json
     return True, json
+
+def prt_get(endpoint, params, api_key, ttl_seconds):
+    params.update({
+        "format": "json",
+        "rtpidatafeed": "Port Authority Bus",
+        "key": api_key,
+    })
+    return http.get(PRT_API_URL + endpoint, params = params, ttl_seconds = ttl_seconds)
 
 def get_stop_name(stop_id, api_key):
     """
@@ -211,22 +220,19 @@ def get_stop_name(stop_id, api_key):
     "No stop name". This is only called if we have no predicted bus times (since otherwise we can
     get the stop name from the predicted times that are already returned).
     """
-    if api_key == None:
+    if not api_key:
         return "No API key"
 
     ok, json = validate_prt_response(
-        http.get(
-            (PRT_API_URL + PRT_GET_STOPS_URL + PRT_API_COMMON_PARAMS).format(
-                key = api_key,
-                stopid = stop_id,
-            ),
-            ttl_seconds = STOP_NAME_TTL_SECONDS,
-        ),
+        prt_get("getstops", {"stpid": stop_id}, api_key, STOP_NAME_TTL_SECONDS),
     )
     if not ok:
         return "No stop name"
 
-    return json["bustime-response"]["stop"]["stpnm"]
+    stop = json["bustime-response"].get("stop", json["bustime-response"].get("stops", []))
+    stop = stop[0] if type(stop) == "list" and stop else stop
+    name = stop.get("stpnm", "No stop name") if type(stop) == "dict" else "No stop name"
+    return name[:100] if type(name) == "string" else "No stop name"
 
 def get_times(stop_id, line_pattern, api_key):
     """
@@ -236,28 +242,15 @@ def get_times(stop_id, line_pattern, api_key):
     inbound is True if this is an inbound stop. When no predictions are available, inbound
     is always True (since this just controls the little bus graphic, it isn't a big deal).
     """
-    if api_key == None:
+    if not api_key:
         return [], "No API Key", True
 
     # Call to get predictions of stop times for the given stop. If line_pattern is not None,
     # then we add a parameter to limit the routes returned.
-    if line_pattern != None and len(line_pattern) > 0:
-        resp = http.get(
-            (PRT_API_URL + PRT_GET_TIMES_URL + PTR_RT_LIMIT_URL + PRT_API_COMMON_PARAMS).format(
-                key = api_key,
-                stopid = stop_id,
-                rtlimit = line_pattern,
-            ),
-            ttl_seconds = TIMES_TTL_SECONDS,
-        )
-    else:
-        resp = http.get(
-            (PRT_API_URL + PRT_GET_TIMES_URL + PRT_API_COMMON_PARAMS).format(
-                key = api_key,
-                stopid = stop_id,
-            ),
-            ttl_seconds = TIMES_TTL_SECONDS,
-        )
+    params = {"stpid": stop_id}
+    if line_pattern:
+        params["rt"] = line_pattern
+    resp = prt_get("getpredictions", params, api_key, TIMES_TTL_SECONDS)
     ok, json = validate_prt_response(resp)
 
     # If we failed, present some error message.
@@ -265,18 +258,21 @@ def get_times(stop_id, line_pattern, api_key):
         return [], "Failed to get times.", True
 
     # Parse the JSON to extract the predictions.
-    bus_data = json["bustime-response"]["prd"]
+    bus_data = json["bustime-response"].get("prd", [])
+    if type(bus_data) != "list":
+        return [], "Invalid response.", True
+    bus_data = [d for d in bus_data[:50] if type(d) == "dict"]
 
     # If there was at least one prediction.
     if len(bus_data) > 0:
         # use the first record to get the stop name and direction
-        stop_name = bus_data[0]["stpnm"]
-        inbound = (bus_data[0]["rtdir"] == "INBOUND")
+        stop_name = str(bus_data[0].get("stpnm", "Unknown stop"))[:100]
+        inbound = (bus_data[0].get("rtdir") == "INBOUND")
 
         # rtdd = route display name
         # prdctdn = minutes until bus arrives
         # psgld = EMPTY, HALF_EMPTY, FULL, or N/A depending on the number of people on the bus
-        lines_times = [[d["rtdd"], d["prdctdn"], d["psgld"]] for d in bus_data]
+        lines_times = [[d.get("rtdd"), d.get("prdctdn"), d.get("psgld", "N/A")] for d in bus_data]
         return lines_times, stop_name, inbound
 
     # Otherwise, if no predictions.
@@ -291,7 +287,7 @@ def ensure_valid_stop(stop_id):
     if stop_id == None or len(stop_id) == 0:
         return DEFAULT_STOP
     s = "".join([x for x in stop_id.codepoints() if x.isdigit()])
-    return s[:MAX_STOP_LEN]
+    return s[:MAX_STOP_LEN] or DEFAULT_STOP
 
 def alphanum_only(s):
     """
@@ -351,7 +347,7 @@ def get_schema():
         schema.Text(
             id = "api_key",
             name = "PRT API Key",
-            desc = "Your Port Authority of Allegheny County (PRT) API key. See http://realtime.portauthority.org/bustime/api/v3/ for details.",
+            desc = "Your Pittsburgh Regional Transit TrueTime API key. Request one at rideprt.org/business-center/developer-resources/.",
             icon = "key",
             secret = True,
         ),

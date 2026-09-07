@@ -6,29 +6,28 @@ Author: Rob Kimball
 """
 
 load("cache.star", "cache")
+load("encoding/csv.star", "csv")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-load("xpath.star", "xpath")
 
-DATEFMT = "2006-01-02T15:04:05"
-DATA_LOCS = {
-    3: "date",
-    4: "1MONTH",
-    5: "2MONTH",
-    6: "3MONTH",
-    7: "6MONTH",
-    8: "1YEAR",
-    9: "2YEAR",
-    10: "3YEAR",
-    11: "5YEAR",
-    12: "7YEAR",
-    13: "10YEAR",
-    14: "20YEAR",
-    15: "30YEAR",
+CSV_LOCS = {
+    0: "date",
+    1: "1MONTH",
+    3: "2MONTH",
+    4: "3MONTH",
+    6: "6MONTH",
+    7: "1YEAR",
+    8: "2YEAR",
+    9: "3YEAR",
+    10: "5YEAR",
+    11: "7YEAR",
+    12: "10YEAR",
+    13: "20YEAR",
+    14: "30YEAR",
 }
 
 ZOOMS = {
@@ -94,8 +93,10 @@ def linear_scale(x):
 
 def main(config):
     timezone = time.tz()
-    year = time.now().in_location(timezone).year
-    cache_id = "%s/%s" % ("us-yield-curve", year)
+    now = time.now().in_location(timezone)
+    year = now.year
+    month = now.month
+    cache_id = "%s/v2/%s/%s" % ("us-yield-curve", year, month)
     color_choice = config.get("graph_color", "Blue")
     color_vector = COLOR_VECTORS[color_choice]
     zoom = config.get("zoom", "0")
@@ -109,18 +110,17 @@ def main(config):
     updated_date = None
     dates = cache.get(cache_id)
     if not dates:
-        url = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value=%s" % year
+        period = "%d%s" % (year, ("0" + str(month))[-2:])
+        url = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/all/%s?field_tdr_date_value_month=%s&type=daily_treasury_yield_curve&page&_format=csv" % (period, period)
         print("Getting latest data from treasury.gov, %s" % url)
-        response = http.get(url)
-        raw = response.body()
-        xml = xpath.loads(raw)
-        rows = xml.query_all("/feed/entry/content")
-        updated_date = xml.query_all("/feed/updated")[0]
+        response = http.get(url, headers = {"User-Agent": "tronbyt-us-yield-curve/1.0 (https://github.com/tronbyt/apps)"})
+        if response.status_code != 200:
+            fail("Treasury request failed: %d", response.status_code)
+        rows = csv.read_all(response.body())[1:]
         dates = []
         min_yield, max_yield = 0.0, 0.0
-        for entry in rows:
-            items = entry.split("\n")
-            this = {DATA_LOCS[i]: value for i, value in enumerate(items) if i in DATA_LOCS.keys()}
+        for items in reversed(rows):
+            this = {CSV_LOCS[i]: value for i, value in enumerate(items) if i in CSV_LOCS.keys()}
             yields = []
             for key in this.keys():
                 if key != "date":
@@ -129,6 +129,7 @@ def main(config):
             max_yield = max(max_yield, max(yields))
             min_yield = min(min_yield, min(yields))
             dates.append(this)
+        updated_date = dates[-1]["date"]
 
         cache.set(cache_id, json.encode(dates), ttl_seconds = 60 * 60 * 12)
     else:
@@ -204,7 +205,7 @@ def main(config):
         ))
 
     if updated_date:
-        stats[""] = time.parse_time(updated_date, format = DATEFMT + "Z").format("Jan-2 3:04 PM")
+        stats[""] = updated_date
 
     stat_table = []
     for title, value in stats.items():

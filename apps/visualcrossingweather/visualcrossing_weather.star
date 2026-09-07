@@ -11,10 +11,10 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 # fetches weather from VisualCrossingWebServices
-def fetch_weather(location):
+def fetch_weather(location, api_key):
     # Encode location for use in URL
     loc_encoded = location.replace(" ", "%20")
-    url = "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/" + loc_encoded + "?unitGroup=us&key=5EX8LEP339SHUTGD5FCDZ2FT8&contentType=json"
+    url = "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/" + loc_encoded + "?unitGroup=us&key=" + api_key + "&contentType=json"
     resp = http.get(url = url, ttl_seconds = 900)  # cache response for 15 minutes
     if resp.status_code != 200:
         return None
@@ -23,8 +23,15 @@ def fetch_weather(location):
 def main(config):
     location_query = config.str("location_query", "1 Beacon St, Boston, MA 02108")
     display_name = config.str("display_name", "Boston, MA")
+    api_key = config.str("api_key")
 
-    weather = fetch_weather(location_query)
+    weather = fetch_weather(location_query, api_key) if api_key else {
+        "currentConditions": {
+            "temp": 72,
+            "humidity": 48,
+            "conditions": "Preview — connect provider key",
+        },
+    }
     if weather == None:
         return render.Root(
             child = render.Row(
@@ -87,6 +94,13 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
+            schema.Text(
+                id = "api_key",
+                name = "Visual Crossing API Key",
+                desc = "Create an API key at visualcrossing.com.",
+                icon = "key",
+                secret = True,
+            ),
             schema.Text(
                 id = "location_query",
                 name = "Location Address",

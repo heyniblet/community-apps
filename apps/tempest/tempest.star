@@ -489,50 +489,17 @@ def get_schema():
         ),
     ]
 
-    return [
-        {
-            "id": "token",
-            "name": "Tempest Token",
-            "description": "Connect your Tempest weather station",
-            "icon": "cloud",
-            "type": "text",
-        },
-        {
-            "id": "station",
-            "type": "generated",
-            "source": "token",
-            "handler": "get_stations",
-        },
-        {
-            "id": "secondary_temp",
-            "name": "Secondary Temperature",
-            "description": "Show Feels Like, Dew Point, or High/Low next to current temp",
-            "type": "dropdown",
-            "options": secondary_temp_options,
-            "default": "1",
-        },
-        {
-            "id": "show_labels",
-            "name": "Show Labels (Wide only)",
-            "description": "Show labels like H:/L:, HUM, RAIN, PRES on wide displays",
-            "type": "onoff",
-            "default": "true",
-        },
-        {
-            "id": "show_highlow",
-            "name": "Show High/Low (Wide only)",
-            "description": "Show today's forecast high and low on wide displays",
-            "type": "onoff",
-            "default": "true",
-        },
-        {
-            "id": "show_conditions",
-            "name": "Show Conditions",
-            "description": "Show scrolling weather condition text (replaces wind on standard display)",
-            "type": "onoff",
-            "default": "false",
-        },
-    ]
+    return schema.Schema(
+        version = "1",
+        fields = [
+            schema.Text(id = "token", name = "Tempest Token", desc = "Connect your Tempest weather station", icon = "cloud", secret = True),
+            schema.Text(id = "station", name = "Station ID", desc = "Numeric station ID shown in your Tempest account", icon = "cloud"),
+            schema.Dropdown(id = "secondary_temp", name = "Secondary Temperature", desc = "Show Feels Like, Dew Point, or High/Low next to current temp", icon = "temperatureHalf", options = secondary_temp_options, default = "1"),
+            schema.Toggle(id = "show_labels", name = "Show Labels (Wide only)", desc = "Show labels like H:/L:, HUM, RAIN, PRES on wide displays", icon = "tag", default = True),
+            schema.Toggle(id = "show_highlow", name = "Show High/Low (Wide only)", desc = "Show today's forecast high and low on wide displays", icon = "temperatureHalf", default = True),
+            schema.Toggle(id = "show_conditions", name = "Show Conditions", desc = "Show scrolling weather condition text (replaces wind on standard display)", icon = "cloud", default = False),
+        ],
+    )
 
 def get_stations(token):
     if not token:

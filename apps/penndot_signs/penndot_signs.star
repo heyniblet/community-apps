@@ -8,12 +8,23 @@ Author: radiocolin
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
 API_URL = "https://www.511pa.com/List/GetData/MessageSigns"
 FILTERS_URL = "https://www.511pa.com/List/UniqueColumnValuesForMessageSigns/MessageSigns"
 CACHE_TTL = 60
+MAX_IMAGE_BASE64_BYTES = 2 * 1024 * 1024
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_SIGNS = 2000
+
+def response_json(rep):
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES or not body.strip().startswith("{"):
+        return None
+    payload = rep.json()
+    return payload if type(payload) == "dict" else None
 
 def get_query(start = 0, length = 100, roadway = None, search = ""):
     columns = [
@@ -40,6 +51,8 @@ def get_query(start = 0, length = 100, roadway = None, search = ""):
     return json.encode(query)
 
 def fetch_signs(roadway = None, search = "", limit = 0):
+    if roadway and (type(roadway) != "string" or len(roadway) > 256):
+        return []
     signs = []
     start = 0
 
@@ -49,20 +62,19 @@ def fetch_signs(roadway = None, search = "", limit = 0):
     for _ in range(max_pages):
         query = get_query(start = start, length = 100, roadway = roadway, search = search)
         params = {"query": query, "lang": "en-US"}
-        rep = http.get(API_URL, params = params, headers = {"X-Requested-With": "XMLHttpRequest"})
-        if rep.status_code != 200:
+        rep = http.get(API_URL, params = params, headers = {"X-Requested-With": "XMLHttpRequest"}, ttl_seconds = CACHE_TTL)
+        data = response_json(rep)
+        if not data or type(data.get("data")) != "list":
             break
 
-        # Safety check: PennDOT sometimes returns HTML error pages with status 200
-        if not rep.body().strip().startswith("{"):
-            break
-
-        data = rep.json()
-        signs.extend(data.get("data", []))
+        signs.extend([sign for sign in data["data"] if type(sign) == "dict"])
+        signs = signs[:MAX_SIGNS]
+        records_filtered = data.get("recordsFiltered", len(signs))
+        records_filtered = records_filtered if type(records_filtered) == "int" else len(signs)
         if limit > 0 and len(signs) >= limit:
             signs = signs[:limit]
             break
-        if len(signs) >= data.get("recordsFiltered", 0) or len(data.get("data", [])) < 100:
+        if len(signs) >= records_filtered or len(data["data"]) < 100 or len(signs) >= MAX_SIGNS:
             break
         start += 100
     return signs
@@ -89,9 +101,16 @@ def parse_milepost(sign):
                                 mp_value += char
                             elif mp_value:
                                 break
-                        if mp_value:
+                        if mp_value and re.match(r"^\.?[0-9]+(\.[0-9]+)?$", mp_value):
                             return "MP {}".format(float(mp_value))
     return ""
+
+def decode_sign_image(value):
+    if type(value) != "string" or not value or len(value) > MAX_IMAGE_BASE64_BYTES or len(value) % 4 != 0:
+        return None
+    if not re.match(r"^[A-Za-z0-9+/]+={0,2}$", value):
+        return None
+    return base64.decode(value)
 
 def main(config):
     """Display the selected PennDOT sign message.
@@ -127,6 +146,8 @@ def main(config):
                 ),
             ),
         )
+    if len(full_id) > 512:
+        return render.Root(child = render.Text("Invalid sign", color = "#F09F00"))
 
     # Parse roadway and ID
     parts = full_id.split("|")
@@ -157,12 +178,13 @@ def main(config):
 
     # Get message, images, and roadway name
     message = selected_sign.get("message", "")
-    phase1_image = selected_sign.get("phase1Image")
-    phase2_image = selected_sign.get("phase2Image")
+    message = message[:512] if type(message) == "string" else ""
+    phase1_image = decode_sign_image(selected_sign.get("phase1Image"))
+    phase2_image = decode_sign_image(selected_sign.get("phase2Image"))
 
     # Clean up and fallback for roadway name
-    raw_roadway = selected_sign.get("roadwayName")
-    area = selected_sign.get("area")
+    raw_roadway = selected_sign.get("roadwayName") if type(selected_sign.get("roadwayName")) == "string" else None
+    area = selected_sign.get("area") if type(selected_sign.get("area")) == "string" else None
     roadway_name = raw_roadway if (raw_roadway and raw_roadway != "N/A") else (area if (area and area != "N/A") else (roadway if roadway != "ALL" else "PennDOT"))
 
     # Remove internal numeric prefixes like "(1004) "
@@ -187,13 +209,13 @@ def main(config):
 
         # Decode and create images
         img1 = render.Image(
-            src = base64.decode(phase1_image),
+            src = phase1_image,
             width = 64 * scale,
             height = 21 * scale,
         ) if phase1_image else None
 
         img2 = render.Image(
-            src = base64.decode(phase2_image),
+            src = phase2_image,
             width = 64 * scale,
             height = 21 * scale,
         ) if phase2_image else None
@@ -337,12 +359,12 @@ def get_schema():
     # Fetch unique roadways
     query = get_query(length = 100)
     params = {"query": query, "lang": "en-US"}
-    rep = http.get(FILTERS_URL, params = params, headers = {"X-Requested-With": "XMLHttpRequest"})
-    if rep.status_code == 200:
-        filter_data = rep.json()
+    rep = http.get(FILTERS_URL, params = params, headers = {"X-Requested-With": "XMLHttpRequest"}, ttl_seconds = CACHE_TTL)
+    filter_data = response_json(rep)
+    if filter_data:
         roadways = filter_data.get("roadwayName", [])
-        for road in sorted(roadways):
-            if road:
+        for road in sorted(roadways) if type(roadways) == "list" else []:
+            if type(road) == "string" and road:
                 roadway_options.append(schema.Option(display = road, value = road))
 
     return schema.Schema(

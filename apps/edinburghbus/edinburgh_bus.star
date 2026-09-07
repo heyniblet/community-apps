@@ -7,12 +7,15 @@ Author: dan0
 
 # buildifier: disable=<category_name>
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 DEFAULT_STOP = 6200201940
 DEFAULT_DISPLAY_DESTINATIONS = False
+BUS_URL = "https://lothianapi.co.uk/departureBoards/website/new?stops={}"
+MAX_RESPONSE_BYTES = 512 * 1024
 
 def get_schema():
     return schema.Schema(
@@ -36,7 +39,7 @@ def get_schema():
 
 def main(config):
     # Get stop ID from config or use the default stop ID
-    stop_id = config.get("stop_id") or DEFAULT_STOP
+    stop_id = valid_stop_id(config.get("stop_id") or DEFAULT_STOP)
     display_destinations = config.bool("display_destinations") or DEFAULT_DISPLAY_DESTINATIONS
 
     # Fetch bus information using the stop ID
@@ -105,17 +108,30 @@ def main(config):
     )
 
 def fetch_bus_info(stop_id):
-    # Construct the URL using the provided stop_id
-    url = "https://tfeapp.com/api/website/stop_times.php?stop_id=" + str(stop_id)
+    response = http.get(
+        BUS_URL.format(stop_id),
+        headers = {
+            "Accept": "application/json",
+            "Origin": "https://www.lothianbuses.com",
+            "Referer": "https://www.lothianbuses.com/",
+            "User-Agent": "Mozilla/5.0 (compatible; Niblet/1.0; +https://heyniblet.com)",
+        },
+        ttl_seconds = 30,
+    )
+    body = response.body()
+    payload = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    stop = payload[0] if type(payload) == "list" and payload and type(payload[0]) == "dict" else {}
+    services = stop.get("services")
+    return {
+        "stop": {"name": "Stop", "direction": str(stop_id)[-6:]},
+        "services": services[:100] if type(services) == "list" else [],
+    }
 
-    # Dang, no cached data.  Writing json to cache as string, 30 second TTL (it's live bus times...)
-    response = http.get(url, ttl_seconds = 30)
-    if response.status_code != 200:
-        # We need to fail, we have no cached data and no API response
-        fail("API request failed with status %d", response.status_code)
-    bus_info = response.json()
-
-    return bus_info
+def valid_stop_id(value):
+    value = str(value or "").strip()
+    if len(value) < 6 or len(value) > 12 or not value.isdigit():
+        return str(DEFAULT_STOP)
+    return value
 
 def time_left(minutes):
     # Return "Due" if the time left is 0 or negative, otherwise return the time left in minutes
@@ -129,31 +145,39 @@ def time_left(minutes):
 
 def get_stop_text(data):
     # Format and return the stop name and direction as a string
-    return data["stop"]["name"] + " " + data["stop"]["direction"]
+    stop = data.get("stop")
+    return (str(stop.get("name") or "Stop") + " " + str(stop.get("direction") or ""))[:80] if type(stop) == "dict" else "Stop unavailable"
 
 def next_buses(data, display_destinations):
     # Initialize an empty list to store the formatted bus information
     lines = []
 
     # Iterate through the services in the data
-    for service in data["services"]:
+    services = data.get("services")
+    for service in services if type(services) == "list" else []:
+        if type(service) != "dict":
+            continue
         line = []
 
         # Get the departures for each service
-        next_three_departures = service["departures"]
+        next_three_departures = service.get("departures")
+        if type(next_three_departures) != "list":
+            continue
 
         # Format the minutes until each departure
         minutes_list = []
-        for departure in next_three_departures:
+        for departure in next_three_departures[:3]:
+            if type(departure) != "dict" or type(departure.get("minutes")) not in ["int", "float"]:
+                continue
             readable_time = time_left(int(departure["minutes"]))
             if display_destinations:
-                bus_text = "" + departure["destination"] + " " + readable_time
+                bus_text = str(departure.get("destination") or "")[:80] + " " + readable_time
             else:
                 bus_text = readable_time
 
             minutes_list.append(bus_text)
 
-        line = [service["service_name"], " · ".join(minutes_list)]
+        line = [str(service.get("service_name") or "?")[:8], " · ".join(minutes_list)]
 
         # Join the formatted minutes and add the result to the list
         lines.append(line)

@@ -13,22 +13,18 @@ load("time.star", "time")
 
 ERROR_IMAGE = ERROR_IMAGE_ASSET.readall()
 
-# Cache constants
-UPCOMING_LAUNCH_CACHE_KEY = "upcoming_launch"
-UPCOMING_LAUNCH_IMAGE_CACHE_KEY = "upcoming_launch_image"
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
 # Development config options
 DEV_CONFIG_KEY = "dev"
-SKIP_CACHE_CONFIG_KEY = "skip_cache"
 
 # Public config options
 API_KEY_CONFIG_KEY = "api_key"
 SEARCH_CONFIG_KEY = "search"
 
-# Launch Library 2 API URL templates
-DEV_DATA_SOURCE_URL_TEMPLATE = "https://lldev.thespacedevs.com/2.2.0/launch/upcoming?search={}&mode=normal&limit=1"
-DATA_SOURCE_URL_TEMPLATE = "https://ll.thespacedevs.com/2.2.0/launch/upcoming?search={}&mode=normal&limit=1"
+# Launch Library 2 API URLs
+DEV_DATA_SOURCE_URL = "https://lldev.thespacedevs.com/2.3.0/launches/upcoming/"
+DATA_SOURCE_URL = "https://ll.thespacedevs.com/2.3.0/launches/upcoming/"
 
 # Background image for error screen
 
@@ -134,29 +130,27 @@ def get_upcoming_launch(config):
     Returns:
         dict: A dictionary of data from the Launch Library API.
     """
-    skip_cache = config.get(SKIP_CACHE_CONFIG_KEY) or False
 
     # Determine which API to hit, the real API has a 15 req/hr rate limit.
     # The dev API has no rate limit, but stale data.
     is_dev = config.get(DEV_CONFIG_KEY)
     if is_dev:
-        url_template = DEV_DATA_SOURCE_URL_TEMPLATE
+        url = DEV_DATA_SOURCE_URL
     else:
-        url_template = DATA_SOURCE_URL_TEMPLATE
+        url = DATA_SOURCE_URL
 
     # Permit a search if user provides their own API key, or if hitting the dev API.
     api_key = config.get(API_KEY_CONFIG_KEY)
     search = "spacex"
     custom_search = config.get(SEARCH_CONFIG_KEY)
     if (api_key or is_dev) and custom_search and custom_search.lower() != "spacex":
-        print("Using custom search \"{}\"".format(custom_search))
         search = custom_search
 
     headers = {}
     if api_key:
         headers["Authorization"] = "Token {}".format(api_key)
 
-    response = http.get(url_template.format(search, headers = headers), ttl_seconds = CACHE_TTL_SECONDS if not skip_cache else 0)
+    response = http.get(url, headers = headers, params = {"search": search, "mode": "normal", "limit": "1"})
     if response.status_code != 200:
         return None
 
@@ -182,9 +176,12 @@ def get_launch_image(launch):
         str: A string of binary image data.
     """
 
-    image_url = launch.get("image")
+    image_data = launch.get("image")
+    image_url = image_data.get("image_url") if type(image_data) == "dict" else image_data
 
     if not image_url or type(image_url) != "string":
+        return None
+    if not image_url.startswith("https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/"):
         return None
 
     response = http.get(image_url, ttl_seconds = CACHE_TTL_SECONDS)
@@ -212,7 +209,7 @@ def get_launch_text(launch):
     name = launch.get("mission", {}).get("name", None)
     status = launch.get("status", {}).get("abbrev", None)
     status_color = "#a7a9ac"
-    if status == "Go" or "Success":
+    if status in ["Go", "Success"]:
         status_color = "#008f0c"
     elif status == "Failure":
         status_color = "#8f0926"

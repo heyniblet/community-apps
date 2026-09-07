@@ -5,7 +5,6 @@ Description: Displays a random emoji and its unique short text annotation from t
 Author: Cedric Sam
 """
 
-load("cache.star", "cache")
 load("compress/gzip.star", "gzip")
 load("encoding/base64.star", "base64")
 load("encoding/csv.star", "csv")
@@ -30,6 +29,12 @@ test_emoji = None
 EMOJI_LIST_URL = "https://emoji-lingo.s3.amazonaws.com/emoji-list-%s.csv"
 EMOJI_NAMES_URL = "https://emoji-lingo.s3.amazonaws.com/locale/%s.csv"
 EMOJI_BASE64_URL = "https://emoji-lingo.s3.amazonaws.com/base64/%s/%s.txt"
+LOCALES = ["en", "en_GB", "en_AU", "af", "da", "nl", "fi", "fil", "fr", "fr_CA", "de", "hu", "id", "ga", "it", "ms", "no", "pt", "pt_PT", "es", "es_MX", "sw", "sv", "cy"]
+VENDORS = ["apple", "google", "microsoft"]
+MAX_COMPRESSED_BYTES = 256 * 1024
+MAX_CSV_BYTES = 2 * 1024 * 1024
+MAX_ROWS = 5000
+MAX_IMAGE_BASE64_BYTES = 256 * 1024
 
 def normalizeCode(code):
     return re.sub(r" +", "-", code)
@@ -39,114 +44,79 @@ def getEmojiList(vendor):
     emoji_list_url_vendor = EMOJI_LIST_URL % vendor
     print("Making request for emoji with base64 list to %s" % emoji_list_url_vendor)
     rep = http.get(emoji_list_url_vendor, ttl_seconds = 86400)
-    if rep.status_code != 200:
-        fail("couldn't get list of emojis with status %d" % rep.status_code)
+    if rep.status_code != 200 or len(rep.body()) < 18 or len(rep.body()) > MAX_COMPRESSED_BYTES or rep.body()[:1] != "\u001f":
+        return []
     rep_body_raw = rep.body()
     rep_body = str(gzip.decompress(rep_body_raw))  # the emoji list emoji is gzipped, despite url
+    if len(rep_body) > MAX_CSV_BYTES:
+        return []
 
-    return csv.read_all(rep_body, skip = 1)
+    return csv.read_all(rep_body, skip = 1)[:MAX_ROWS]
 
 def getEmojiNames(locale):
     # No cache found, try to get the file
     print("Making request for emoji names to %s" % (EMOJI_NAMES_URL % locale))
     rep_names = http.get(EMOJI_NAMES_URL % locale, ttl_seconds = 86400)
-    if rep_names.status_code != 200:
-        fail("couldn't get list of emoji names with status %d" % rep_names.status_code)
+    if rep_names.status_code != 200 or len(rep_names.body()) < 18 or len(rep_names.body()) > MAX_COMPRESSED_BYTES or rep_names.body()[:1] != "\u001f":
+        return []
     rep_names_body_raw = rep_names.body()
     rep_names_body = str(gzip.decompress(rep_names_body_raw))  # the names csv is gzipped, despite url
 
-    return csv.read_all(rep_names_body, skip = 1)
+    if len(rep_names_body) > MAX_CSV_BYTES:
+        return []
+    return csv.read_all(rep_names_body, skip = 1)[:MAX_ROWS]
+
+def error_root(message):
+    return render.Root(child = render.Box(render.WrappedText(message, font = "tom-thumb")))
+
+def valid_base64(value):
+    if type(value) != "string" or not value or len(value) > MAX_IMAGE_BASE64_BYTES or len(value) % 4 != 0:
+        return False
+    return all([char in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for char in value.elems()])
 
 def main(config):
-    locale = config.str("locale")
-    if locale == None:
+    locale = config.str("locale", default_locale)
+    if locale not in LOCALES:
         locale = default_locale
-    vendor = config.str("vendor")
-    if vendor == None:
+    vendor = config.str("vendor", default_vendor)
+    if vendor not in VENDORS:
         vendor = default_vendor
-    print("Vendor: %s" % vendor)
 
-    random_emoji_base64 = None
+    emoji_list = getEmojiList(vendor)
+    if not emoji_list:
+        return error_root("Emoji data unavailable")
+    emoji_names = getEmojiNames(locale)
+    available_codes = {}
+    for row in emoji_list:
+        if len(row) >= 2:
+            available_codes[row[1]] = True
 
-    # Try to find data from cache...
-    # Also caching by vendor, since base64 would be different...
-    # An emoji caches by its base64 in a given language, but it
-    # may be possible it won’t have text in another (although
-    # very unlikely it won’t find anything per ones picked)
-    random_emoji_cache_name = "random_emoji-%s" % vendor
-    random_emoji_csv_data_cached = cache.get(random_emoji_cache_name)
+    valid_emoji_data = []
+    for row in emoji_names:
+        if len(row) >= 2 and normalizeCode(row[0]) in available_codes:
+            valid_emoji_data.append(row)
+
     name_item = None
-    if random_emoji_csv_data_cached != None:
-        print("Cache for random emoji is valid...")
-        random_emoji_data_cached = csv.read_all(random_emoji_csv_data_cached, fields_per_record = 2)
-        if len(random_emoji_data_cached) > 0:
-            print("Random emoji cache contents: ", random_emoji_data_cached)
-            random_emoji_cached = random_emoji_data_cached[0]
-            emoji_names = getEmojiNames(locale)
-            for item in emoji_names:
-                if random_emoji_cached[0] == item[0]:
-                    random_emoji_base64 = random_emoji_cached[1]
-                    name_item = item
-                    break
-
-    # name_item not set, because not found on cache
+    if test_emoji != None:
+        test_code = None
+        for row in emoji_list:
+            if len(row) >= 2 and str(test_emoji) == row[0]:
+                test_code = row[1]
+                break
+        for row in valid_emoji_data:
+            if normalizeCode(row[0]) == test_code:
+                name_item = row
+                break
+    if name_item == None and valid_emoji_data:
+        name_item = valid_emoji_data[random.number(0, len(valid_emoji_data) - 1)]
     if name_item == None:
-        # get emoji lists (emoji base64 and the names per locale)
-        emoji_list = getEmojiList(vendor)
-        emoji_names = getEmojiNames(locale)
-        valid_emoji_base64_list = list()
-        for code in emoji_list:
-            valid_emoji_base64_list.append(code[1])
+        return error_root("Emoji data unavailable")
 
-        valid_emoji_data = list()
-        for emoji_name_data in emoji_names:
-            normalized_emoji_unicode = normalizeCode(emoji_name_data[0])
-            if (normalized_emoji_unicode in valid_emoji_base64_list):
-                valid_emoji_data.append(emoji_name_data)
-
-        # Clause for using a test emoji defined at top
-        if test_emoji != None:
-            test_emoji_code = None
-            for code in emoji_list:
-                if str(test_emoji) == code[0]:
-                    test_emoji_code = code[1]
-                    break
-            if test_emoji_code != None:
-                for emoji_name_data in emoji_names:
-                    normalized_emoji_unicode = normalizeCode(emoji_name_data[0])
-                    if normalized_emoji_unicode == test_emoji_code:
-                        name_item = emoji_name_data
-                        break
-
-        # Pick an emoji at random (hopefully a good one)
-        if name_item == None:
-            number_valid_emojis = len(valid_emoji_data)
-            rand_index = random.number(0, number_valid_emojis)
-            print("Picking from %d random emojis... random index was %d" % (number_valid_emojis, rand_index))
-            name_item = valid_emoji_data[rand_index]
-
-        # Get the base64 text file
-        base64_url = EMOJI_BASE64_URL % (vendor, normalizeCode(name_item[0]))
-        print("Making request for emoji base64 to %s" % base64_url)
-        rep_base64 = http.get(base64_url)
-        if rep_base64.status_code != 200:
-            fail("couldn't get emoji text file with status %d" % rep_base64.status_code)
-        random_emoji_base64 = rep_base64.body()
-
-        cache.set(
-            "random_emoji-%s" % vendor,
-            "%s,%s" % (name_item[0], random_emoji_base64),  # as a one-line CSV...
-            ttl_seconds = 30,
-        )  # caching 30 seconds
-
-    if name_item != None:
-        shortName = name_item[1]
-    else:
-        fail("Emoji has no name")
-
-    # Print some diagaostics...
-    print(random_emoji_base64)
-    print(name_item)
+    rep_base64 = http.get(EMOJI_BASE64_URL % (vendor, normalizeCode(name_item[0])), ttl_seconds = 86400)
+    random_emoji_base64 = rep_base64.body().strip() if rep_base64.status_code == 200 else ""
+    if not valid_base64(random_emoji_base64):
+        return error_root("Emoji image unavailable")
+    shortName = str(name_item[1])[:120]
 
     # Finally decode the emoji's base64
     decoded_emoji = base64.decode(random_emoji_base64)

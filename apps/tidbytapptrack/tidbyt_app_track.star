@@ -1,9 +1,4 @@
-"""
-Applet: Tidbyt App Track
-Summary: Track apps on Tidbyt
-Description: Track the Tidbyt app page and see new listings.
-Author: UnBurn
-"""
+"""Track new apps in Tidbyt's public app catalog."""
 
 load("cache.star", "cache")
 load("encoding/json.star", "json")
@@ -14,215 +9,106 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 TIDBYT_LOGO = TIDBYT_LOGO_ASSET.readall()
-
-API_URI = "https://api.tidbyt.com/v0"
-
-ONE_DAY = 86400
-TWELVE_HOURS = 43200
-
-COL_1_WIDTH = 15
-COL_2_WIDTH = 64 - COL_1_WIDTH
-
+API_URL = "https://api.tidbyt.com/v0/apps"
 NEW_APPS_CACHE_KEY = "NEW_APPS_CACHE_KEY"
-NEW_APPS_CACHE_TTL = ONE_DAY * 2
-
 KNOWN_APPS_CACHE_KEY = "KNOWN_APPS_CACHE_KEY"
-KNOWN_APPS_CACHE_TTL = ONE_DAY * 30
-
 TEAL_COLOR = "#78DECC"
 PINK_COLOR = "#FFB4F5"
 PURPLE_COLOR = "#7E8AF8"
 
-fake_data = [
-    {
-        "id": "invalid-api-key",
-        "name": "Invalid API Key",
-        "description": "Your API key is not valid. Please try again!",
-        "private": False,
-        "organizationID": "",
-        "version": "a476ac314b231c3bf520e3ca91e30f0d9ea7d0d5",
-        "developer": "UnBurn",
-    },
-    {
-        "id": "chesscom-elo",
-        "name": "Chess.com ELO",
-        "description": "Track your ELO from Chess.com from a variety of game types.",
-        "private": False,
-        "organizationID": "",
-        "version": "8bc0d4454a6da80a67a85354ec24db2cd0bc9c32",
-        "developer": "UnBurn",
-    },
-    {
-        "id": "wiki-page-today",
-        "name": "Wiki Page Today",
-        "description": "Display Wikipedia's Featured Article of the Day in a Tidbyt format.",
-        "private": False,
-        "organizationID": "",
-        "version": "d47a248c1b679fcc40352342adac075cd315a65e",
-        "developer": "UnBurn",
-    },
-    {
-        "id": "retro-game-goals",
-        "name": "Retro Game Goals",
-        "description": "Display RetroAchievements for a random game on a random console.",
-        "private": False,
-        "organizationID": "",
-        "version": "8bc0d4454a6da80a67a85354ec24db2cd0bc9c32",
-        "developer": "UnBurn",
-    },
-]
+def normalize_apps(value):
+    if type(value) != "list":
+        return []
+    apps = []
+    for app in value[:2000]:
+        if type(app) != "dict" or app.get("private") == True:
+            continue
+        app_id = app.get("id")
+        name = app.get("name")
+        description = app.get("description")
+        if type(app_id) != "string" or not app_id or len(app_id) > 128 or type(name) != "string":
+            continue
+        apps.append({
+            "id": app_id,
+            "name": name[:120],
+            "description": description[:500] if type(description) == "string" else "",
+        })
+    return apps
 
-def get_apps(api_key):
-    endpoint = "%s/apps" % (API_URI)
-    response = http.get(endpoint, headers = {"Authorization": "Bearer %s" % api_key}, ttl_seconds = TWELVE_HOURS)
-    if response.status_code != 200:
-        return fake_data
+def get_apps():
+    response = http.get(API_URL, headers = {"Accept": "application/json"}, ttl_seconds = 3600)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 4194304:
+        return []
+    payload = json.decode(body, {})
+    return normalize_apps(payload.get("apps") if type(payload) == "dict" else None)
 
-    response_json = response.json()
-    if "apps" not in response_json:
-        return fake_data
-    return response_json["apps"]
+def cached_apps(key):
+    value = cache.get(key)
+    return normalize_apps(json.decode(value, [])) if type(value) == "string" and len(value) <= 1048576 else []
 
-def shorten_description(extract):
-    MAX_LENGTH = 75
-
-    sentences = extract.split(".")
-    ret = sentences[0] + "."
-    if len(ret) > MAX_LENGTH + 3:
-        return ret[:MAX_LENGTH - 3] + "..."
-    for s in sentences[1:]:
-        new_sentence = ret + s + "."
-        if s != "" and len(new_sentence) <= MAX_LENGTH:
-            ret = new_sentence
-        else:
-            break
-    return ret
-
-def render_n_random_apps(apps, n):
-    renderable_apps = [app for app in apps]
-    ret = []
-    for _ in range(n):
-        new_number = random.number(0, len(renderable_apps) - 1)
-        app = renderable_apps[new_number]
-        new_render = render_app_info(app)
-        ret.append(new_render)
-        renderable_apps.remove(app)
-    return ret
-
-def render_app_info(app):
-    name = app["name"]
-    description = shorten_description(app["description"])
-    return render.Padding(render.Column(
-        children = [
-            render.WrappedText(name, font = "tom-thumb", color = TEAL_COLOR, width = COL_2_WIDTH - 3),
-            render.WrappedText(description, font = "tom-thumb", color = PINK_COLOR, width = COL_2_WIDTH - 3),
-        ],
-    ), pad = (0, 0, 0, 1))
+def cached_ids():
+    value = cache.get(KNOWN_APPS_CACHE_KEY)
+    values = json.decode(value, []) if type(value) == "string" and len(value) <= 1048576 else []
+    result = {}
+    if type(values) == "list":
+        for item in values[:2000]:
+            app_id = item.get("id") if type(item) == "dict" else item
+            if type(app_id) == "string" and len(app_id) <= 128:
+                result[app_id] = True
+    return result
 
 def get_new_apps(apps):
-    new_apps = cache.get(NEW_APPS_CACHE_KEY)
-    known_apps = cache.get(KNOWN_APPS_CACHE_KEY)
+    known = cached_ids()
+    if not known:
+        return []
+    merged = {}
+    for app in cached_apps(NEW_APPS_CACHE_KEY) + apps:
+        if app["id"] not in known:
+            merged[app["id"]] = app
+    return merged.values()[:100]
 
-    if new_apps == None:
-        new_apps = "[]"
-    new_apps = json.decode(new_apps)
+def shorten_description(description):
+    sentence = description.split(".")[0] + "."
+    return sentence if len(sentence) <= 75 else sentence[:72] + "..."
 
-    if known_apps == None:
-        known_apps = "[]"
-    known_apps = json.decode(known_apps)
-
-    hashed_known_apps = {}
-    for app in known_apps:
-        hashed_known_apps[app["id"]] = app
-
-    hashed_new_apps = {}
-    for app in new_apps:
-        hashed_new_apps[app["id"]] = app
-
-    unkwown_apps = [app for app in apps if app["id"] not in hashed_known_apps]
-    total_new_apps = new_apps + [app for app in unkwown_apps if app["id"] not in hashed_new_apps]
-
-    if len(total_new_apps) >= len(apps):
-        total_new_apps = []
-
-    if len(total_new_apps) > len(new_apps):
-        cache.set(NEW_APPS_CACHE_KEY, json.encode(total_new_apps), ttl_seconds = NEW_APPS_CACHE_TTL)
-    return total_new_apps
-
-def update_known_apps(apps):
-    cache.set(KNOWN_APPS_CACHE_KEY, json.encode(apps), ttl_seconds = KNOWN_APPS_CACHE_TTL)
+def render_random(apps, count):
+    choices = list(apps)
+    children = []
+    for _ in range(min(count, len(choices))):
+        index = random.number(0, len(choices) - 1)
+        app = choices.pop(index)
+        children.append(render.Padding(child = render.Column(children = [
+            render.WrappedText(app["name"], font = "tom-thumb", color = TEAL_COLOR, width = 46),
+            render.WrappedText(shorten_description(app["description"]), font = "tom-thumb", color = PINK_COLOR, width = 46),
+        ]), pad = (0, 0, 0, 1)))
+    return children
 
 def main(config):
-    api_key = config.get("api_key")
-    new_apps_first = config.bool("new_apps_first")
-    apps = get_apps(api_key)
-
+    apps = get_apps()
+    if not apps:
+        return render.Root(child = render.WrappedText("Tidbyt catalog unavailable", width = 64, align = "center"))
     new_apps = get_new_apps(apps)
-    apps_count = len(apps)
-    new_apps_count = len(new_apps)
+    cache.set(NEW_APPS_CACHE_KEY, json.encode(new_apps), ttl_seconds = 172800)
+    cache.set(KNOWN_APPS_CACHE_KEY, json.encode([app["id"] for app in apps]), ttl_seconds = 2592000)
 
-    update_known_apps(apps)
-
-    header = render.Stack(
-        children = [
-            render.Box(width = COL_1_WIDTH, height = 32, color = "#000000"),
-            render.Column(
-                children = [
-                    render.Image(src = TIDBYT_LOGO, height = 8, width = 6),
-                    render.WrappedText(content = "apps", font = "tom-thumb", width = COL_1_WIDTH),
-                    render.WrappedText(content = "%s" % apps_count, font = "tom-thumb", width = COL_1_WIDTH, color = TEAL_COLOR),
-                    render.WrappedText(content = "new", font = "tom-thumb", width = COL_1_WIDTH),
-                    render.WrappedText(content = "%s" % new_apps_count, font = "tom-thumb", width = COL_1_WIDTH, color = TEAL_COLOR),
-                ],
-            ),
-        ],
-    )
-    rendered_children = []
-    if new_apps_first:
-        rendered_children += render_n_random_apps(new_apps, len(new_apps))
-
-    rendered_children += render_n_random_apps(apps, len(apps))
-
-    body = render.Marquee(
-        width = 44,
-        height = 128,
-        offset_start = 8,
-        scroll_direction = "vertical",
-        child = render.Column(
-            children = rendered_children,
-        ),
-    )
-
-    line = render.Padding(render.Box(
-        width = 1,
-        height = 32,
-        color = PURPLE_COLOR,
-    ), pad = (1, 0, 1, 0))
-
-    return render.Root(
-        delay = 1,
-        child = render.Row(
-            children = [header, line, body],
-        ),
-    )
+    header = render.Stack(children = [
+        render.Box(width = 15, height = 32, color = "#000000"),
+        render.Column(children = [
+            render.Image(src = TIDBYT_LOGO, height = 8, width = 6),
+            render.WrappedText("apps", font = "tom-thumb", width = 15),
+            render.WrappedText(str(len(apps)), font = "tom-thumb", width = 15, color = TEAL_COLOR),
+            render.WrappedText("new", font = "tom-thumb", width = 15),
+            render.WrappedText(str(len(new_apps)), font = "tom-thumb", width = 15, color = TEAL_COLOR),
+        ]),
+    ])
+    children = render_random(new_apps, 5) if config.bool("new_apps_first") else []
+    children.extend(render_random(apps, 10))
+    body = render.Marquee(width = 44, height = 128, offset_start = 8, scroll_direction = "vertical", child = render.Column(children = children))
+    divider = render.Padding(render.Box(width = 1, height = 32, color = PURPLE_COLOR), pad = (1, 0, 1, 0))
+    return render.Root(delay = 1, max_age = 3600, child = render.Row(children = [header, divider, body]))
 
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [
-            schema.Text(
-                id = "api_key",
-                name = "Tidbyt API key",
-                desc = "Found in Settings > General > Get API Key",
-                icon = "key",
-                secret = True,
-            ),
-            schema.Toggle(
-                id = "new_apps_first",
-                name = "New apps first",
-                desc = "Display new apps at the top of the list",
-                icon = "seedling",
-                default = False,
-            ),
-        ],
-    )
+    return schema.Schema(version = "1", fields = [
+        schema.Toggle(id = "new_apps_first", name = "New apps first", desc = "Display newly listed apps first.", icon = "seedling", default = False),
+    ])

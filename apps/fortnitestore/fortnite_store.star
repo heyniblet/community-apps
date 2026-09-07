@@ -5,6 +5,7 @@ Description: See items currently featured in the Fortnite store.
 Author: naomi-nori
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/default_item.png", DEFAULT_ITEM_IMAGE_ASSET = "file")
 load("random.star", "random")
@@ -22,33 +23,46 @@ color_key = {
     "transcendent": "#da505d",
 }
 
-default_item = {
-    "vBucks": 800.00,
-    "rarity": "uncommon",
-    "name": "Tinseltoes",
-    "image": DEFAULT_ITEM_IMAGE_ASSET.readall(),
-}
-
 def main(config):
     api_key = config.get("api_key")
-    if api_key:
-        store_api = "https://api.fortnitetracker.com/v1/store"
-        items_resp = http.get(store_api, headers = {"TRN-Api-Key": api_key}, ttl_seconds = 120)
-        items = items_resp.json()
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
+        return render.Root(child = render.WrappedText("Add API key", color = "#ff6666"))
 
-        picked = random.number(0, len(items) - 1)
-        picked_item = items[picked]
-    else:
-        picked_item = default_item
+    items_resp = http.get(
+        "https://prod.api-fortnite.com/api/v1/shop",
+        headers = {"x-api-key": api_key},
+        params = {"lang": "en"},
+    )
+    if items_resp.status_code != 200 or len(items_resp.body()) > 2 * 1024 * 1024:
+        return render.Root(child = render.WrappedText("Shop unavailable", color = "#ff6666"))
+
+    payload = json.decode(items_resp.body(), {})
+    storefronts = payload.get("storefronts", []) if type(payload) == "dict" else []
+    items = []
+    if type(storefronts) == "list":
+        for storefront in storefronts[:50]:
+            entries = storefront.get("catalogEntries", []) if type(storefront) == "dict" else []
+            if type(entries) != "list":
+                continue
+            for entry in entries[:500]:
+                item = normalize_item(entry)
+                if item:
+                    items.append(item)
+                if len(items) >= 1000:
+                    break
+            if len(items) >= 1000:
+                break
+
+    if not items:
+        return render.Root(child = render.WrappedText("No shop items", color = "#ffcc66"))
+
+    picked_item = items[random.number(0, len(items) - 1)]
 
     color = color_key.get(picked_item["rarity"].lower())
     if color == None:
         color = "#fff"
 
-    if "imageUrl" in picked_item:
-        image = get_cachable_data(picked_item["imageUrl"])
-    else:
-        image = picked_item["image"]
+    image = picked_item["image"]
 
     return render.Root(
         render.Stack(
@@ -81,7 +95,7 @@ def main(config):
                                 main_align = "end",
                                 children = [
                                     render.Text(content = "V", color = "#34c0eb"),
-                                    render.Text(content = str(picked_item["vBucks"])[0:-2]),
+                                    render.Text(content = str(picked_item["vBucks"])),
                                 ],
                             ),
                         ),
@@ -91,12 +105,23 @@ def main(config):
         ),
     )
 
-def get_cachable_data(url, ttl_seconds = 3600):
-    res = http.get(url = url, ttl_seconds = ttl_seconds)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
+def normalize_item(entry):
+    if type(entry) != "dict":
+        return None
+    grants = entry.get("itemGrants", [])
+    cosmetic = grants[0].get("cosmetic", {}) if type(grants) == "list" and grants and type(grants[0]) == "dict" else {}
+    prices = entry.get("prices", [])
+    price = prices[0].get("finalPrice", 0) if type(prices) == "list" and prices and type(prices[0]) == "dict" else 0
+    name = cosmetic.get("displayName") or cosmetic.get("name") or entry.get("title")
+    rarity = cosmetic.get("rarity", "handmade")
+    if type(name) != "string" or not name or type(rarity) != "string" or type(price) not in ["int", "float"] or price < 0:
+        return None
+    return {
+        "vBucks": min(int(price), 1000000),
+        "rarity": rarity[:32],
+        "name": name[:120],
+        "image": DEFAULT_ITEM_IMAGE_ASSET.readall(),
+    }
 
 def get_schema():
     return schema.Schema(
@@ -105,7 +130,7 @@ def get_schema():
             schema.Text(
                 id = "api_key",
                 name = "API Key",
-                desc = "Your Fortnite Tracker API key.",
+                desc = "Your api-fortnite.com API key.",
                 icon = "key",
                 secret = True,
             ),

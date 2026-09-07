@@ -5,6 +5,7 @@ Description: Displays the next due or overdue task from todoist.
 Author: alisdair(https://discuss.tidbyt.com/t/todoist-integration/502/5), Updated by: akeslo and oleksii-ivanov
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/zen_icon.png", ZEN_ICON_ASSET = "file")
 load("render.star", "render")
@@ -14,43 +15,50 @@ load("time.star", "time")
 ZEN_ICON = ZEN_ICON_ASSET.readall()
 
 TODOIST_API_TASKS_URL = "https://api.todoist.com/api/v1/tasks/filter"
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_TOKEN_BYTES = 4096
 
 MODEL_KEY_TEXT = "text"
 MODEL_KEY_DUE = "due"
 MODEL_KEY_ZEN = False
 
-CACHE_KEY_MODEL = "todoist_model"
+def render_date(date_string):
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    month = int(date_string[5:7])
+    return "%s-%s" % (months[month - 1], date_string[8:10])
 
-# Load Icon as Base 64
-
-def dateStringToTime(dateString):
-    return time.parse_time(dateString, "2006-01-02")
-
-def renderDate(dateString):
-    return dateStringToTime(dateString).format("Jan-02")
-
-def isOverdue(date):
-    current = time.now()
-    currentDay = time.time(year = current.year, month = current.month, day = current.day)
-    return date < currentDay
+def valid_date(date_string):
+    return type(date_string) == "string" and len(date_string) == 10 and date_string[4] == "-" and date_string[7] == "-" and date_string[0:4].isdigit() and date_string[5:7].isdigit() and date_string[8:10].isdigit() and int(date_string[5:7]) >= 1 and int(date_string[5:7]) <= 12 and int(date_string[8:10]) >= 1 and int(date_string[8:10]) <= 31
 
 def main(config):
     # Download tasks
 
-    TOKEN = config.get("TodoistAPIToken", "False")
-    resp = http.get(TODOIST_API_TASKS_URL, headers = {"Authorization": "Bearer " + TOKEN}, params = {"query": "overdue | today"})
+    token = config.get("TodoistAPIToken", "")
+    token = token.strip() if type(token) == "string" else ""
+    if not token or len(token) > MAX_TOKEN_BYTES or "\r" in token or "\n" in token:
+        return render.Root(child = render.WrappedText(content = "Add your Todoist API token"))
 
-    if resp.status_code == 200:
-        data = resp.json()
-        parsed = data.get("results", [])
+    resp = http.get(TODOIST_API_TASKS_URL, headers = {"Authorization": "Bearer " + token}, params = {"query": "overdue | today"})
+    body = resp.body()
+
+    if resp.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES:
+        data = json.decode(body, {})
+        parsed = data.get("results", []) if type(data) == "dict" else []
+        if type(parsed) != "list":
+            parsed = []
 
         # Compute model to display
         model = None
-        for task in parsed:
-            due = dateStringToTime(task["due"]["date"])
-            thisModel = {MODEL_KEY_TEXT: task["content"]}
-            if isOverdue(due):
-                thisModel.update([(MODEL_KEY_DUE, task["due"]["date"])])
+        for task in parsed[:100]:
+            if type(task) != "dict" or type(task.get("due")) != "dict":
+                continue
+            due = task["due"].get("date")
+            content = task.get("content")
+            if not valid_date(due) or type(content) != "string" or not content:
+                continue
+            thisModel = {MODEL_KEY_TEXT: content[:500]}
+            if due < time.now().format("2006-01-02"):
+                thisModel.update([(MODEL_KEY_DUE, due)])
             if model == None:
                 model = thisModel
                 continue
@@ -58,7 +66,7 @@ def main(config):
                 if thisModel.get(MODEL_KEY_DUE) != None:
                     model = thisModel
                     continue
-            elif due < dateStringToTime(model[MODEL_KEY_DUE]):
+            elif due < model[MODEL_KEY_DUE]:
                 model = thisModel
                 continue
         if model == None:
@@ -83,7 +91,7 @@ def main(config):
         if model.get(MODEL_KEY_DUE) != None:
             children.append(
                 render.Text(
-                    content = "Late: " + renderDate(model.get(MODEL_KEY_DUE)),
+                    content = "Late: " + render_date(model.get(MODEL_KEY_DUE)),
                     color = "#f00",
                     font = "CG-pixel-4x5-mono",
                 ),

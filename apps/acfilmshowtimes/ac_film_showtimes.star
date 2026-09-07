@@ -5,6 +5,7 @@ Description: Displays movie showtimes for American Cinematheque theaters in Los 
 Author: Platt Thompson & Jim Cummings
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/camera_icon.png", CAMERA_ICON_ASSET = "file")
 load("render.star", "render")
@@ -24,6 +25,13 @@ THEATER_CODES = {
     "aero theatre": 54,
     "egyption theatre": 55,
     "other": 68,
+}
+
+THEATER_TITLES = {
+    "los feliz 3": "Los Feliz 3",
+    "aero theatre": "Aero Theatre",
+    # Preserve the original saved option value while fixing its display label.
+    "egyption theatre": "Egyptian Theatre",
 }
 
 # Showtimes will change color as they approach and gradually become more red.
@@ -59,36 +67,44 @@ SHOWTIME_COLORS = {
 
 DAY_IN_SECONDS = 86400
 HOUR_IN_SECONDS = 3600
-MINUTE_IN_SECONDS = 60
-PT_TO_GMT_TIME_DIFFERENCE_IN_SECONDS = 28800
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_HITS = 500
+MAX_TITLE_LENGTH = 240
 
 # ---------------------------------------------------------------------------- #
 #                                    HELPERS                                   #
 # ---------------------------------------------------------------------------- #
 
 def get_showtime_color(movie_start_time, current_time):
-    start_time_hour = time.parse_time(movie_start_time, "3:04 PM").hour
-    hours_until_movie = int(start_time_hour) - current_time.hour
-
+    minutes_until_movie = showtime_minutes(movie_start_time) - current_time.hour * 60 - current_time.minute
+    if minutes_until_movie < 0:
+        return "#222222"
+    hours_until_movie = (minutes_until_movie + 59) // 60
     return SHOWTIME_COLORS.get(hours_until_movie, "#222222")
 
-def calculate_time_query_params(current_time):
-    hours_to_seconds = int(current_time.hour) * HOUR_IN_SECONDS
-    minutes_to_seconds = int(current_time.minute) * MINUTE_IN_SECONDS
-    seconds = int(current_time.second)
-    seconds_since_midnight = hours_to_seconds + minutes_to_seconds + seconds
+def showtime_minutes(value):
+    parts = value.split(" ")
+    if len(parts) != 2 or parts[1] not in ["AM", "PM"] or ":" not in parts[0]:
+        return -1
+    clock = parts[0].split(":", 1)
+    if len(clock) != 2 or not clock[0].isdigit() or not clock[1].isdigit():
+        return -1
+    hour = int(clock[0])
+    minute = int(clock[1])
+    if hour < 1 or hour > 12 or minute > 59:
+        return -1
+    return (hour % 12 + (12 if parts[1] == "PM" else 0)) * 60 + minute
 
-    # The AmCin API uses the GMT time zone. It doesn't base the showtime window strictly on the Unix timestamp params
-    # e.g. 12:01AM - 11:59PM won't work even though it should be capturing basically the same movie showtimes as below.
-    # In other words, its flexibility only extends to capturing a whole day's showtimes.
-    # In accordance with that, the time window used here is 12:00AM GMT - 11:59PM GMT.
-    beginning_of_current_day_gmt_unix = current_time.unix - seconds_since_midnight - PT_TO_GMT_TIME_DIFFERENCE_IN_SECONDS
-    end_of_current_day_gmt_unix = current_time.unix - seconds_since_midnight - PT_TO_GMT_TIME_DIFFERENCE_IN_SECONDS + DAY_IN_SECONDS - 1
+def calculate_time_query_params(current_time, timezone):
+    beginning = time.time(
+        year = current_time.year,
+        month = current_time.month,
+        day = current_time.day,
+        location = timezone,
+    ).unix
+    return [beginning, beginning + DAY_IN_SECONDS - 1]
 
-    return [beginning_of_current_day_gmt_unix, end_of_current_day_gmt_unix]
-
-def show_error_fetching_data():
-    print("Error fetching data")
+def show_error_fetching_data(message = "WE CAN'T CONNECT TO"):
     return render.Root(
         child = render.Column(
             children = [
@@ -101,8 +117,7 @@ def show_error_fetching_data():
                         render.Column(
                             children = [
                                 render.Text("Sorry -", font = "tb-8", color = "#FF2222"),
-                                render.Text("we can't", font = "tom-thumb", color = "#FF2222"),
-                                render.Text("connect to", font = "tom-thumb", color = "#FF2222"),
+                                render.Text(message, font = "tom-thumb", color = "#FF2222"),
                                 render.Text("American", font = "tom-thumb", color = "#FF2222"),
                             ],
                             cross_align = "end",
@@ -123,12 +138,17 @@ def show_error_fetching_data():
 
 def main(config):
     local_theater = config.get("theater") or "Los Feliz 3"
-    local_theater_code = THEATER_CODES[local_theater.lower()]
+    theater_key = local_theater.lower() if type(local_theater) == "string" else ""
+    if theater_key not in THEATER_CODES:
+        theater_key = "los feliz 3"
+    local_theater_code = THEATER_CODES[theater_key]
 
-    timezone = config.get("timezone") or "America/Los_Angeles"
+    timezone = config.get("timezone") or config.get("$tz") or "America/Los_Angeles"
+    if not time.is_valid_timezone(timezone):
+        timezone = "America/Los_Angeles"
     current_time = time.now().in_location(timezone)
 
-    beginning_of_current_day_unix, end_of_current_day_unix = calculate_time_query_params(current_time)
+    beginning_of_current_day_unix, end_of_current_day_unix = calculate_time_query_params(current_time, timezone)
 
     showtimes_url = CINEMATHEQUE_SHOWTIMES_URL.format(
         start_time = str(beginning_of_current_day_unix),
@@ -136,16 +156,33 @@ def main(config):
     )
 
     res = http.get(showtimes_url, ttl_seconds = HOUR_IN_SECONDS)
-    if res.status_code != 200:
+    body = res.body()
+    if res.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
         return show_error_fetching_data()
-    all_locations_movie_list = res.json()["hits"]
+    data = json.decode(body, None)
+    hits = data.get("hits") if type(data) == "dict" else None
+    if type(hits) != "list" or len(hits) > MAX_HITS:
+        return show_error_fetching_data("BAD SHOWTIME DATA")
 
     # Exclude showtimes from other AC theaters as well as those with incomplete data
-    single_location_movie_list = [movie for movie in all_locations_movie_list if local_theater_code in movie["event_location"]]
-    unsorted_movie_list = [movie for movie in single_location_movie_list if movie["title"] and movie["event_start_time"]]
+    today = current_time.format("20060102")
+    movie_list = []
+    for movie in hits:
+        if type(movie) != "dict":
+            continue
+        title = movie.get("title")
+        showtime = movie.get("event_start_time")
+        locations = movie.get("event_location")
+        if (
+            type(title) == "string" and title and len(title) <= MAX_TITLE_LENGTH and
+            type(showtime) == "string" and len(showtime) <= 8 and showtime_minutes(showtime) >= 0 and
+            type(locations) == "list" and local_theater_code in locations and
+            str(movie.get("event_start_date", "")) == today
+        ):
+            movie_list.append(movie)
 
     # Sort movie list by showtime and truncate (the device can only display four showtimes before running out of screen space)
-    movie_list = sorted(unsorted_movie_list, key = lambda x: x["event_start_time"])[:4]
+    movie_list = sorted(movie_list, key = lambda movie: showtime_minutes(movie["event_start_time"]))[:4]
 
     return render.Root(
         child = render.Stack(
@@ -191,7 +228,7 @@ def main(config):
                             expanded = True,
                             children = [
                                 render.Padding(
-                                    child = render.Text(local_theater.upper(), font = "CG-pixel-4x5-mono", color = "#FFDD48"),
+                                    child = render.Text(THEATER_TITLES[theater_key].upper(), font = "CG-pixel-4x5-mono", color = "#FFDD48"),
                                     pad = 1,
                                     color = "#222",
                                 ),

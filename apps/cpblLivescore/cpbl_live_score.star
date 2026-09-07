@@ -11,7 +11,6 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-CACHE_TTL_SECONDS = 60
 DEFAULT_LOCATION = """
 {
     "lat": "25.105497",
@@ -203,12 +202,12 @@ def main(config):
                                     render.Column(
                                         children = [
                                             render.Box(width = 64, height = 12, color = awayColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
-                                                render.Box(width = 22, height = 12, child = render.Image(get_cachable_data(get_logo(awayId)), width = 16, height = 16)),
+                                                render.Box(width = 22, height = 12, child = team_logo(awayId, 16)),
                                                 render.Box(width = 24, height = 12, child = render.Text(content = awayLocation, color = awayScoreColor, font = "Dina_r400-6")),
                                                 render.Box(width = 24, height = 12, child = render.Text(content = awayScore, color = awayScoreColor, font = scoreFont)),
                                             ])),
                                             render.Box(width = 64, height = 12, color = homeColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
-                                                render.Box(width = 22, height = 12, child = render.Image(get_cachable_data(get_logo(homeId)), width = 16, height = 16)),
+                                                render.Box(width = 22, height = 12, child = team_logo(homeId, 16)),
                                                 render.Box(width = 24, height = 12, child = render.Text(content = homeLocation, color = homeScoreColor, font = "Dina_r400-6")),
                                                 render.Box(width = 24, height = 12, child = render.Text(content = homeScore, color = homeScoreColor, font = scoreFont)),
                                             ])),
@@ -274,11 +273,11 @@ def main(config):
                                             render.Column(
                                                 children = [
                                                     render.Box(width = 64, height = 12, color = awayColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
-                                                        render.Box(width = 16, height = 12, child = render.Image(get_cachable_data(get_logo(awayId)), width = 16, height = 16)),
+                                                        render.Box(width = 16, height = 12, child = team_logo(awayId, 16)),
                                                         render.Box(width = 48, height = 12, child = render.Text(content = get_teamshortname(awayId), color = get_teamfontcolor(awayId), font = "Dina_r400-6")),
                                                     ])),
                                                     render.Box(width = 64, height = 12, color = homeColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
-                                                        render.Box(width = 16, height = 12, child = render.Image(get_cachable_data(get_logo(homeId)), width = 16, height = 16)),
+                                                        render.Box(width = 16, height = 12, child = team_logo(homeId, 16)),
                                                         render.Box(width = 48, height = 12, child = render.Text(content = get_teamshortname(homeId), color = get_teamfontcolor(homeId), font = "Dina_r400-6")),
                                                     ])),
                                                 ],
@@ -289,6 +288,10 @@ def main(config):
                             ),
                         ],
                     )
+            else:
+                renderCategory.extend([
+                    render.Row(expanded = True, children = get_api_require_column("Scores unavailable")),
+                ])
         elif apikey == "":
             renderCategory.extend(
                 [
@@ -321,12 +324,12 @@ def main(config):
     else:
         return []
 
-def get_api_require_column():
+def get_api_require_column(message = "Require BetsAPI token."):
     dateTimeColumn = [
         render.Box(width = 64, height = 5, child = render.Stack(children = [
             render.Box(width = 64, height = 5, color = "#000"),
             render.Box(width = 64, height = 5, child = render.Row(expanded = True, main_align = "center", cross_align = "center", children = [
-                render.Text(color = "#fff", content = "Require BetsAPI token.", font = "CG-pixel-3x5-mono"),
+                render.Text(color = "#fff", content = message, font = "CG-pixel-3x5-mono"),
             ])),
         ])),
     ]
@@ -375,12 +378,13 @@ def get_shortened_display(text):
     else:
         return "UPCOMING"
 
-def get_scores(urls):
-    allscores = []
-    data = get_cachable_data(urls)
-    decodedata = json.decode(data)
-    allscores.extend(decodedata["results"])
-    return allscores
+def get_scores(url):
+    response = http.get(url)
+    if response.status_code != 200 or len(response.body()) > 524288:
+        return []
+    data = response.json()
+    results = data.get("results", []) if type(data) == "dict" else []
+    return results[:50] if type(results) == "list" else []
 
 teamOptions = [
     schema.Option(
@@ -540,11 +544,15 @@ def get_schema():
         ],
     )
 
-def get_cachable_data(url):
-    res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-    return res.body()
+def team_logo(team, size):
+    url = get_logo(team)
+    if not (url.startswith("https://assets.b365api.com/") or url.startswith("https://r2.thesportsdb.com/")):
+        return render.Box(width = size, height = size)
+    response = http.get(url, ttl_seconds = 86400)
+    body = response.body()
+    if response.status_code != 200 or len(body) > 2097152:
+        return render.Box(width = size, height = size)
+    return render.Image(body, width = size, height = size)
 
 def get_logo(team):
     usealtlogo = json.decode(TEAM_LOGO)

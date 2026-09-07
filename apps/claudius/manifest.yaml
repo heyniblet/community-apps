@@ -6,7 +6,7 @@ desc: Companion display for Claudius, the macOS menu bar app that monitors Claud
 author: NSLuke
 fileName: claudius.star
 packageName: claudius
-recommendedInterval: 300
+recommendedInterval: 0
 category: utilities
 tags:
   - claude

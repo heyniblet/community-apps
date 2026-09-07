@@ -125,10 +125,11 @@ DEFAULT_COLORS = {
 
 # Cache time in seconds
 CACHE_TTL = 900  # 15 minutes
+HEADERS = {"User-Agent": "Niblet/1.0 support@heyniblet.com"}
 
 def main(config):
     # Get the selected news source from config (default to BBC News)
-    source_name = config.get("source", "BBC News")
+    source_name = config.get("source", "BBC")
     source_info = NEWS_SOURCES.get(source_name)
 
     if not source_info:
@@ -205,12 +206,15 @@ def get_headlines(feed_url):
     """Fetch and parse headlines from an RSS feed using xpath."""
 
     # Fetch the RSS feed
-    resp = http.get(feed_url, ttl_seconds = CACHE_TTL)
+    resp = http.get(feed_url, headers = HEADERS, ttl_seconds = CACHE_TTL)
     if resp.status_code != 200:
         return None
 
     # Parse the XML using xpath
-    feed = xpath.loads(resp.body())
+    body = resp.body()
+    if len(body) == 0 or len(body) > 2097152:
+        return None
+    feed = xpath.loads(body)
 
     # Extract titles and descriptions
     titles = feed.query_all("//item/title")
@@ -225,8 +229,8 @@ def get_headlines(feed_url):
     process_count = 1  # Only get the first item
 
     for i in range(process_count):
-        title = titles[i]
-        description = clean_html(descriptions[i])
+        title = clean_html(titles[i])[:500]
+        description = clean_html(descriptions[i])[:1000]
 
         if title and description:
             items.append({

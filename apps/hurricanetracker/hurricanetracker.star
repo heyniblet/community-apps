@@ -352,14 +352,14 @@ rss_example = """
         <pubDate>Thu, 30 May 2013 19:07:15 GMT</pubDate>
         <title>National Hurricane Center (Eastern Pacific)</title>
         <description>Active tropical cyclones in the Eastern Pacific</description>
-        <link>http://www.nhc.noaa.gov/</link>
+        <link>https://www.nhc.noaa.gov/</link>
         <copyright>none</copyright>
         <managingEditor>nhcwebmaster@noaa.gov (nhcwebmaster)</managingEditor>
         <language>en-us</language>
         <webMaster>nhcwebmaster@noaa.gov (nhcwebmaster)</webMaster>
         <image>
-            <url>http://www.nhc.noaa.gov/gifs/xml_logo_nhc.gif</url>
-            <link>http://www.nhc.noaa.gov/</link>
+            <url>https://www.nhc.noaa.gov/gifs/xml_logo_nhc.gif</url>
+            <link>https://www.nhc.noaa.gov/</link>
             <title>National Hurricane Center (Eastern Pacific)</title>
             <description>NOAA logo</description>
             <width>95</width>
@@ -370,7 +370,7 @@ rss_example = """
             <guid>summary-ep022013-201305301523</guid>
             <pubDate>Thu, 30 May 2013 15:23:32 GMT</pubDate>
             <author>nhcwebmaster@noaa.gov (nhcwebmaster)</author>
-            <link>http://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301523.shtml</link>
+            <link>https://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301523.shtml</link>
             <description> ...AAA NEAR THE GULF COAST OF MEXICO BUT VERY ILL DEFINED..</description>
             <gml:Point>
                 <gml:pos>18.5 -95.0</gml:pos>
@@ -393,7 +393,7 @@ rss_example = """
             <guid>summary-ep022013-201305301523</guid>
             <pubDate>Thu, 30 May 2013 15:23:32 GMT</pubDate>
             <author>nhcwebmaster@noaa.gov (nhcwebmaster)</author>
-            <link>http://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301523.shtml</link>
+            <link>https://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301523.shtml</link>
             <description> ...BARBARA NEAR THE GULF COAST OF MEXICO BUT VERY ILL DEFINED...  </description>
             <gml:Point>
                 <gml:pos>18.5 -95.0</gml:pos>
@@ -416,7 +416,7 @@ rss_example = """
             <guid>summary-ep022013-201305301523</guid>
             <pubDate>Thu, 30 May 2013 15:23:33 GMT</pubDate>
             <author>nhcwebmaster@noaa.gov (nhcwebmaster)</author>
-            <link>http://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301524.shtml</link>
+            <link>https://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301524.shtml</link>
             <description> ...Rob NEAR THE GULF COAST OF MEXICO BUT VERY ILL DEFINED... ..</description>
             <gml:Point>
                 <gml:pos>18.5 -90.0</gml:pos>
@@ -439,7 +439,7 @@ rss_example = """
             <guid>summary-ep022013-201305301523</guid>
             <pubDate>Thu, 30 May 2013 15:23:33 GMT</pubDate>
             <author>nhcwebmaster@noaa.gov (nhcwebmaster)</author>
-            <link>http://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301524.shtml</link>
+            <link>https://www.nhc.noaa.gov/text/refresh/MIATCPEP2+shtml/301524.shtml</link>
             <description> ...Zelda NEAR THE GULF COAST OF MEXICO BUT VERY ILL DEFINED... ...THREAT OF HEAVY RAINS AND FLOODING CONTINUES... As of 8:00 AM PDT Thu May 30 the center of BARBARA was located at 18.5, -95.0 with movement NW at 3 mph. The minimum central pressure was 1005 mb with maximum sustained winds of about 30 mph. </description>
             <gml:Point>
                 <gml:pos>18.5 -90.0</gml:pos>

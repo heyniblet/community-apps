@@ -122,7 +122,7 @@ def render_progress_bar(width, height, progress, text_stack):
 def main():
     response_block_tip_height = http.get(url = URL_BLOCK_TIP_HEIGHT, ttl_seconds = 30)
     response_difficulty_adjustment = http.get(url = URL_DIFFICULTY_ADJUSTMENT, ttl_seconds = 60)
-    if response_block_tip_height.status_code != 200 and response_difficulty_adjustment.status_code != 200:
+    if response_block_tip_height.status_code != 200 or response_difficulty_adjustment.status_code != 200:
         fail("Mempool.space request failed with status %d/%d", response_block_tip_height.status_code, response_difficulty_adjustment.status_code)
 
     block_tip_height = int(response_block_tip_height.json())

@@ -22,6 +22,7 @@ load("time.star", "time")
 #   https://www.patreon.com/rainviewer
 #
 WEATHER_MAPS_URL = "https://api.rainviewer.com/public/weather-maps.json"
+WEATHER_TILE_HOST = "https://tilecache.rainviewer.com"
 IMAGE_URL_LAYOUT = "{host}{path}/{size}/{zoom}/{lat}/{lng}/{color}/{smooth}_{snow}.png"
 
 # The RainViewer API provides data for the past 2 hours and a forecast
@@ -349,8 +350,11 @@ def main(config):
         return render_error()
 
     data = response.json()
+    if data.get("host") != WEATHER_TILE_HOST:
+        print("RainViewer returned an unreviewed tile host")
+        return render_error()
     opts = struct(
-        host = data["host"],
+        host = WEATHER_TILE_HOST,
         location = json.decode(config.get("location", DEFAULT_LOCATION)),
         zoom_level = int(config.get("zoom_level", DEFAULT_ZOOM_LEVEL.value)),
         color_scheme = int(config.get("color_scheme", DEFAULT_COLOR_SCHEME.value)),

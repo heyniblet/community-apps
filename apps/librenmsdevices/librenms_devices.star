@@ -32,7 +32,7 @@ def get_schema():
             schema.Text(
                 id = "librenms_url",
                 name = "LibreNMS URL:",
-                desc = "URL of the LibreNMS server. Include the protocol and [optionally] port, e.g. https://my.nms, or https://my.nms:8443. TLS connections must use a publicly trusted TLS certificate such as LetsEncrypt, Digicert, etc.",
+                desc = "Public HTTPS URL of the LibreNMS server (port 443).",
                 icon = "globe",
             ),
             schema.Text(
@@ -174,14 +174,28 @@ def get_librenms_devices(config):
     """
 
     headers = {"X-Auth-Token": config["api_key"]}
-    url = config["librenms_url"] + ENDPOINT_DEVICES
+    url = config["librenms_url"].rstrip("/") + ENDPOINT_DEVICES
     r = http.get(url, headers = headers)
 
     if r.status_code != 200:
         return {"error": r.status_code}
 
     else:
-        return {"devices": r.json()["devices"]}
+        data = r.json()
+        devices = data.get("devices") if type(data) == "dict" else None
+        if type(devices) != "list":
+            return {"error": "invalid response"}
+        safe_devices = []
+        for device in devices[:120]:
+            if type(device) != "dict" or type(device.get("status")) not in ["int", "float"]:
+                continue
+            uptime = device.get("uptime")
+            safe_devices.append({
+                "ignore": device.get("ignore") if type(device.get("ignore")) in ["int", "float"] else 0,
+                "status": device["status"],
+                "uptime": uptime if type(uptime) in ["int", "float"] else None,
+            })
+        return {"devices": safe_devices}
 
 def render_error(error_msg):
     return render.Root(
@@ -280,8 +294,10 @@ def main(config):
         Renders output to the Tidbyt display.
 
     """
-    if "librenms_url" not in config or "api_key" not in config:
+    if not config.get("librenms_url") or not config.get("api_key"):
         return demo_data()
+    if not config["librenms_url"].startswith("https://"):
+        return render_error("LibreNMS must use HTTPS")
 
     # Get the list of device statuses
     devices = get_librenms_devices(config)

@@ -5,9 +5,7 @@ Description: Shows the carbon intensity of your local electricity using the Elec
 Author: Harper Trow
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
-load("hash.star", "hash")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("math.star", "math")
@@ -15,7 +13,7 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 BASE_URL = "https://api.electricitymaps.com/v3"  # base electricity maps api url
-USER_DATA_CACHE_EXPIRATION_SECONDS = 300  # 5 minute cache
+MAX_RESPONSE_BYTES = 256 * 1024
 FONT = "tom-thumb"
 
 def main(config):
@@ -23,9 +21,9 @@ def main(config):
         "lat": "37.63247",
         "lng": "-77.58936",
     })
-    api_key = config.get("api_key")
+    api_key = str(config.get("api_key") or "")[:512]
 
-    if api_key == None:
+    if not api_key:
         return render_message("Configure Settings")
     else:
         return render_data(api_key, location)
@@ -137,78 +135,62 @@ def render_data(api_key, location):
             ),
         )
 
-# Get and cache Electricity Maps data for the given api key and location.
+# Get Electricity Maps data for the given API key and location.
 def get_data(api_key, location_string):
-    user_cache_key = "electricitymaps-%s" % hash.sha256(api_key)
-    data = cache.get(user_cache_key)
-    location = json.decode(location_string)
+    location = json.decode(location_string, None)
+    if type(location) != "dict":
+        return None
+    latitude = coordinate(location.get("lat"), -90, 90)
+    longitude = coordinate(location.get("lng"), -180, 180)
+    if latitude == None or longitude == None:
+        return None
 
-    # Fuzz the location coordinates to protect user privacy
-    latitude = humanize.float("#.#####", float(location["lat"]))
-    longitude = humanize.float("#.#####", float(location["lng"]))
+    # Normalize coordinates before sending them to the provider.
+    params = {
+        "lat": humanize.float("#.#####", latitude),
+        "lon": humanize.float("#.#####", longitude),
+    }
+    headers = {"auth-token": api_key}
+    raw_intensity = request_json("%s/carbon-intensity/latest" % BASE_URL, params, headers)
+    if raw_intensity == None or type(raw_intensity.get("carbonIntensity")) not in ["int", "float"]:
+        return None
+    raw_breakdown = request_json("%s/power-breakdown/latest" % BASE_URL, params, headers)
+    fossil_free_percentage = percentage(raw_breakdown.get("fossilFreePercentage")) if raw_breakdown else 0
+    renewable_percentage = percentage(raw_breakdown.get("renewablePercentage")) if raw_breakdown else 0
+    return {
+        "grid": str(raw_intensity.get("zone") or "Unknown")[:80],
+        "carbon_intensity": raw_intensity["carbonIntensity"],
+        "fossil_fuel_percentage": 100 - fossil_free_percentage,
+        "fossil_free_percentage": fossil_free_percentage,
+        "renewable_percentage": renewable_percentage,
+        "intensity_units": "gCO2eq/kWh",
+    }
 
-    if data == None:
-        print("User data cache miss, calling api to get data")
-        headers = {"auth-token": api_key}
-        params = {
-            "lat": latitude,
-            "lon": longitude,
-        }
-
-        # 1. Get Carbon Intensity
-        url_intensity = "%s/carbon-intensity/latest" % BASE_URL
-        response = http.get(url_intensity, params = params, headers = headers)
-        if response.status_code != 200:
-            print("Intensity API request failed with status %d" % response.status_code)
+def coordinate(value, minimum, maximum):
+    value = str(value or "")
+    if not value or len(value) > 24:
+        return None
+    dots = 0
+    for index, char in enumerate(value.elems()):
+        if char == ".":
+            dots += 1
+        elif char == "-" and index == 0:
+            pass
+        elif char not in "0123456789":
             return None
+    if dots > 1 or value in ["-", ".", "-."]:
+        return None
+    number = float(value)
+    return number if number >= minimum and number <= maximum else None
 
-        raw_intensity = response.json()
+def request_json(url, params, headers):
+    response = http.get(url, params = params, headers = headers)
+    body = response.body()
+    data = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    return data if type(data) == "dict" else None
 
-        # 2. Get Power Breakdown (for fossil fuel %)
-        # We need a separate call because carbon-intensity endpoint doesn't include it.
-        url_breakdown = "%s/power-breakdown/latest" % BASE_URL
-        response_breakdown = http.get(url_breakdown, params = params, headers = headers)
-
-        fossil_percentage = 0
-        renewable_percentage = 0
-        fossil_free_percentage = 0
-
-        if response_breakdown.status_code == 200:
-            raw_breakdown = response_breakdown.json()
-            if "fossilFreePercentage" in raw_breakdown and raw_breakdown["fossilFreePercentage"] != None:
-                # If fossilFreePercentage is available, fossil is 100 - that.
-                # Ensure it's treated as a number.
-                fossil_free_percentage = int(raw_breakdown["fossilFreePercentage"])
-                fossil_percentage = 100 - fossil_free_percentage
-            else:
-                print("fossilFreePercentage not found in breakdown")
-
-            if "renewablePercentage" in raw_breakdown and raw_breakdown["renewablePercentage"] != None:
-                renewable_percentage = int(raw_breakdown["renewablePercentage"])
-            else:
-                print("renewablePercentage not found in breakdown")
-
-        else:
-            print("Breakdown API request failed with status %d" % response_breakdown.status_code)
-
-        data = {
-            "grid": raw_intensity.get("zone", "Unknown"),
-            "carbon_intensity": raw_intensity.get("carbonIntensity", 0),
-            "fossil_fuel_percentage": fossil_percentage,
-            "fossil_free_percentage": fossil_free_percentage,
-            "renewable_percentage": renewable_percentage,
-            "intensity_units": "gCO2eq/kWh",
-        }
-
-        cache.set(
-            user_cache_key,
-            json.encode(data),
-            ttl_seconds = USER_DATA_CACHE_EXPIRATION_SECONDS,
-        )
-        return data
-    else:
-        print("User data cache hit")
-        return json.decode(data)
+def percentage(value):
+    return max(0, min(100, int(value))) if type(value) in ["int", "float"] else 0
 
 # Get the color highlighting the fossil fuel intensity percentage.
 def get_fossil_fuel_color(fossil_fuel_percentage):

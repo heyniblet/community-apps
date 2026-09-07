@@ -2,11 +2,11 @@
 id: nationalday
 name: National Day/Week/Month
 summary: Day, Week & Month Calendar
-desc: Show national day, week, or month celebrations.
+desc: Show national day, week, or month celebrations. Data from National Day Calendar® (nationaldaycalendar.com).
 author: jvivona
 fileName: nationalday.star
 packageName: nationalday
-recommendedInterval: 30
+recommendedInterval: 60
 supports2x: true
 category: lifestyle
 tags:

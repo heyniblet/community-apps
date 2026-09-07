@@ -31,16 +31,7 @@ DEFAULT_BURGER_NAME = "New bacon-ings"
 DEFAULT_BURGER_PAR = "(Comes with bacon)"
 BURGER_NAME = ""
 BURGER_PAR = ""
-YEAR = time.now().year
 DEFAULT_TIME_ZONE = "America/New_York"
-
-#remove leap day burger from lists if its not a leap year
-def checkIfNotLeapYear():
-    if (YEAR % 4 != 0) or (YEAR % 100 == 0):
-        BURGER_LIST.pop(59)
-        BURGER_PAR_LIST.pop(59)
-
-checkIfNotLeapYear()
 
 def main(config):
     def showBobsLogo():
@@ -67,7 +58,7 @@ def main(config):
     FIRST_DAY = time.time(year = CURRENT_YEAR, month = 1, day = 1, location = TIME_ZONE)
     DAYS_SINCE_JAN1 = TIME_NOW - FIRST_DAY
     DAYS_NUMBER = math.floor(DAYS_SINCE_JAN1.hours / 24)
-    RANDOM_NUMBER = random.number(0, 365)
+    RANDOM_NUMBER = random.number(0, len(BURGER_LIST) - 1)
     BURGER_SHOWN = config.get("burger_shown", "daily")
     SCROLL_SPEED = config.str("scroll_speed", "60")
 
@@ -75,8 +66,13 @@ def main(config):
         BURGER_NAME = BURGER_LIST[RANDOM_NUMBER]
         BURGER_PAR = BURGER_PAR_LIST[RANDOM_NUMBER]
     elif BURGER_SHOWN == "daily":
-        BURGER_NAME = BURGER_LIST[DAYS_NUMBER]
-        BURGER_PAR = BURGER_PAR_LIST[DAYS_NUMBER]
+        IS_LEAP_YEAR = CURRENT_YEAR % 4 == 0 and (CURRENT_YEAR % 100 != 0 or CURRENT_YEAR % 400 == 0)
+
+        # The bundled list includes February 29 at index 59. Skip it in
+        # non-leap years without mutating global state at schema evaluation.
+        DAILY_INDEX = DAYS_NUMBER if IS_LEAP_YEAR or DAYS_NUMBER < 59 else DAYS_NUMBER + 1
+        BURGER_NAME = BURGER_LIST[DAILY_INDEX]
+        BURGER_PAR = BURGER_PAR_LIST[DAILY_INDEX]
     elif BURGER_SHOWN == "custom":
         BURGER_NAME = config.str("custom_name", DEFAULT_BURGER_NAME)
         BURGER_PAR = config.str("custom_ingredients", DEFAULT_BURGER_PAR)

@@ -60,6 +60,8 @@ TIME_FORMAT = "2006-01-02T15:04:05Z"
 def parse_state_value(state):
     if state == None or state in ("unavailable", "unknown", "none", ""):
         return None
+    if type(state) != "string":
+        state = str(state)
     s = state.strip()
     if not s:
         return None
@@ -107,8 +109,10 @@ def main(config):
     if range_str:
         parts = range_str.split(",")
         if len(parts) == 2:
-            min_val = float(parts[0])
-            max_val = float(parts[1])
+            min_val = parse_state_value(parts[0])
+            max_val = parse_state_value(parts[1])
+            if min_val == None or max_val == None or min_val > max_val:
+                return render_error_message("Invalid display range")
             val = parse_state_value(current_value)
             if val == None:
                 return []
@@ -200,18 +204,38 @@ def calc_stats(timezone, data):
 
 def get_entity_data(config, start_time):
     start_time_str = start_time.format(TIME_FORMAT)
-    url = config.str("ha_instance") + "/api/history/period/" + start_time_str + "?filter_entity_id=" + config.str("ha_entity")
+    base_url = config.str("ha_instance").rstrip("/")
+    entity = config.str("ha_entity")
+    if not base_url.startswith("https://") or not valid_entity(entity):
+        return None, "invalid configuration"
+    url = base_url + "/api/history/period/" + start_time_str
     headers = {
         "Authorization": "Bearer " + config.str("ha_token"),
         "Content-Type": "application/json",
     }
 
-    rep = http.get(url, ttl_seconds = 240, headers = headers)
+    rep = http.get(url, params = {"filter_entity_id": entity}, headers = headers)
     if rep.status_code != 200:
         return None, rep.status_code
 
     data = rep.json()
-    return (data[0], None) if data else ([], None)
+    if type(data) != "list" or not data or type(data[0]) != "list":
+        return [], None
+
+    entries = []
+    for entry in data[0][-1000:]:
+        if type(entry) != "dict" or parse_state_value(entry.get("state")) == None or type(entry.get("last_changed")) != "string" or "T" not in entry["last_changed"]:
+            continue
+        entries.append({
+            "attributes": entry.get("attributes") if type(entry.get("attributes")) == "dict" else {},
+            "last_changed": entry["last_changed"],
+            "state": str(entry["state"]),
+        })
+    return entries, None
+
+def valid_entity(value):
+    parts = value.split(".")
+    return len(value) <= 128 and len(parts) == 2 and all([part and all([char.isalnum() or char in "_-" for char in part.elems()]) for part in parts])
 
 def get_icon(config):
     icon = config.str("icon")
@@ -375,7 +399,7 @@ def get_schema():
         fields = [
             schema.Text(
                 id = "ha_instance",
-                desc = "Home Assistant URL. The address of your HomeAssistant instance, as a full URL.",
+                desc = "Public HTTPS URL of the Home Assistant instance (port 443).",
                 icon = "globe",
                 name = "Home Assistant URL",
             ),

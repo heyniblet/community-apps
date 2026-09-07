@@ -1,3 +1,5 @@
+load("encoding/json.star", "json")
+
 # breadwinner.star
 load("http.star", "http")
 load("humanize.star", "humanize")
@@ -5,6 +7,19 @@ load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
+
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_POINTS = 64
+
+def error(message):
+    return render.Root(child = render.Text(message, font = "tom-thumb"))
+
+def path_part(value):
+    value = str(value or "").strip()
+    for char in value.elems():
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return ""
+    return value if len(value) <= 80 else ""
 
 def get_height_color(height):
     # Return color based on height thresholds
@@ -16,34 +31,34 @@ def get_height_color(height):
 
 def main(config):
     # Get user and starter from config
-    user_id = config.get("user_id", "fred")
-    starter_id = config.get("starter_id", "breadberry")
+    user_id = path_part(config.get("user_id", "fred"))
+    starter_id = path_part(config.get("starter_id", "breadberry"))
+    if not user_id or not starter_id:
+        return error("Invalid Breadwinner ID")
 
     # Fetch data from Breadwinner API
     url = "https://breadwinner.life/api/v3/%s/starters/%s/tidbyt" % (user_id, starter_id)
 
     res = http.get(url)
-    if res.status_code != 200:
-        return render.Root(
-            child = render.Text("Error fetching data"),
-        )
-
-    data = res.json()
+    body = res.body()
+    data = json.decode(body, None) if res.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    if type(data) != "dict":
+        return error("Breadwinner unavailable")
 
     if "error" in data:
-        return render.Root(
-            child = render.Text(data["starter_name"] + "\nNo data"),
-        )
+        return error("No starter data")
 
     # Create height graph points and get max height
-    heights = [p["height"] for p in data["points"]]
+    raw_points = data.get("points", [])
+    heights = [p["height"] for p in raw_points[-MAX_POINTS:] if type(p) == "dict" and type(p.get("height")) in ["int", "float"]]
     max_height = max(heights) if heights else 0
 
     if heights:
         min_height = min(heights)
 
         # Scale heights to fit in 16 pixels to leave room for text and separator
-        scaled_heights = [int(((h - min_height) / (max_height - min_height)) * 16) if h else 0 for h in heights]
+        height_range = max_height - min_height
+        scaled_heights = [int(((h - min_height) / height_range) * 16) if height_range else 8 for h in heights]
     else:
         scaled_heights = []
 
@@ -53,6 +68,8 @@ def main(config):
         points.append((i, height))
 
     # Convert and format time
+    if not data.get("fed_at") or not data.get("starter_name") or type(data.get("temperature")) not in ["int", "float"]:
+        return error("Incomplete starter data")
     fed_time = time.parse_time(data["fed_at"])
     now = time.now().in_location("America/New_York")
     relative_time = humanize.relative_time(fed_time, now)

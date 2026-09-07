@@ -6,7 +6,7 @@ desc: Displays clock apps available on the Tidbyt. Apps that have "clock" in the
 author: rs7q5
 fileName: tidbyt_clocks.star
 packageName: tidbytclocks
-recommendedInterval: 60
+recommendedInterval: 1
 category: clocks
 tags:
   - tidbyt

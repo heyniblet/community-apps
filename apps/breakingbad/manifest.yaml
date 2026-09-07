@@ -4,7 +4,10 @@ name: BreakingBad
 summary: Breaking Bad Title Display
 desc: Display text in Breaking Bad TV show format.
 author: Robert Ison
-recommendedInterval: 5
+fileName: breakingbad.star
+packageName: breakingbad
+recommendedInterval: 0
+supports2x: true
 category: entertainment
 tags:
   - media

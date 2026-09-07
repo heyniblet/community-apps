@@ -361,11 +361,11 @@ def getAnimation():
         "https://cdn.fireemblemwiki.org/1/19/Ba_fe06_eliwood_paladin_sword.gif?20110603040832",
         "https://cdn.fireemblemwiki.org/0/0e/Ba_fe06_eliwood_paladin_sword_critical.gif?20110603040832",
         "https://cdn.fireemblemwiki.org/c/c2/Ba_fe06_alen_paladin_lance.gif?20110815062555",
-        "https://fireemblemwiki.org/wiki/File:Ba_fe06_alen_paladin_lance_critical.gif",
-        "https://fireemblemwiki.org/wiki/File:Ba_fe06_alen_paladin_axe.gif",
-        "https://fireemblemwiki.org/wiki/File:Ba_fe06_alen_paladin_axe_critical.gif",
-        "https://fireemblemwiki.org/wiki/File:Ba_fe06_alen_paladin_sword.gif",
-        "https://fireemblemwiki.org/wiki/File:Ba_fe06_alen_paladin_sword_critical.gif",
+        "https://cdn.fireemblemwiki.org/7/73/Ba_fe06_alen_paladin_lance_critical.gif",
+        "https://cdn.fireemblemwiki.org/8/83/Ba_fe06_alen_paladin_axe.gif",
+        "https://cdn.fireemblemwiki.org/c/c9/Ba_fe06_alen_paladin_axe_critical.gif",
+        "https://cdn.fireemblemwiki.org/1/16/Ba_fe06_alen_paladin_sword.gif",
+        "https://cdn.fireemblemwiki.org/d/d7/Ba_fe06_alen_paladin_sword_critical.gif",
     ]
 
     #Extra
@@ -451,7 +451,7 @@ def getAnimation():
         zking,
     ]
 
-    classPick = random.number(0, 44)
+    classPick = random.number(0, len(class_list) - 1)
     chosen_class = class_list[classPick]
     spritePick = random.number(0, len(chosen_class) - 1)
     animation = chosen_class[spritePick]
@@ -459,7 +459,10 @@ def getAnimation():
 
 def main():
     current = getAnimation()
-    img = http.get(current).body()
+    response = http.get(current, ttl_seconds = 86400)
+    if response.status_code != 200:
+        return []
+    img = response.body()
     return render.Root(
         delay = 0,
         child = render.Box(

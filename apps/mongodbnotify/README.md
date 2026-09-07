@@ -1,7 +1,7 @@
 # mongodb-notify
 # NOTICE
 
-MongoDB announced the end of the Data API interface. It will be September 30, 2025. That gives this a year of working and, hopefully, coming up with some other alternative to get notifications on to Tidbyt.
+MongoDB Atlas Data API reached end of life on September 30, 2025. This app is retained for migration reference but is unavailable: its backend no longer exists, and allowing remote documents to select arbitrary render widgets is not a safe replacement contract. A future version needs a bounded notification schema and an authenticated, Niblet-owned delivery endpoint.
 
 # Description
 

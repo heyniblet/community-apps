@@ -13,18 +13,20 @@ GYM_URL = "https://display.safespace.io/value/live/a7796f34"
 
 def main():
     req = http.get(GYM_URL, ttl_seconds = 60)
-    if req.status_code != 200:
-        fail("Gym Request failed with status %d", req.status_code)
-
-    currocc = req.body()
+    currocc = req.body().strip()
+    if req.status_code != 200 or not currocc or len(currocc) > 6 or not currocc.isdigit():
+        return render.Root(child = render.WrappedText(content = "Occupancy unavailable", width = 64, color = "#f00"))
+    occupancy = int(currocc)
+    if occupancy > 5000:
+        return render.Root(child = render.WrappedText(content = "Invalid occupancy", width = 64, color = "#f00"))
 
     color = "#cd0800"  # red
-    if int(currocc) < 120:
+    if occupancy < 120:
         color = "#26ff7b"  # green
-    elif int(currocc) < 150:
+    elif occupancy < 150:
         color = "#ffd766"  # yellow
 
-    if int(currocc) == 69:
+    if occupancy == 69:
         currocc_child = render.Animation(
             children = [
                 render.Text(currocc, font = "10x20", color = color),

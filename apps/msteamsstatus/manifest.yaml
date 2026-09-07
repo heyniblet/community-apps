@@ -6,6 +6,8 @@ desc: Show your presence and status message from Microsoft Teams on a Tidbyt dis
 author: schumatt
 fileName: ms_teams_status.star
 packageName: msteamsstatus
+broken: true
+brokenReason: Requires a Niblet-owned Microsoft Entra app registration and tenant-isolated native OAuth lifecycle; the bundled encrypted client credentials are not usable by Niblet.
 recommendedInterval: 5
 category: utilities
 tags:

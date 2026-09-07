@@ -5,7 +5,6 @@ Description: Displays a random Kanji character with translation.
 Author: Robert Ison
 """
 
-load("cache.star", "cache")
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -13,18 +12,9 @@ load("render.star", "canvas", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-# Sample fallback kanji data
-KANJI_SAMPLE_DATA = """
-{"character": "辛", "meaning": {"english": "pungent, hard, spicy"}, "onyomi": {"romaji": "shin"}, "kunyomi": {"romaji": "kara, karai, karasa"}}
-"""
-
 # URLs
 KANJI_IMAGE_LOOKUP_URL = "https://assets.imgix.net/~text?w=150&h=150&txt-size=75&txt-color=ff0&txt-align=left&txt-font=Arial&txt64="
 KANJI_ALIVE_URL = "https://kanjialive-api.p.rapidapi.com/api/public/kanji/{}"
-
-# Cache
-CACHE_PREFIX = "DailyKanji:v1:"
-KANJI_TTL = 60 * 60 * 2  # 2 hours
 
 # Kanji grouped by JLPT level (expandable)
 KANJI_BY_LEVEL = {
@@ -90,12 +80,22 @@ def get_kanji_information(selected_kanji, api_key):
             "X-RapidAPI-Key": api_key,
         },
     )
-    if res.status_code != 200:
+    if res.status_code != 200 or len(res.body()) > 512 * 1024:
         return None
-    data = res.json()
-    if not data or "kanji" not in data:
+    data = json.decode(res.body(), None)
+    if type(data) != "dict" or type(data.get("kanji")) != "dict":
         return None
-    return data["kanji"]
+    kanji = data["kanji"]
+    character = kanji.get("character")
+    meaning = kanji.get("meaning")
+    onyomi = kanji.get("onyomi")
+    kunyomi = kanji.get("kunyomi")
+    if type(character) != "string" or not character or len(character) > 8 or type(meaning) != "dict" or type(onyomi) != "dict" or type(kunyomi) != "dict":
+        return None
+    return kanji
+
+def render_message(message):
+    return render.Root(render.WrappedText(content = message, align = "center", color = "#f4a306"))
 
 def add_padding(element, left = 0, top = 0, right = 0, bottom = 0):
     return render.Padding(pad = (left, top, right, bottom), child = element)
@@ -113,49 +113,33 @@ def main(config):
         V_SPACING = 2
 
     api_key = config.get("api_key", "")
+    if type(api_key) != "string" or not api_key:
+        return render_message("Configure RapidAPI key")
+    if len(api_key) > 512 or "\r" in api_key or "\n" in api_key:
+        return render_message("Invalid API key")
     selected_level = config.get("max_level", "beginner")
     max_jlpt = LEVEL_TO_JLPT.get(selected_level, 5)
 
-    # Cache keys per level
-    cache_key_data = CACHE_PREFIX + "data:" + str(max_jlpt)
-    cache_key_image = CACHE_PREFIX + "image:" + str(max_jlpt)
-
-    # Load cache
-    kanji_data_obj = None
-    kanji_image_src = cache.get(cache_key_image)
-    cached_data = cache.get(cache_key_data)
-    if cached_data:
-        kanji_data_obj = json.decode(cached_data)
-
+    allowed_kanji = get_allowed_kanji(max_jlpt)
+    kanji_char = get_random_kanji(allowed_kanji, max_jlpt)
+    kanji_data_obj = get_kanji_information(kanji_char, api_key)
     if kanji_data_obj == None:
-        # Pick kanji from allowed levels
-        allowed_kanji = get_allowed_kanji(max_jlpt)
-        kanji_char = get_random_kanji(allowed_kanji, max_jlpt)
+        return render_message("Kanji source unavailable")
 
-        # Try KanjiAlive API
-        api_data = None
-        if api_key != "":
-            api_data = get_kanji_information(kanji_char, api_key)
-        if api_data:
-            kanji_data_obj = api_data
-        else:
-            # fallback
-            # On failure, fall back to the complete static sample data.
-            # This ensures the character, meaning, and readings are consistent.
-            kanji_data_obj = json.decode(KANJI_SAMPLE_DATA)
-
-        # Create image
-        kanji_image_url = KANJI_IMAGE_LOOKUP_URL + base64.encode(kanji_data_obj["character"])
-        kanji_image_src = http.get(kanji_image_url).body()
-
-        # Cache results
-        cache.set(cache_key_data, json.encode(kanji_data_obj), ttl_seconds = KANJI_TTL)
-        cache.set(cache_key_image, kanji_image_src, ttl_seconds = KANJI_TTL)
+    kanji_image_url = KANJI_IMAGE_LOOKUP_URL + base64.encode(kanji_data_obj["character"])
+    image_response = http.get(kanji_image_url, ttl_seconds = 86400)
+    if image_response.status_code != 200 or len(image_response.body()) > 512 * 1024:
+        return render_message("Kanji image unavailable")
+    kanji_image_src = image_response.body()
 
     # Prepare rows
     meaning = kanji_data_obj.get("meaning", {}).get("english", "")
     onyomi = kanji_data_obj.get("onyomi", {}).get("romaji", "")
     kunyomi = kanji_data_obj.get("kunyomi", {}).get("romaji", "")
+
+    meaning = meaning[:200] if type(meaning) == "string" else ""
+    onyomi = onyomi[:100] if type(onyomi) == "string" else ""
+    kunyomi = kunyomi[:100] if type(kunyomi) == "string" else ""
 
     if meaning == "n/a":
         meaning = ""
@@ -198,7 +182,8 @@ def main(config):
             top = top_margin + i * (FONT_HEIGHT + V_SPACING),
         ))
 
-    scroll_delay = int(config.get("scroll", "45"))
+    scroll = config.get("scroll", "45")
+    scroll_delay = int(scroll) if scroll in ["30", "45", "60"] else 45
     return render.Root(
         render.Stack(children = display_items),
         show_full_animation = True,

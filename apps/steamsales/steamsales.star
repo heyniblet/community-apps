@@ -46,12 +46,44 @@ def make_activity_row(data, max_val, rgb):
         ],
     )
 
+def fetch_sales(api_key, app_id, target_date):
+    total = 0
+    highwatermark = "0"
+
+    # ponytail: cap pagination to protect render time; raise if large partner accounts need it.
+    for _ in range(5):
+        response = http.get(SALES_URL, params = {
+            "key": api_key,
+            "date": target_date,
+            "highwatermark_id": highwatermark,
+        })
+        if response.status_code != 200:
+            break
+        data = response.json()
+        data = data.get("response", {}) if type(data) == "dict" else {}
+        if type(data) != "dict":
+            break
+        results = data.get("results", [])
+        if type(results) == "list":
+            for result in results[:1000]:
+                if type(result) != "dict":
+                    continue
+                result_app_id = result.get("appid") or result.get("primary_appid")
+                value = result.get("gross_units_sold", 0)
+                if str(result_app_id) == str(app_id) and type(value) in ["int", "float"]:
+                    total += value
+        next_highwatermark = str(data.get("max_id", highwatermark))
+        if next_highwatermark == highwatermark:
+            break
+        highwatermark = next_highwatermark
+    return total
+
 def main(config):
-    game_name = config.get("game_name", "Your Game")
+    game_name = str(config.get("game_name", "Your Game"))[:32]
     api_key = config.get("api_key")
     app_id = config.get("app_id")
 
-    if not api_key or not app_id:
+    if not api_key or not app_id or not str(app_id).isdigit():
         return render.Root(
             child = render.Padding(
                 pad = (1, 1, 1, 1),
@@ -106,32 +138,23 @@ def main(config):
         target_date = (now - time.parse_duration(hours_ago)).format("2006-01-02")
 
         # 1. Fetch Sales
-        s_res = http.get(SALES_URL, params = {
-            "key": api_key,
-            "appid": app_id,
-            "date": target_date,
-            "highwatermark_id": "0",
-        }, ttl_seconds = 3600)
-
-        day_sales_sum = 0
-        if s_res.status_code == 200:
-            res_list = s_res.json().get("response", {}).get("results", [])
-            if res_list:  # Ensure it's not None
-                for res in res_list:
-                    day_sales_sum += res.get("gross_units_sold", 0)
-        daily_sales.append(day_sales_sum)
+        daily_sales.append(fetch_sales(api_key, app_id, target_date))
 
         # 2. Fetch Wishlists
         w_res = http.get(WISHLIST_URL, params = {
             "key": api_key,
             "appid": app_id,
             "date": target_date,
-        }, ttl_seconds = 3600)
+        })
 
         day_wish_sum = 0
         if w_res.status_code == 200:
-            res_list = w_res.json().get("response", {})
-            day_wish_sum += res_list.get("wishlist_summary", {}).get("wishlist_adds", 0)
+            data = w_res.json()
+            response = data.get("response", {}) if type(data) == "dict" else {}
+            summary = response.get("wishlist_summary", {}) if type(response) == "dict" else {}
+            value = summary.get("wishlist_adds", 0) if type(summary) == "dict" else 0
+            if type(value) in ["int", "float"]:
+                day_wish_sum += value
         daily_wish.append(day_wish_sum)
 
     # Calculate max values (avoid division by zero)
@@ -196,7 +219,7 @@ def get_schema():
         version = "1",
         fields = [
             schema.Text(id = "game_name", name = "Game Name", desc = "Game Name", icon = "gamepad"),
-            schema.Text(id = "api_key", name = "API Key", desc = "Steam API Key", icon = "key", secret = True),
+            schema.Text(id = "api_key", name = "Financial API Key", desc = "Steamworks publisher key from a dedicated Financial API Group. This key grants account-wide financial access.", icon = "key", secret = True),
             schema.Text(id = "app_id", name = "App ID", desc = "Steam App ID", icon = "gamepad"),
         ],
     )

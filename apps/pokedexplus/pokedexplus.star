@@ -16,10 +16,10 @@ load("time.star", "time")
 DEFAULT_COLOR = "#000024"
 DEFAULT_FONT_COLOR = "#FFFFFF"
 DEFAULT_REGION = "National"
-MIN = 0
-MAX = 898
-
 CACHE_TTL_SECONDS = 3600 * 24 * 7  # 7 days in seconds.
+MAX_JSON_BYTES = 1048576
+MAX_IMAGE_BYTES = 2097152
+SPRITE_PREFIX = "https://raw.githubusercontent.com/PokeAPI/sprites/"
 
 POKEMON_API = "https://pokeapi.co/api/v2/pokemon/{}"
 POKEMON_SPECIES_API = "https://pokeapi.co/api/v2/pokemon-species/{}"
@@ -31,8 +31,8 @@ def main(config):
     fontColor = config.str("fontColor", DEFAULT_FONT_COLOR)
     region = config.get("region", DEFAULT_REGION)
 
-    min = config.str("min", MIN)
-    max = config.str("max", MAX)
+    min = 1
+    max = 1025
 
     if region == "National":
         min = 1
@@ -68,7 +68,8 @@ def main(config):
         min = 906
         max = 1025
     else:
-        pass
+        min = 1
+        max = 1025
 
     # Generate a random Pokémon ID based on the user's desired region.
     random.seed(time.now().unix // 15)
@@ -80,12 +81,16 @@ def main(config):
     # Pokemon Data
     pokemon = get_pokemon(random_pokemon_id)
     species = get_species(random_pokemon_id)
+    if not pokemon or not species:
+        return render_message("Pokédex data unavailable", bgColor, fontColor)
 
     pokemonName = pokemon["name"].title()
 
     pokemonRawFlavorText = ""
     for flavor_entry in species["flavor_text_entries"]:
-        if flavor_entry["language"]["name"] == "en":
+        if type(flavor_entry) != "dict" or type(flavor_entry.get("language")) != "dict":
+            continue
+        if flavor_entry["language"].get("name") == "en" and type(flavor_entry.get("flavor_text")) == "string":
             pokemonRawFlavorText = flavor_entry["flavor_text"]
             break
     flavor_text = pokemonRawFlavorText.replace("\n", " ")
@@ -93,15 +98,18 @@ def main(config):
     imageSize = 36 * scale
 
     # Get the Pokémon sprite. Check if there is an animated version available, if not revert to the default.
-    spriteURL = pokemon["sprites"]["versions"]["generation-v"]["black-white"]["animated"]["front_default"]
+    sprites = pokemon["sprites"]
+    spriteURL = sprites.get("versions", {}).get("generation-v", {}).get("black-white", {}).get("animated", {}).get("front_default")
     if spriteURL == None:
-        spriteURL = pokemon["sprites"]["front_default"]
+        spriteURL = sprites.get("front_default")
         # Set the animated image size to be slightly smaller so animations don't get cropped.
 
     else:
         imageSize = 30 * scale
 
     pokemonSprite = get_cacheable_data(spriteURL)
+    if not pokemonSprite:
+        return render_message("Pokédex image unavailable", bgColor, fontColor)
     pokemonImage = render.Image(src = pokemonSprite, width = imageSize, height = imageSize, hold_frames = scale)
 
     return render.Root(
@@ -188,18 +196,39 @@ def get_schema():
     )
 
 def get_pokemon(id):
-    url = POKEMON_API.format(id)
-    data = get_cacheable_data(url)
-    return json.decode(data)
+    data = get_json(POKEMON_API.format(id))
+    if type(data) != "dict" or type(data.get("name")) != "string" or type(data.get("sprites")) != "dict":
+        return None
+    return data
 
 def get_species(id):
-    url = POKEMON_SPECIES_API.format(id)
-    data = get_cacheable_data(url)
-    return json.decode(data)
+    data = get_json(POKEMON_SPECIES_API.format(id))
+    if type(data) != "dict" or type(data.get("flavor_text_entries")) != "list":
+        return None
+    return data
+
+def get_json(url):
+    res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = res.body()
+    if res.status_code != 200 or len(body) > MAX_JSON_BYTES or not body.startswith("{") or not body.endswith("}"):
+        return None
+    return json.decode(body, None)
 
 def get_cacheable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
+    if type(url) != "string" or not url.startswith(SPRITE_PREFIX):
+        return None
     res = http.get(url, ttl_seconds = ttl_seconds)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+    body = res.body()
+    if res.status_code != 200 or len(body) > MAX_IMAGE_BYTES:
+        return None
+    return body
 
-    return res.body()
+def render_message(message, background, color):
+    return render.Root(
+        child = render.Box(
+            width = canvas.width(),
+            height = canvas.height(),
+            color = background,
+            child = render.WrappedText(message, color = color, align = "center"),
+        ),
+    )

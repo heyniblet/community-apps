@@ -6,14 +6,13 @@ This app shows the number of downloads for a NPM package for the last day, week 
 
 ## API Details
 
-We use two public NPM APIs to retrieve the data:
+We use npm's public downloads API to retrieve the data:
 
-- The [search](https://www.npmjs.com/search?q=axios) API is used by the `get_schema` method to help the user find the package he wants to track.
-- The [downloads](https://api.npmjs.org/downloads/range/last-week/axios) API is then used to retrieve the download counts for a given period.
+- The [downloads](https://api.npmjs.org/downloads/range/last-week/axios) API retrieves the download counts for the package entered by the user.
 
 ### Authentication
 
-Both APIs used require no authentication.
+The API requires no authentication.
 
 ### Rate Limiting
 

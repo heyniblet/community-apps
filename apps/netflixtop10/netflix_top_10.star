@@ -5,10 +5,8 @@ Description: Shows the top 10 charts for movies or TV shows on Netflix.
 Author: Matt Broussard, gabe565
 """
 
-load("encoding/json.star", "json")
 load("html.star", "html")
 load("http.star", "http")
-load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
@@ -32,6 +30,106 @@ CATEGORY_MAPPING = {
     CATEGORY_FILMS: "films",
     CATEGORY_TV: "tv",
 }
+
+# Keep the region values from schema v1 local so setup never scrapes a live page.
+REGIONS = [
+    ("Global", "global"),
+    ("United States", "united-states"),
+    ("Argentina", "argentina"),
+    ("Australia", "australia"),
+    ("Austria", "austria"),
+    ("Bahamas", "bahamas"),
+    ("Bahrain", "bahrain"),
+    ("Bangladesh", "bangladesh"),
+    ("Belgium", "belgium"),
+    ("Bolivia", "bolivia"),
+    ("Brazil", "brazil"),
+    ("Bulgaria", "bulgaria"),
+    ("Canada", "canada"),
+    ("Chile", "chile"),
+    ("Colombia", "colombia"),
+    ("Costa Rica", "costa-rica"),
+    ("Croatia", "croatia"),
+    ("Cyprus", "cyprus"),
+    ("Czechia", "czechia"),
+    ("Denmark", "denmark"),
+    ("Dominican Republic", "dominican-republic"),
+    ("Ecuador", "ecuador"),
+    ("Egypt", "egypt"),
+    ("El Salvador", "el-salvador"),
+    ("Estonia", "estonia"),
+    ("Finland", "finland"),
+    ("France", "france"),
+    ("Germany", "germany"),
+    ("Greece", "greece"),
+    ("Guadeloupe", "guadeloupe"),
+    ("Guatemala", "guatemala"),
+    ("Honduras", "honduras"),
+    ("Hong Kong", "hong-kong"),
+    ("Hungary", "hungary"),
+    ("Iceland", "iceland"),
+    ("India", "india"),
+    ("Indonesia", "indonesia"),
+    ("Ireland", "ireland"),
+    ("Israel", "israel"),
+    ("Italy", "italy"),
+    ("Jamaica", "jamaica"),
+    ("Japan", "japan"),
+    ("Jordan", "jordan"),
+    ("Kenya", "kenya"),
+    ("Kuwait", "kuwait"),
+    ("Latvia", "latvia"),
+    ("Lebanon", "lebanon"),
+    ("Lithuania", "lithuania"),
+    ("Luxembourg", "luxembourg"),
+    ("Malaysia", "malaysia"),
+    ("Maldives", "maldives"),
+    ("Malta", "malta"),
+    ("Martinique", "martinique"),
+    ("Mauritius", "mauritius"),
+    ("Mexico", "mexico"),
+    ("Morocco", "morocco"),
+    ("Netherlands", "netherlands"),
+    ("New Caledonia", "new-caledonia"),
+    ("New Zealand", "new-zealand"),
+    ("Nicaragua", "nicaragua"),
+    ("Nigeria", "nigeria"),
+    ("Norway", "norway"),
+    ("Oman", "oman"),
+    ("Pakistan", "pakistan"),
+    ("Panama", "panama"),
+    ("Paraguay", "paraguay"),
+    ("Peru", "peru"),
+    ("Philippines", "philippines"),
+    ("Poland", "poland"),
+    ("Portugal", "portugal"),
+    ("Qatar", "qatar"),
+    ("Romania", "romania"),
+    ("Russia", "russia"),
+    ("Réunion", "reunion"),
+    ("Saudi Arabia", "saudi-arabia"),
+    ("Serbia", "serbia"),
+    ("Singapore", "singapore"),
+    ("Slovakia", "slovakia"),
+    ("Slovenia", "slovenia"),
+    ("South Africa", "south-africa"),
+    ("South Korea", "south-korea"),
+    ("Spain", "spain"),
+    ("Sri Lanka", "sri-lanka"),
+    ("Sweden", "sweden"),
+    ("Switzerland", "switzerland"),
+    ("Taiwan", "taiwan"),
+    ("Thailand", "thailand"),
+    ("Trinidad and Tobago", "trinidad-and-tobago"),
+    ("Türkiye", "turkiye"),
+    ("Ukraine", "ukraine"),
+    ("United Arab Emirates", "united-arab-emirates"),
+    ("United Kingdom", "united-kingdom"),
+    ("Uruguay", "uruguay"),
+    ("Venezuela", "venezuela"),
+    ("Vietnam", "vietnam"),
+]
+REGION_VALUES = [value for _, value in REGIONS]
 
 FONT_LARGE = "large"
 FONT_SMALL = "small"
@@ -60,10 +158,23 @@ def get_schema():
                 default = REGION_GLOBAL,
                 options = get_regions(),
             ),
-            schema.Generated(
-                id = "category_gen",
-                source = "region",
-                handler = gen_category_dropdown,
+            schema.Dropdown(
+                id = "category",
+                name = "Category",
+                desc = "The category of content to display. Country charts use Films or TV; global charts use a language-specific category.",
+                default = CATEGORY_FILMS_ENGLISH,
+                icon = "film",
+                options = [
+                    schema.Option(display = category, value = category)
+                    for category in [
+                        CATEGORY_FILMS_ENGLISH,
+                        CATEGORY_FILMS_NON_ENGLISH,
+                        CATEGORY_TV_ENGLISH,
+                        CATEGORY_TV_NON_ENGLISH,
+                        CATEGORY_FILMS,
+                        CATEGORY_TV,
+                    ]
+                ],
             ),
             schema.Dropdown(
                 id = "font_size",
@@ -83,7 +194,11 @@ def main(config):
     width, height, is2x = canvas.width(), canvas.height(), canvas.is2x()
 
     region = config.get("region", REGION_GLOBAL)
+    if region not in REGION_VALUES:
+        region = REGION_GLOBAL
     category = config.get("category", default_category_for_region(region))
+    if category not in get_categories(region):
+        category = default_category_for_region(region)
     scroll_direction = config.get("scroll_direction", "vertical")
 
     font_size = config.get("font_size", FONT_LARGE)
@@ -100,6 +215,8 @@ def main(config):
     # that matches nothing in the current region
     if len(rows) == 0:
         rows = get_entries(region, default_category_for_region(region), n)
+    if len(rows) == 0:
+        rows = ["Netflix Top 10 unavailable"]
 
     spacer_width = width // 32
 
@@ -159,27 +276,7 @@ def main(config):
     )
 
 def get_regions():
-    url = build_page_url()
-    resp = http.get(url, ttl_seconds = TTL_SECONDS)
-    if resp.status_code != 200:
-        fail("HTTP request failed with status {}".format(resp.status_code))
-
-    matches = re.findall(r"\"countries\":\[.+?\]", resp.body())
-    if len(matches) == 0:
-        fail("Could not find countries listing")
-
-    # Convert \xXX escape sequences to \u00XX Unicode escapes for JSON decoder
-    countriesStr = "{" + re.sub(r"\\x(..)", r"\u00$1", matches[0]) + "}"
-    countries = json.decode(countriesStr)
-
-    return [
-        schema.Option(display = "Global", value = REGION_GLOBAL),
-        schema.Option(display = "United States", value = REGION_UNITED_STATES),
-    ] + [
-        schema.Option(display = country["displayName"], value = country["urlSegment"])
-        for country in sorted(countries["countries"], key = lambda x: x["displayName"])
-        if country["urlSegment"] != REGION_UNITED_STATES
-    ]
+    return [schema.Option(display = display, value = value) for display, value in REGIONS]
 
 def get_categories(region):
     if region == REGION_GLOBAL:
@@ -193,20 +290,6 @@ def get_categories(region):
 
 def default_category_for_region(region):
     return CATEGORY_FILMS_ENGLISH if region == REGION_GLOBAL else CATEGORY_FILMS
-
-def gen_category_dropdown(region):
-    categories = get_categories(region)
-    return [schema.Dropdown(
-        id = "category",
-        name = "Category",
-        desc = "The category of content to display the chart for",
-        default = default_category_for_region(region),
-        icon = "cameraMovie",
-        options = [
-            schema.Option(display = category, value = category)
-            for category in categories
-        ],
-    )]
 
 def category_slug(category, region = REGION_GLOBAL):
     return CATEGORY_MAPPING.get(category, default_category_for_region(region))
@@ -223,7 +306,7 @@ def get_entries(region, category, limit):
     url = build_page_url(region, category)
     resp = http.get(url, ttl_seconds = TTL_SECONDS)
     if resp.status_code != 200:
-        fail("HTTP request failed with status {}".format(resp.status_code))
+        return []
 
     doc = html(resp.body())
     trs = doc.find("table tr")

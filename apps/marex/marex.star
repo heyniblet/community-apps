@@ -1,7 +1,7 @@
 """
 Applet: Marex
 Summary: Tide times for a beach in Brazil.
-Description: Shows today's tide table from tabuamare.devtu.qzz.io.
+Description: Shows today's tide table from tabuamare.api.br.
 Author: Flavio
 """
 
@@ -14,7 +14,7 @@ load("time.star", "time")
 
 DEFAULT_HARBOR_ID = "pb01"
 DEFAULT_TIMEZONE = "America/Fortaleza"
-API_BASE_URL = "https://tabuamare.devtu.qzz.io/api/v2/tabua-mare"
+API_BASE_URL = "https://tabuamare.api.br/api/v2/tabua-mare"
 CACHE_TTL_SECONDS = 60 * 60
 
 def main(config):

@@ -66,64 +66,63 @@ query = "/API/system/groups/devicecounts?organizationgroupid="
 #Because the returned JSON doesn't include a key if the value is 0, we have to first check to seee if its there
 #before we try and get the value, otherwise the app stops with an error.
 
-DEFAULT_OGI = "11536"
-DEFAULT_TENNANTCODEI = "W2+l8YG+rrWWFUI6v9E+6lE+Tef8fQZYt4VMj7ATEzY="
-DEFAULT_TENANTURLI = "https://as1506.awmdm.com"
-DEFAULT_ADMINUSERI = "apiguy3"
-DEFAULT_ADMINPASSWORDI = "VMware2!"
-
 def main(config):
-    og = config.get("ogi", DEFAULT_OGI)
-    tenantcode = config.get("tenantcodei", DEFAULT_TENNANTCODEI)
-    tenanturl = config.get("tenanturli", DEFAULT_TENANTURLI)
-    adminuser = config.get("adminuseri", DEFAULT_ADMINUSERI)
-    adminpassword = config.get("adminpasswordi", DEFAULT_ADMINPASSWORDI)
+    og = config.get("ogi") or ""
+    tenantcode = config.get("tenantcodei") or ""
+    tenanturl = config.get("tenanturli") or ""
+    adminuser = config.get("adminuseri") or ""
+    adminpassword = config.get("adminpasswordi") or ""
+
+    values = [og, tenantcode, tenanturl, adminuser, adminpassword]
+    if not all([type(value) == "string" for value in values]):
+        return render.Root(child = render.WrappedText("Configure Workspace ONE API access", width = 64, align = "center"))
+    if (
+        not tenanturl.startswith("https://") or
+        any([char in tenanturl for char in ["?", "#", "@"]]) or
+        len(tenanturl) > 512 or
+        len(og) > 20 or
+        not og.isdigit() or
+        not tenantcode or
+        len(tenantcode) > 256 or
+        not adminuser or
+        len(adminuser) > 256 or
+        not adminpassword or
+        len(adminpassword) > 1024
+    ):
+        return render.Root(child = render.WrappedText("Configure Workspace ONE API access", width = 64, align = "center"))
 
     authotmp = base64.encode(adminuser + ":" + adminpassword)
     autho = "Basic " + authotmp
 
     #Set the API URL by adding the tenanturl, query, and og vsariables together.
-    AWDEVICES_API_URL = tenanturl + query + og
+    AWDEVICES_API_URL = tenanturl.rstrip("/") + query + og
 
     rep = http.get(AWDEVICES_API_URL, headers = {"Authorization": autho, "Accept": "application/json", "aw-tenant-code": tenantcode})
     if rep.status_code != 200:
-        print("URL %s" % AWDEVICES_API_URL)
-        print("The request failed with status %d" % rep.status_code)
         return render.Root(
             child = render.WrappedText("API Error: %d" % rep.status_code, color = "#ff0000"),
         )
 
-    totalog = rep.json()["Total"]
-    rootog = rep.json()["LocationGroups"][0]["LocationGroupName"]
+    data = rep.json()
+    groups = data.get("LocationGroups") if type(data) == "dict" else None
+    if type(groups) != "list" or not groups:
+        return render.Root(child = render.WrappedText("Invalid Workspace ONE response", width = 64, align = "center"))
+    groups = groups[:200]
+    rootog = str(groups[0].get("LocationGroupName") or "Workspace ONE")[:80] if type(groups[0]) == "dict" else "Workspace ONE"
     totaldevices = 0.0
     totalunenrolled = 0.0
     totalenrolled = 0.0
     totalenrollp = 0.0
 
-    for i in range(int(totalog)):
-        if (rep.json()["LocationGroups"][i].get("TotalDevices")) == None:
-            devicecount = 0
-        else:
-            devicecount = rep.json()["LocationGroups"][i]["TotalDevices"]
-            totaldevices += devicecount
-
-        if (rep.json()["LocationGroups"][i]["DeviceCountByEnrollmentStatus"].get("EnrollmentInProgress")) == None:
-            enrollp = 0
-        else:
-            enrollp = rep.json()["LocationGroups"][i]["DeviceCountByEnrollmentStatus"]["EnrollmentInProgress"]
-            totalenrollp += enrollp
-
-        if (rep.json()["LocationGroups"][i]["DeviceCountByEnrollmentStatus"].get("Enrolled")) == None:
-            enrolled = 0
-        else:
-            enrolled = rep.json()["LocationGroups"][i]["DeviceCountByEnrollmentStatus"]["Enrolled"]
-            totalenrolled += enrolled
-
-        if (rep.json()["LocationGroups"][i]["DeviceCountByEnrollmentStatus"].get("Unenrolled")) == None:
-            unenrolled = 0
-        else:
-            unenrolled = rep.json()["LocationGroups"][i]["DeviceCountByEnrollmentStatus"]["Unenrolled"]
-            totalunenrolled += unenrolled
+    for group in groups:
+        if type(group) != "dict":
+            continue
+        counts = group.get("DeviceCountByEnrollmentStatus")
+        counts = counts if type(counts) == "dict" else {}
+        totaldevices += number(group.get("TotalDevices"))
+        totalenrollp += number(counts.get("EnrollmentInProgress"))
+        totalenrolled += number(counts.get("Enrolled"))
+        totalunenrolled += number(counts.get("Unenrolled"))
 
     #Now that we have the values we need, we can put them on the screen.
     #We render a column so that all items (or children as they are called) are vertically laid out.
@@ -173,6 +172,13 @@ def main(config):
         ),
     )
 
+def number(value):
+    if type(value) in ["int", "float"] and value >= 0:
+        return float(value)
+    if type(value) == "string" and len(value) <= 20 and value.isdigit():
+        return float(value)
+    return 0.0
+
 def get_schema():
     return schema.Schema(
         version = "1",
@@ -188,11 +194,12 @@ def get_schema():
                 name = "Tenant Code",
                 desc = "AirWatchAPI Key in the REST API screen.",
                 icon = "code",
+                secret = True,
             ),
             schema.Text(
                 id = "tenanturli",
                 name = "Tenant URL",
-                desc = "This is your tenant URL but changing cn to as.",
+                desc = "Public HTTPS API URL for your Workspace ONE tenant (port 443).",
                 icon = "html5",
             ),
             schema.Text(

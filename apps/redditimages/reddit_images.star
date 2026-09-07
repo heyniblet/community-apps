@@ -1,10 +1,11 @@
 """
 Applet: Reddit Images
 Summary: Shuffle Subreddit Images
-Description: Show a random image post from a custom list of subreddits (up to 10) and/or a list of default subreddits. Use the ID displayed to access the post on a computer, at http://www.reddit.com/{id}. All fields are optional.
+Description: Show a random image post from a custom list of subreddits (up to 10) and/or a list of default subreddits. Use the ID displayed to access the post on a computer, at https://www.reddit.com/{id}. Reddit API client credentials are required.
 Author: Nicole Brooks
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/error_img.png", ERROR_IMG_ASSET = "file")
 load("random.star", "random")
@@ -14,7 +15,15 @@ load("schema.star", "schema")
 ERROR_IMG = ERROR_IMG_ASSET.readall()
 
 DEFAULT_SUBREDDITS = ["blackcats", "aww", "eyebleach", "itookapicture", "cats", "pic", "otters", "plants"]
-APPROVED_FILETYPES = [".png", ".jpg", ".jpeg", ".bmp"]
+APPROVED_FILETYPES = [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"]
+IMAGE_PREFIXES = ["https://i.redd.it/", "https://preview.redd.it/", "https://external-preview.redd.it/"]
+TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
+LISTING_PREFIX = "https://oauth.reddit.com/r/"
+USER_AGENT = "Niblet Reddit Images/1.0 (hello@heyniblet.com)"
+MAX_TOKEN_BYTES = 64 * 1024
+MAX_LISTING_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+CACHE_SECONDS = 300
 
 def main(config):
     # Build full sub list based on user options.
@@ -25,11 +34,9 @@ def main(config):
     currentPost = getPosts(chosenSub, config)
 
     # Render image/text
-    if currentPost["id"] != "00000":
-        imgSrc = http.get(currentPost["url"]).body()
-    else:
-        imgSrc = ERROR_IMG
+    imgSrc = get_image(currentPost.get("url"))
     return render.Root(
+        max_age = CACHE_SECONDS,
         child =
             render.Box(
                 color = "#0f0f0f",
@@ -102,86 +109,79 @@ def combineSubs(config):
 
 # Checks if the user entered data in the given input.
 def checkCustomSubSchema(subNum, config, currentArray):
-    sub = config.get(subNum, "")
-    if len(sub) > 1:
-        currentArray.append(buildSubPrefix(sub))
+    sub = buildSubPrefix(config.str(subNum, ""))
+    if sub:
+        currentArray.append(sub)
     return currentArray
 
 # Removes any /r or /r/ characters users might have put on the sub name.
 def buildSubPrefix(name):
-    formattedName = name
-    rIndex = name.find("r/")
-    if rIndex != -1:
-        formattedName = name[rIndex + 2:]
-
-    return formattedName
+    name = name.strip().lower()
+    name = name.replace("http:", "https:")
+    for prefix in ["https://www.reddit.com/r/", "/r/", "r/"]:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    name = name.split("/")[0]
+    if len(name) < 2 or len(name) > 21 or not all([char.isalnum() or char == "_" for char in name.codepoints()]):
+        return ""
+    return name
 
 # Gets either the cached posts or runs an API call to reddit for more.
 def getPosts(subname, config):
-    print("Pulling posts for subreddit " + subname)
-
-    print("Cache miss, refreshing posts")
-
-    # Pull access token from cache. If expired, get a new one.
     newTokenRes = getNewAccessToken(config)
-    if "error" in newTokenRes.keys() or newTokenRes["access_token"] == None:
-        return handleApiError(newTokenRes)
-    accessToken = newTokenRes["access_token"]
+    accessToken = newTokenRes.get("access_token") if type(newTokenRes) == "dict" else None
+    if type(accessToken) != "string" or not accessToken:
+        return handleApiError("Add Reddit API credentials")
 
-    # In lieu of the cache, pull a new set of posts from the API.
-    apiUrl = "https://oauth.reddit.com/r/" + subname + "/hot.json?limit=30"
+    apiUrl = LISTING_PREFIX + subname + "/hot.json?limit=30&raw_json=1"
     auth = "Bearer " + accessToken
     rep = http.get(
         apiUrl,
         headers = {
-            "User-Agent": "Tidbyt App: Reddit Image Shuffler",
+            "User-Agent": USER_AGENT,
             "Authorization": auth,
         },
-        ttl_seconds = 2 * 60 * 60,
+        ttl_seconds = CACHE_SECONDS,
     )
-    if "application/json" not in rep.headers.get("Content-Type"):
-        return handleApiError()
-    data = rep.json()
-    if "error" in data.keys():
-        return handleApiError(data)
-    else:
-        posts = data["data"]["children"]
-        allImagePosts = []
+    body = rep.body()
+    data = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_LISTING_BYTES else None
+    listing = data.get("data", {}) if type(data) == "dict" else {}
+    posts = listing.get("children", []) if type(listing) == "dict" else []
+    if type(posts) != "list":
+        return handleApiError("Reddit unavailable")
 
-        # Add all image posts to a new list.
-        for i in range(0, len(posts) - 1):
-            for j in range(0, len(APPROVED_FILETYPES) - 1):
-                if posts[i]["data"]["url"].endswith(APPROVED_FILETYPES[j]):
-                    allImagePosts.append(posts[i]["data"])
+    allImagePosts = []
+    for child in posts[:30]:
+        post = child.get("data", {}) if type(child) == "dict" else {}
+        image_url = post_image_url(post)
+        if image_url:
+            allImagePosts.append({
+                "id": post.get("id", ""),
+                "image_url": image_url,
+                "subreddit_name_prefixed": post.get("subreddit_name_prefixed", "r/" + subname),
+                "title": post.get("title", ""),
+            })
 
-        return setRandomPost(allImagePosts, subname)
+    return setRandomPost(allImagePosts, subname)
 
-# Build an error display for users. Log error.
-def handleApiError(data = None):
-    if data == None:
-        message = "Unknown Error"
-    elif "message" in data.keys():
-        message = data["message"]
-    else:
-        message = data["error"]
-    print("error :( " + message)
+# Build an error display for users.
+def handleApiError(message = "Reddit unavailable"):
     return {
         "sub": "r/???",
-        "title": "error",
+        "title": message,
         "id": "00000",
     }
 
 # Get random post from all image posts for that sub. Build and return display data.
 def setRandomPost(allImagePosts, subname):
     if len(allImagePosts) > 0:
-        chosen = allImagePosts[getRandomNumber(len(allImagePosts) - 1)]
-        print("Post picked is:")
-        print(chosen["title"] + " | " + chosen["id"])
+        chosen = allImagePosts[getRandomNumber(len(allImagePosts))]
         return {
-            "url": chosen["preview"]["images"][0]["resolutions"][0]["url"].replace("&amp;", "&"),
-            "sub": chosen["subreddit_name_prefixed"],
-            "id": chosen["id"],
-            "title": chosen["title"],
+            "url": chosen["image_url"],
+            "sub": safe_text(chosen["subreddit_name_prefixed"], "r/" + subname, 28),
+            "id": safe_text(chosen["id"], "00000", 12),
+            "title": safe_text(chosen["title"], "Untitled", 240),
         }
 
     else:
@@ -195,28 +195,63 @@ def setRandomPost(allImagePosts, subname):
 # Get a new reddit access token.
 # https://github.com/reddit-archive/reddit/wiki/OAuth2#application-only-oauth
 def getNewAccessToken(config):
-    authSecret = config.get("reddit_client_secret") or "thiswillfail"
-    auth = tuple([
-        "DxzJmjTSGHMt4Oj_8X7FkQ",
-        authSecret,
-    ])
+    client_id = config.str("reddit_client_id", "").strip()
+    authSecret = config.str("reddit_client_secret", "").strip()
+    if not valid_credential(client_id) or not authSecret or len(authSecret) > 256:
+        return {}
+    auth = tuple([client_id, authSecret])
     headers = {
-        "User-Agent": "Tidbyt App: Reddit Image Shuffler",
+        "User-Agent": USER_AGENT,
         "Accept": "application/json",
     }
     body = dict(
         grant_type = "client_credentials",
     )
     res = http.post(
-        url = "https://www.reddit.com/api/v1/access_token",
+        url = TOKEN_URL,
         headers = headers,
         auth = auth,
         form_body = body,
         form_encoding = "application/x-www-form-urlencoded",
-        ttl_seconds = 24 * 60 * 60,
     )
-    data = res.json()
-    return data
+    response_body = res.body()
+    data = json.decode(response_body, None) if res.status_code == 200 and response_body and len(response_body) <= MAX_TOKEN_BYTES else None
+    return data if type(data) == "dict" else {}
+
+def valid_credential(value):
+    return value and len(value) <= 128 and all([char.isalnum() or char in "-_" for char in value.codepoints()])
+
+def post_image_url(post):
+    if type(post) != "dict":
+        return None
+    direct = post.get("url_overridden_by_dest", post.get("url"))
+    if valid_image_url(direct):
+        return direct
+    preview = post.get("preview", {})
+    images = preview.get("images", []) if type(preview) == "dict" else []
+    if type(images) == "list" and len(images) > 0 and type(images[0]) == "dict":
+        resolutions = images[0].get("resolutions", [])
+        if type(resolutions) == "list" and len(resolutions) > 0 and type(resolutions[0]) == "dict":
+            url = resolutions[0].get("url")
+            url = url.replace("&amp;", "&") if type(url) == "string" else None
+            return url if valid_image_url(url) else None
+    return None
+
+def valid_image_url(url):
+    if type(url) != "string" or not any([url.startswith(prefix) for prefix in IMAGE_PREFIXES]):
+        return False
+    path = url.split("?")[0].lower()
+    return any([path.endswith(extension) for extension in APPROVED_FILETYPES])
+
+def get_image(url):
+    if not valid_image_url(url):
+        return ERROR_IMG
+    response = http.get(url, ttl_seconds = 24 * 60 * 60)
+    body = response.body()
+    return body if response.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES else ERROR_IMG
+
+def safe_text(value, fallback, limit):
+    return value[:limit] if type(value) == "string" and value else fallback
 
 def get_schema():
     return schema.Schema(
@@ -288,6 +323,12 @@ def get_schema():
                 desc = "In addition to custom subreddits, include defaults? (/r/cats, /r/otters, /r/blackcats, /r/plants, /r/itookapicture, /r/aww, /r/eyebleach, /r/pic)",
                 icon = "otter",
                 default = False,
+            ),
+            schema.Text(
+                id = "reddit_client_id",
+                name = "Reddit Client ID",
+                desc = "The client ID from your Reddit API application.",
+                icon = "key",
             ),
             schema.Text(
                 id = "reddit_client_secret",

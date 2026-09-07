@@ -6,9 +6,7 @@ desc: Check arrivals for a given stop in Madison.
 author: Corey Johnsen
 fileName: madison_metro_bus.star
 packageName: madisonmetrobus
-recommendedInterval: 5
-broken: true
-brokenReason: 'api.smsmybus.com: no such host'
+recommendedInterval: 1
 category: transit
 tags: []
 published: '2024-09-17T15:06:27Z'

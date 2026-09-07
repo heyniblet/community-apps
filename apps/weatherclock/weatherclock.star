@@ -220,10 +220,19 @@ def get_schema():
                 icon = "gear",
                 default = False,
             ),
-            schema.Generated(
-                id = "night_mode_schema",
-                source = "night_mode",
-                handler = nightModeTimesSchema,
+            schema.Text(
+                id = "nightModeStart",
+                name = "Night Mode Start",
+                icon = "clock",
+                desc = "Use 24-hour format (HHmm), e.g. 2300",
+                default = "2300",
+            ),
+            schema.Text(
+                id = "nightModeEnd",
+                name = "Night Mode End",
+                icon = "clock",
+                desc = "Use 24-hour format (HHmm), e.g. 0730",
+                default = "0700",
             ),
         ],
     )

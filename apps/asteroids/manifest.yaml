@@ -6,6 +6,11 @@ desc: A vector-style animation featuring a ship navigating a hazardous asteroid 
 author: Mark Greinke
 fileName: asteroids.star
 packageName: asteroids
+recommendedInterval: 5
+category: entertainment
 published: '2026-05-06T17:34:49Z'
 updated: '2026-05-20T18:59:25Z'
-tags: []
+tags:
+  - gaming
+  - retro
+  - art

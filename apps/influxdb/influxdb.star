@@ -21,6 +21,8 @@ def main(config):
     # Validation
     if not url:
         return render_error("Missing URL")
+    if not url.startswith("https://"):
+        return render_error("InfluxDB URL must use HTTPS")
 
     # Fetch data or use dummy data if no token
     if not token:
@@ -247,7 +249,9 @@ def get_data(url, db, query, token):
 
     # Extract points
     points = []
-    for i in range(len(values)):
+    for i in range(min(len(values), 500)):
+        if type(values[i]) != "list" or len(values[i]) <= value_idx:
+            continue
         val = values[i][value_idx]
         if type(val) == "float" or type(val) == "int":
             points.append((i, float(val)))

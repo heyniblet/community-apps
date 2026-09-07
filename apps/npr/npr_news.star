@@ -43,8 +43,6 @@ NPR_FEEDS = {
     "1071": {"name": "Law", "rss_url": "https://feeds.npr.org/1071/rss.xml"},
 }
 
-NPR_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/National_Public_Radio_logo.svg/320px-National_Public_Radio_logo.svg.png"
-
 THEMES = {
     "dark_blue": {
         "background": "#0f1a2a",
@@ -144,11 +142,11 @@ def render_header(feed, colors, header_height, logo_width):
     )
 
 def render_logo(colors, width, height):
-    res = http.get(NPR_LOGO_URL, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code == 200:
-        return render.Image(src = res.body(), width = width, height = height)
-
-    return render.Text("NPR", font = "tom-thumb", color = colors["background"])
+    return render.Box(
+        width = width,
+        height = height,
+        child = render.Text("NPR", font = "tom-thumb", color = colors["background"]),
+    )
 
 def render_articles(articles, colors, font, show_time, show_title, show_story):
     news_elements = []

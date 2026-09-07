@@ -14,6 +14,9 @@ load("schema.star", "schema")
 NUM_POKEMON = 386
 POKEAPI_URL = "https://pokeapi.co/api/v2/pokemon/{}"
 CACHE_TTL_SECONDS = 3600 * 24 * 7  # 7 days in seconds.
+MAX_JSON_BYTES = 1048576
+MAX_IMAGE_BYTES = 1048576
+SPRITE_PREFIX = "https://raw.githubusercontent.com/PokeAPI/sprites/"
 
 def get_schema():
     return schema.Schema(
@@ -32,6 +35,8 @@ def get_schema():
 def main(config):
     id_ = random.number(1, NUM_POKEMON)
     pokemon = get_pokemon(id_)
+    if not pokemon:
+        return render_message("Pokémon data unavailable")
     name = pokemon["name"].title()
     height = pokemon["height"] / 10
     weight = pokemon["weight"] / 10
@@ -43,8 +48,11 @@ def main(config):
         height = "%s ft" % round(height * 3.281)
         weight = "%s lbs" % round(weight * 2.205)
 
-    sprite_url = pokemon["sprites"]["versions"]["generation-vii"]["icons"]["front_default"]
-    sprite = get_cachable_data(sprite_url)
+    sprites = pokemon["sprites"]
+    sprite_url = sprites.get("versions", {}).get("generation-vii", {}).get("icons", {}).get("front_default") or sprites.get("front_default")
+    sprite = get_image(sprite_url)
+    if not sprite:
+        return render_message("Pokémon image unavailable")
     sprite_img = render.Image(sprite)
     sprite_width, _ = sprite_img.size()
     sprite_width *= 2 if canvas.is2x() else 1
@@ -76,12 +84,29 @@ def round(num):
 
 def get_pokemon(id):
     url = POKEAPI_URL.format(id)
-    data = get_cachable_data(url)
-    return json.decode(data)
+    res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = res.body()
+    if res.status_code != 200 or len(body) > MAX_JSON_BYTES or not body.startswith("{") or not body.endswith("}"):
+        return None
+    data = json.decode(body, None)
+    if type(data) != "dict" or type(data.get("name")) != "string" or type(data.get("height")) not in ("int", "float") or type(data.get("weight")) not in ("int", "float") or type(data.get("sprites")) != "dict":
+        return None
+    return data
 
-def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
-    res = http.get(url = url, ttl_seconds = ttl_seconds)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+def get_image(url):
+    if type(url) != "string" or not url.startswith(SPRITE_PREFIX):
+        return None
+    res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = res.body()
+    if res.status_code != 200 or len(body) > MAX_IMAGE_BYTES:
+        return None
+    return body
 
-    return res.body()
+def render_message(message):
+    return render.Root(
+        child = render.Box(
+            width = canvas.width(),
+            height = canvas.height(),
+            child = render.WrappedText(message, align = "center"),
+        ),
+    )

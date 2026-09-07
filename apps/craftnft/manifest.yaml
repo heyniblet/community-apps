@@ -6,6 +6,8 @@ desc: Display random Craft NFT owned by a user.
 author: tavdog
 fileName: craftnft.star
 packageName: craftnft
+broken: true
+brokenReason: Craft Network retired both API hosts used for wallet inventory and NFT metadata; no supported replacement feed is published during the ICON-to-SODA shutdown.
 recommendedInterval: 5
 category: entertainment
 tags:

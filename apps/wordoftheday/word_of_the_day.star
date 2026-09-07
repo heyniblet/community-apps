@@ -5,13 +5,14 @@ Description: Displays the Merriam-Webster Word Of The Day.
 Author: greg-n
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
-CACHE_KEY = "wotd"
-CACHE_TTL = 10800  # 3 hours
+CACHE_TTL = 3600
 WOTD_API_URL = "https://wordoftheday.freeapi.me/"
+MAX_RESPONSE_BYTES = 32 * 1024
 
 def render_error():
     return render.Root(
@@ -20,18 +21,20 @@ def render_error():
 
 def main():
     wotd_response = http.get(WOTD_API_URL, ttl_seconds = CACHE_TTL)
-
-    if wotd_response.status_code != 200:
-        print("Got code '%s' from API response" % wotd_response.status_code)
+    body = wotd_response.body()
+    if wotd_response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return render_error()
 
-    data = wotd_response.json()
+    data = json.decode(body, {})
+    if type(data) != "dict":
+        return render_error()
     word_parsed = data.get("word", "")
-    definition_parsed = data.get("definition", "")
+    definition_parsed = data.get("definition") or data.get("meaning", "")
 
-    if word_parsed == "" or definition_parsed == "":
-        print("Failed to find word or definition from API")
+    if type(word_parsed) != "string" or type(definition_parsed) != "string" or word_parsed == "" or definition_parsed == "":
         return render_error()
+    word_parsed = word_parsed[:80]
+    definition_parsed = definition_parsed[:1000]
 
     # Values begin with lower cased letters on the calendar note cards
     word = word_parsed[0].upper() + word_parsed[1:] + ":"

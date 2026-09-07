@@ -21,11 +21,11 @@ These customizations can be adjusted using the properties of the app.
 
 ### Roblox API
 
-This app uses public Roblox APIs for accessing [users](https://users.roblox.com/docs), [thumbnails](https://thumbnails.roblox.com/docs), [friends](https://friends.roblox.com/docs) and [games](https://games.roblox.com/docs/) data. (See each API's static endpoints for more details). These do not require any kind of authentication or API key.
+This app uses Roblox's public, unauthenticated [users](https://create.roblox.com/docs/cloud/reference/features/users), [thumbnails](https://create.roblox.com/docs/cloud/reference/features/thumbnails), friends, presence, and games endpoints.
 
 ### Notes
 
-The app code utilizes cache module and non-disrupting error handling best practices.
+API responses are cached briefly and media is restricted to Roblox's thumbnail CDN.
 
 ### –
 #### Happy coding! CODE𝗦𝗧𝗥𝗢𝗡𝗚

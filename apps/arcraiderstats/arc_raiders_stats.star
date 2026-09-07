@@ -16,7 +16,7 @@ ARC_RAIDERS_LOGO = ARC_RAIDERS_LOGO_2X.readall() if canvas.is2x() else ARC_RAIDE
 
 # API URLs
 STEAM_API_URL = "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=1808500"
-ARCRAIDERSHUB_API_URL = "https://arcraidershub.com/data/events.json"
+EVENTS_API_URL = "https://metaforge.app/api/arc-raiders/events-schedule"
 
 # Brand colors
 COLOR_RED = "#F10E12"
@@ -28,7 +28,11 @@ COLOR_WHITE = "#FFFFFF"
 
 # Cache TTL values (in seconds)
 PLAYER_CACHE_TTL = 600  # 10 minutes (http.get cache)
-EVENTS_TABLE_CACHE_TTL = 43200  # 12 hours (cache full event table)
+EVENTS_CACHE_TTL = 300
+MAX_PLAYER_RESPONSE_BYTES = 16 * 1024
+MAX_EVENTS_RESPONSE_BYTES = 256 * 1024
+MAX_EVENTS = 500
+MAX_TEXT_LENGTH = 120
 
 # Screen constants (resolution-aware)
 SCALE = 2 if canvas.is2x() else 1
@@ -155,101 +159,48 @@ def get_player_count():
     if response.status_code != 200:
         return None
 
+    body = response.body()
+    if len(body) > MAX_PLAYER_RESPONSE_BYTES:
+        return None
     data = response.json()
-    if data != None and data.get("response") != None and data["response"].get("player_count") != None:
-        player_count = int(data["response"]["player_count"])
-        return player_count
+    result = data.get("response") if type(data) == "dict" else None
+    player_count = result.get("player_count") if type(result) == "dict" else None
+    if type(player_count) in ["int", "float"] and player_count >= 0:
+        return int(player_count)
 
     return None
 
 def get_current_events():
-    """Fetch currently active events from ARCRaidersHub API with 12-hour cache.
-
-    Parses hourly schedule data and returns events active in the current UTC hour.
-
-    Note: Arc Raiders events are global - they happen at the same UTC time for everyone.
-    Events are scheduled on an hourly basis (e.g., hour 14 = 14:00-15:00 UTC).
-    """
-
-    # Fetch from API (http.get handles caching with ttl_seconds)
-    response = http.get(ARCRAIDERSHUB_API_URL, ttl_seconds = EVENTS_TABLE_CACHE_TTL)
+    """Fetch currently active events from MetaForge's timestamped schedule."""
+    response = http.get(EVENTS_API_URL, ttl_seconds = EVENTS_CACHE_TTL)
     if response.status_code != 200:
-        return None  # Return None to indicate API error
-
+        return None
+    body = response.body()
+    if len(body) > MAX_EVENTS_RESPONSE_BYTES:
+        return None
     response_data = response.json()
-    if not response_data:
-        return None  # Return None to indicate API error
+    events = response_data.get("data") if type(response_data) == "dict" else None
+    if type(events) != "list":
+        return None
 
-    # Get schedule array
-    schedule = response_data.get("schedule", [])
-    if not schedule or type(schedule) != "list":
-        return []  # Return empty list - no schedule data
-
-    # Get current time in UTC
-    now_utc = time.now().in_location("UTC")
-    current_hour = now_utc.hour
-
-    # Calculate end of current hour (start of next hour)
-    # This gives us the timestamp when current events will end
-    year = now_utc.year
-    month = now_utc.month
-    day = now_utc.day
-    next_hour = (current_hour + 1) % 24
-    next_day_offset = 1 if next_hour == 0 else 0
-
-    # Create time at end of current hour
-    end_of_hour = time.time(
-        year = year,
-        month = month,
-        day = day + next_day_offset,
-        hour = next_hour,
-        minute = 0,
-        second = 0,
-        location = "UTC",
-    )
-    end_timestamp = int(end_of_hour.unix)
-
-    # Find schedule entry for current hour
-    current_schedule = None
-    for entry in schedule:
-        if type(entry) == "dict" and entry.get("hour") == current_hour:
-            current_schedule = entry
-            break
-
-    if not current_schedule:
-        return []  # No schedule for current hour
-
-    # Extract events from each map
+    now_ms = time.now().unix_nano // 1000000
     active_events = []
-    maps = response_data.get("maps", [])
-
-    for map_name in maps:
-        if type(map_name) != "string":
+    for event in events[:MAX_EVENTS]:
+        if type(event) != "dict":
             continue
-
-        map_data = current_schedule.get(map_name)
-        if not map_data or type(map_data) != "dict":
+        name = event.get("name")
+        map_name = event.get("map")
+        start = event.get("startTime")
+        end = event.get("endTime")
+        if type(name) != "string" or type(map_name) != "string" or type(start) not in ["int", "float"] or type(end) not in ["int", "float"]:
             continue
-
-        # Check for minor event
-        minor_event = map_data.get("minor")
-        if minor_event and type(minor_event) == "string":
+        if start <= now_ms and now_ms < end:
             active_events.append({
-                "name": minor_event,
-                "map": map_name,
-                "end_timestamp": end_timestamp,
+                "name": name[:MAX_TEXT_LENGTH],
+                "map": map_name[:MAX_TEXT_LENGTH],
+                "end_timestamp": int(end / 1000),
             })
-
-        # Check for major event
-        major_event = map_data.get("major")
-        if major_event and type(major_event) == "string":
-            active_events.append({
-                "name": major_event,
-                "map": map_name,
-                "end_timestamp": end_timestamp,
-            })
-
-    return active_events
+    return active_events[:12]
 
 def format_number(num):
     """Format number in K format (e.g., 286.2K)"""
@@ -783,7 +734,9 @@ def main(config):
     # Note: This is set by the Tidbyt server based on user's rotation settings
     # and is not directly configurable by the user in the app schema
     # Falls back to default if not provided
-    display_time_seconds = int(config.get("$display_time", str(DEFAULT_DISPLAY_TIME)))
+    display_time = str(config.get("$display_time", str(DEFAULT_DISPLAY_TIME)))
+    display_time_seconds = int(display_time) if display_time.isdigit() else DEFAULT_DISPLAY_TIME
+    display_time_seconds = max(5, min(60, display_time_seconds))
 
     # Get player count
     player_count = None

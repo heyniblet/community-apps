@@ -6,7 +6,7 @@ desc: Shows the current playing song on various ABC stations in Australia.
 author: M0ntyP
 fileName: abc_radio.star
 packageName: abcradio
-recommendedInterval: 10
+recommendedInterval: 2
 category: entertainment
 tags:
   - music

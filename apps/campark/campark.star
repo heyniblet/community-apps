@@ -7,6 +7,7 @@ Author: derekllaw
 Uses Smart Cambridge parking API
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -19,6 +20,8 @@ BIG_FONT = "5x8"
 SMALL_FONT = "tom-thumb"
 PARK = "car_park"
 RIDE = "park_and_ride"
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_PARKS = 20
 
 def render_fixed(n):
     """ Render number in at least 3 characters
@@ -46,7 +49,7 @@ def render_row(capacity, free, name, font):
         name: text
         font: font
     """
-    free_colour = "#0F0" if free > (capacity // 10) else "F00"
+    free_colour = "#0F0" if free > (capacity // 10) else "#F00"
     free_text = render_fixed(free)
     return render.Row(children = [
         render.Text(free_text, color = free_colour, font = font),
@@ -63,6 +66,22 @@ def get_schema():
             secret = True,
         ),
     ]
+
+def get_json(url, headers):
+    response = http.get(url, headers = headers)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        print("Smart Cambridge request failed with status %d" % response.status_code)
+        return None
+    data = json.decode(body, None)
+    return data if type(data) == "dict" else None
+
+def safe_id(value):
+    value = str(value or "")
+    for char in value.elems():
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return ""
+    return value
 
 def main(config):
     """ Entry point
@@ -85,28 +104,36 @@ def main(config):
         headers = {"Authorization": "Token %s" % api_token}
 
         # fetch list of parking ids
-        response = http.get(API_BASE, headers = headers, ttl_seconds = 60 * 60 * 24)  # this list is unlikely to change
-        if response.status_code != 200:
-            rows.append(render.Text("API error %d" % response.status_code))
+        park_data = get_json(API_BASE, headers)
+        if not park_data:
+            rows.append(render.Text("Parking API error"))
         else:
-            park_list = response.json()["parking_list"]
+            park_list = park_data.get("parking_list", [])
+            park_list = park_list[:MAX_PARKS] if type(park_list) == "list" else []
             count = {PARK: 0, RIDE: 0}
 
             for park in park_list:
-                count[park["parking_type"]] += 1
+                if type(park) == "dict" and park.get("parking_type") in count:
+                    count[park["parking_type"]] += 1
 
             for parking_type in [PARK]:
                 font = BIG_FONT if count[parking_type] <= 5 else SMALL_FONT
                 for park in park_list:
-                    if park["parking_type"] == parking_type:
-                        api_latest = "{}/latest/{}/".format(API_BASE, park["parking_id"])
+                    if type(park) == "dict" and park.get("parking_type") == parking_type:
+                        parking_id = safe_id(park.get("parking_id"))
+                        if not parking_id:
+                            continue
+                        api_latest = "{}latest/{}/".format(API_BASE, parking_id)
 
-                        response = http.get(api_latest, headers = headers, ttl_seconds = 60 * 15)  # 15 minutes between updates
-                        if response.status_code != 200:
-                            rows.append(render.Text("API error %d" % response.status_code))
+                        data = get_json(api_latest, headers)
+                        if not data:
+                            rows.append(render.Text("Parking API error"))
                         else:
-                            data = response.json()
-                            rows.append(render_row(data["spaces_capacity"], data["spaces_free"], park["parking_name"].title(), font))
+                            capacity = data.get("spaces_capacity")
+                            free = data.get("spaces_free")
+                            name = park.get("parking_name")
+                            if type(capacity) == "int" and capacity > 0 and type(free) == "int" and name:
+                                rows.append(render_row(capacity, max(0, free), str(name).title()[:80], font))
 
     return render.Root(
         child = render.Column(rows, expanded = True, main_align = "space_around"),

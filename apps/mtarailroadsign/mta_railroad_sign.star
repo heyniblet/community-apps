@@ -5,7 +5,9 @@ Description: Adds a realtime next train sign for any Metro-North or Long Island 
 Author: nataliemakhijani
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("images/alert_icon.png", ALERT_ICON_ASSET = "file")
 load("images/branch_babylon.png", BRANCH_BABYLON_ASSET = "file")
 load("images/branch_far_rockaway.png", BRANCH_FAR_ROCKAWAY_ASSET = "file")
@@ -306,6 +308,7 @@ BRANCH_CODES = {
 }
 API_HEADERS = {
     "Accept-Version": "3.0",
+    "User-Agent": "Niblet/1.0 (+https://heyniblet.com)",
 }
 TERMINAL_CODES = {
     "All": "All",
@@ -432,35 +435,58 @@ def main(config):
     filter_direction = config.str("filter_direction", DEFAULT_DIRECTION)
     filter_branch = config.str("filter_branch", DEFAULT_BRANCH)
     filter_stop = config.str("filter_stop", DEFAULT_FILTER_STOP)
+    if station_code not in STATION_NAMES or station_code == "ALL":
+        station_code = DEFAULT_STATION
+    if filter_direction not in ["NESW", "NE", "SW"]:
+        filter_direction = DEFAULT_DIRECTION
+    if filter_branch != "ALL" and filter_branch not in BRANCH_CODES:
+        filter_branch = DEFAULT_BRANCH
+    if filter_stop not in STATION_NAMES:
+        filter_stop = DEFAULT_FILTER_STOP
 
     # Make request
-    RADAR_ARRIVALS_API_URL = "https://backend-unified.mylirr.org/arrivals/%s" % station_code
-    rep = http.get(RADAR_ARRIVALS_API_URL, headers = API_HEADERS)
+    RADAR_ARRIVALS_API_URL = "https://backend-unified.mylirr.org/arrivals/%s" % humanize.url_encode(station_code)
+    rep = http.get(RADAR_ARRIVALS_API_URL, headers = API_HEADERS, ttl_seconds = 30)
     if rep.status_code != 200:  # error checking
         return API_ERROR(rep.status_code)  # handle error
-    json = rep.json()  # parse json
+    data = json.decode(rep.body(), None)
+    if type(data) != "dict":
+        return API_ERROR("data")
 
     # Pick apart data
-    is_alert = True if len(json["alerts"]) > 0 or len(json["banners"]) > 0 else False
-    trains = json["arrivals"]  # extract trains
-    trains = [train for train in trains if train["direction"] in filter_direction]
-    if filter_branch != "ALL":
-        trains = [train for train in trains if train["branch"] == filter_branch]
-    if filter_stop != "ALL":
-        trains = [train for train in trains if filter_stop in train["stops"]]
+    alerts = data.get("alerts") if type(data.get("alerts")) == "list" else []
+    banners = data.get("banners") if type(data.get("banners")) == "list" else []
+    is_alert = len(alerts) > 0 or len(banners) > 0
+    trains = []
+    arrivals = data.get("arrivals") if type(data.get("arrivals")) == "list" else []
+    for train in arrivals:
+        if type(train) != "dict":
+            continue
+        stops = train.get("stops")
+        direction = train.get("direction")
+        branch = train.get("branch")
+        if type(stops) != "list" or len(stops) == 0 or type(direction) != "string" or direction not in filter_direction:
+            continue
+        if filter_branch != "ALL" and branch != filter_branch:
+            continue
+        if filter_stop != "ALL" and filter_stop not in stops:
+            continue
+        if type(train.get("train_id")) != "string" or type(train.get("time")) not in ["int", "float"]:
+            continue
+        trains.append(train)
 
     if len(trains) == 0:  # if there are no trains
         return NO_TRAINS(station_code)  # return the no trains error screen
 
     # train info extraction
     train = trains[0]  # select next to arrive train
-    train_number = train["train_num"]
+    train_number = str(train.get("train_num") or "?")
     train_id = train["train_id"]
     train_dest = train["stops"][-1]  # extract terminal
-    is_peak = train["peak_code"] == "P"  # determine if this is a peak train
+    is_peak = train.get("peak_code") == "P"  # determine if this is a peak train
 
     # branch determination and settings
-    branch_name = BRANCH_CODES[train["branch"]] if train["branch"] in BRANCH_CODES else "Unknown"
+    branch_name = BRANCH_CODES[train.get("branch")] if train.get("branch") in BRANCH_CODES else "Unknown"
     branch_color = BRANCH_COLORS[branch_name] if branch_name in BRANCH_COLORS else "#ffffff"
 
     # find icons
@@ -468,29 +494,30 @@ def main(config):
     train_icon = TERMINAL_ICONS[train_dest] if train_dest in TERMINAL_ICONS else branch_icon
 
     # stop info
-    track_change = False if not "track_change" in train else train["track_change"]  # Figure out if there has been a track change, with extra logic because sometimes there is no "track_change" key
-    stop_track = train["track"] if "track" in train else "?"  # If there isn't a track assigned, show ?. This is often the case at Grand Central Madison and Penn Station
+    track_change = train.get("track_change") == True
+    stop_track = str(train.get("track") or "?")  # If there isn't a track assigned, show ?.
     stop_track_type = "Track" if len(stop_track) > 1 or stop_track.isdigit() else "Plat"  # Determine if it's a "Platform" or "Track"
-    stop_status = train["stop_status"]  # Stop status
-    status_color = STATUS_COLORS[stop_status]  # Assign correct status color
+    stop_status = str(train.get("stop_status") or "EN_ROUTE")
+    status_color = STATUS_COLORS.get(stop_status, STATUS_COLORS["EN_ROUTE"])
 
     # next stops
     next_stops = [STATION_NAMES[stop] if stop in STATION_NAMES else stop for stop in train["stops"]]
 
     # get more info from the location endpoint
-    RADAR_LOCATION_API_URL = "https://backend-unified.mylirr.org/locations/%s?geometry=NONE&events=true" % train_id
-    rep = http.get(RADAR_LOCATION_API_URL, headers = API_HEADERS)
+    RADAR_LOCATION_API_URL = "https://backend-unified.mylirr.org/locations/%s?geometry=NONE&events=true" % humanize.url_encode(train_id)
+    rep = http.get(RADAR_LOCATION_API_URL, headers = API_HEADERS, ttl_seconds = 30)
 
     if rep.status_code != 200:  # error checking
         return API_ERROR(rep.status_code)  # handle error by returning error screen
-    json = rep.json()  # parse json
-    train_info = json
+    train_info = json.decode(rep.body(), None)
+    if type(train_info) != "dict":
+        return API_ERROR("data")
 
     # on-time-performance
-    if not "otp" in train["status"]:  # if there isn't an otp value
-        train_otp = 0  # assume it's on time. it probably hasn't left the terminal yet, and isn't scheduled to have.
-    else:
-        train_otp = train_info["status"]["otp"]  # otherwise, take MTA's word for it.
+    train_status = train_info.get("status") if type(train_info.get("status")) == "dict" else {}
+    train_otp = train_status.get("otp", 0)
+    if type(train_otp) not in ["int", "float"]:
+        train_otp = 0
 
     if train_otp < -600:
         train_otp_color = OCCUPANCY_COLORS["SRO"]
@@ -502,12 +529,14 @@ def main(config):
         train_otp_color = "#ffffff"
 
     # time stuff
-    stop_time = time.from_timestamp(int(train["time"]))  # parse the time that
-    eta = int(math.round(time.parse_duration(str(int(train["time"]) - time.now().unix) + "s").minutes))  # this could *maybe* break if the train is later than 59 minutes, but I haven't had a chance to test this yet, which is probably a good thing!
+    train_time = int(train["time"])
+    stop_time = time.from_timestamp(train_time)
+    eta = int(math.round(float(train_time - time.now().unix) / 60))
     eta_str = "%dm" % eta if eta > 0 else "Due"
 
     # consist rendering
-    consist = train_info["consist"]["cars"]
+    consist_data = train_info.get("consist") if type(train_info.get("consist")) == "dict" else {}
+    consist = consist_data.get("cars") if type(consist_data.get("cars")) == "list" else []
     cars = [render_car(car, i) for i, car in enumerate(consist)]
 
     return render.Root(
@@ -582,7 +611,9 @@ def main(config):
     )
 
 def render_car(car, i):
-    if car["locomotive"]:
+    if type(car) != "dict":
+        return render.Box(height = 2, width = 5, color = OCCUPANCY_COLORS["NO_DATA"])
+    if car.get("locomotive") == True:
         locomotive_parts = [
             render.Column(children = [
                 render.Box(height = 1, width = 1, color = "#000000"),
@@ -594,14 +625,13 @@ def render_car(car, i):
             locomotive_parts = reversed(locomotive_parts)
         return render.Row(children = locomotive_parts + [render.Box(height = 2, width = 1, color = "#000000")])
 
-    elif not car["revenue"]:
+    elif car.get("revenue") != True:
         car_color = OCCUPANCY_COLORS["NON_REVENUE"]
     else:
-        car_color = OCCUPANCY_COLORS[car["loading"]] if car["loading"] in OCCUPANCY_COLORS else OCCUPANCY_COLORS["NO_DATA"]
+        loading = car.get("loading")
+        car_color = OCCUPANCY_COLORS[loading] if loading in OCCUPANCY_COLORS else OCCUPANCY_COLORS["NO_DATA"]
 
-    car["restroom"] = False if "restroom" not in car else car["restroom"]
-
-    if car["restroom"]:
+    if car.get("restroom") == True:
         return render.Row(children = [
             render.Column(children = [
                 render.Box(height = 1, width = 1, color = car_color),

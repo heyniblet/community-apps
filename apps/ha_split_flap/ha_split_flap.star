@@ -21,10 +21,11 @@ COLOR_MAP = {
 COLS, ROWS = 7, 3
 TRANSITION_FRAMES, HOLD_FRAMES = 150, 40
 CYCLE_FRAMES = TRANSITION_FRAMES + HOLD_FRAMES
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 # --- HA Fetch ---
-def fetch_ha_state(ha_url, ha_token, entity, cache_duration):
-    if not ha_url or not ha_token or not entity:
+def fetch_ha_state(ha_url, ha_token, entity):
+    if not ha_url or not valid_token(ha_token) or not valid_entity(entity):
         return "CONFIG HA"
 
     headers = {
@@ -34,14 +35,16 @@ def fetch_ha_state(ha_url, ha_token, entity, cache_duration):
     base_url = ha_url.rstrip("/")
     url = base_url + "/api/states/" + entity
 
-    resp = http.get(url, headers = headers, ttl_seconds = cache_duration)
-    if resp.status_code == 200:
-        data = json.decode(resp.body())
-        return str(data.get("state", "ERR"))
+    resp = http.get(url, headers = headers)
+    body = resp.body()
+    if resp.status_code == 200 and len(body) <= MAX_RESPONSE_BYTES:
+        data = json.decode(body, {})
+        if type(data) == "dict":
+            return str(data.get("state", "ERR"))[:200]
     return "ERR " + str(resp.status_code)
 
-def fetch_ha_template(ha_url, ha_token, template_str, cache_duration):
-    if not ha_url or not ha_token or not template_str:
+def fetch_ha_template(ha_url, ha_token, template_str):
+    if not ha_url or not valid_token(ha_token) or type(template_str) != "string" or not template_str or len(template_str) > 2000:
         return "CONFIG HA"
 
     headers = {
@@ -52,9 +55,10 @@ def fetch_ha_template(ha_url, ha_token, template_str, cache_duration):
     url = base_url + "/api/template"
 
     body = json.encode({"template": template_str})
-    resp = http.post(url, headers = headers, body = body, ttl_seconds = cache_duration)
-    if resp.status_code == 200:
-        return str(resp.body()).strip()
+    resp = http.post(url, headers = headers, body = body)
+    response_body = resp.body()
+    if resp.status_code == 200 and len(response_body) <= MAX_RESPONSE_BYTES:
+        return str(response_body).strip()[:600]
     return "ERR " + str(resp.status_code)
 
 # --- UI Components ---
@@ -180,28 +184,22 @@ def main(config):
     SCALE = 2 if canvas.is2x() else 1
     FLAP_W, FLAP_H = 9 * SCALE, 10 * SCALE
 
-    ha_url = config.str("ha_url")
+    ha_url = normalized_url(config.str("ha_url"))
     ha_token = config.str("ha_token")
-    entities_str = config.str("entity", "")
-    template_str = config.str("template", "")
-
-    cache_duration_str = config.str("cache_duration", "300")
-    cache_duration = 300
-    if cache_duration_str.isdigit():
-        cache_duration = int(cache_duration_str)
-
-    before_text = config.str("before_text", "")
-    after_text = config.str("after_text", "")
+    entities_str = config.str("entity", "") or ""
+    template_str = config.str("template", "") or ""
+    before_text = (config.str("before_text", "") or "")[:40]
+    after_text = (config.str("after_text", "") or "")[:40]
     num_format = config.str("number_format", "none")
 
     texts_to_render = []
     if template_str:
-        val = fetch_ha_template(ha_url, ha_token, template_str, cache_duration)
+        val = fetch_ha_template(ha_url, ha_token, template_str)
         texts_to_render.append(val)
     elif entities_str:
-        entities = [e.strip() for e in entities_str.split(",") if e.strip()]
+        entities = [e.strip() for e in entities_str.split(",") if valid_entity(e.strip())][:8]
         for e in entities:
-            val = fetch_ha_state(ha_url, ha_token, e, cache_duration)
+            val = fetch_ha_state(ha_url, ha_token, e)
             val = format_number(val, num_format)
             texts_to_render.append(before_text + val + after_text)
     else:
@@ -298,7 +296,7 @@ def get_schema():
             schema.Text(
                 id = "ha_url",
                 name = "Home Assistant URL",
-                desc = "e.g. https://homeassistant.local:8123",
+                desc = "Public HTTPS root URL, such as a Home Assistant Cloud remote URL.",
                 icon = "server",
             ),
             schema.Text(
@@ -349,7 +347,7 @@ def get_schema():
             schema.Text(
                 id = "cache_duration",
                 name = "Cache Duration",
-                desc = "How long to cache data from Home Assistant (in seconds)",
+                desc = "Legacy refresh preference; Cloud applies a tenant-safe refresh policy.",
                 icon = "clock",
                 default = "300",
             ),
@@ -373,3 +371,18 @@ def get_schema():
             ),
         ],
     )
+
+def normalized_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://") or any([char in value for char in [" ", "\t", "\r", "\n", "?", "#"]]):
+        return ""
+    parts = value.split("/", 3)
+    host = parts[2].lower() if len(parts) >= 3 else ""
+    if not host or "@" in host or ":" in host:
+        return ""
+    return value.rstrip("/")
+
+def valid_entity(value):
+    return type(value) == "string" and len(value) >= 3 and len(value) <= 128 and "." in value and all([char.isalnum() or char in "._-" for char in value.elems()])
+
+def valid_token(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 4096 and not any([char in value for char in ["\r", "\n"]])

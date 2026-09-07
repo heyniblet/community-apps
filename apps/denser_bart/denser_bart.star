@@ -7,25 +7,65 @@ Author: scoobmx
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
 PREDICTIONS_URL = "https://api.bart.gov/api/etd.aspx"
-STATIONS_URL = "https://api.bart.gov/api/stn.aspx"
 DEFAULT_ABBR = "WOAK"
 DEFAULT_KEY = "MW9S-E7SL-26DU-VV8V"
+MAX_RESPONSE_BYTES = 1024 * 1024
+
+def parse_station(value):
+    if type(value) != "string":
+        return DEFAULT_ABBR
+    if value.startswith("{"):
+        parsed = json.decode(value, None)
+        value = parsed.get("value", "") if type(parsed) == "dict" else ""
+    value = value.strip().upper()
+    return value if len(value) == 4 and all([char.isalnum() for char in value.codepoints()]) else DEFAULT_ABBR
+
+def parse_api_key(value):
+    if type(value) != "string" or not value:
+        return DEFAULT_KEY
+    return value if len(value) <= 128 and "\r" not in value and "\n" not in value else DEFAULT_KEY
+
+def valid_color(value):
+    return type(value) == "string" and re.match(r"^#[0-9a-fA-F]{6}$", value)
+
+def sanitize_predictions(payload, station):
+    root = payload.get("root", {}) if type(payload) == "dict" else {}
+    stations = root.get("station", []) if type(root) == "dict" else []
+    station_data = stations[0] if type(stations) == "list" and stations and type(stations[0]) == "dict" else {}
+    if station_data.get("abbr") != station:
+        return []
+
+    result = []
+    routes = station_data.get("etd", [])
+    if type(routes) != "list":
+        return []
+    for route in routes[:8]:
+        if type(route) != "dict":
+            continue
+        abbreviation = route.get("abbreviation")
+        estimates = route.get("estimate", [])
+        clean_estimates = []
+        if type(abbreviation) != "string" or not abbreviation or len(abbreviation) > 16 or type(estimates) != "list":
+            continue
+        for estimate in estimates[:4]:
+            if type(estimate) != "dict":
+                continue
+            minutes = estimate.get("minutes")
+            color = estimate.get("hexcolor")
+            if type(minutes) == "string" and (minutes == "Leaving" or re.match(r"^[0-9]{1,3}$", minutes)) and valid_color(color):
+                clean_estimates.append({"minutes": minutes, "hexcolor": color})
+        if clean_estimates:
+            result.append({"abbreviation": abbreviation, "estimate": clean_estimates})
+    return result
 
 def main(config):
-    api_key = config.get("api_key")
-    if not api_key:
-        api_key = DEFAULT_KEY
-
-    abbr = config.get("abbr")
-    if abbr == None:
-        abbr = DEFAULT_ABBR
-    elif abbr.startswith("{"):
-        # schema.Typeahead returns a JSON string with value field
-        abbr = json.decode(abbr).get("value", abbr)
+    api_key = parse_api_key(config.get("api_key"))
+    abbr = parse_station(config.get("abbr"))
 
     viz = config.bool("long_abbr")
 
@@ -282,37 +322,15 @@ def get_element_viz(etd, wide):
     return element
 
 def get_times(station, api_key):
-    rep = http.get(PREDICTIONS_URL, params = {"cmd": "etd", "json": "y", "orig": station, "key": api_key}, ttl_seconds = 10)
-    if rep.status_code != 200:
+    rep = http.get(
+        PREDICTIONS_URL,
+        params = {"cmd": "etd", "json": "y", "orig": station, "key": api_key},
+        headers = {"User-Agent": "Niblet Denser BART/1.0 (+https://heyniblet.com)"},
+    )
+    body = rep.body()
+    if rep.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
         return []
-    data = rep.json()
-    if "root" not in data or "station" not in data["root"] or len(data["root"]["station"]) == 0 or data["root"]["station"][0]["abbr"] != station or "etd" not in data["root"]["station"][0]:
-        predictions = []
-    else:
-        predictions = data["root"]["station"][0]["etd"]
-
-    return predictions
-
-def search_stations(prefix, config):
-    api_key = config.get("api_key", DEFAULT_KEY)
-    rep = http.get(STATIONS_URL, params = {"cmd": "stns", "json": "y", "key": api_key}, ttl_seconds = 3600)  # Cache for an hour
-    if rep.status_code != 200:
-        return []
-    data = rep.json()
-    if "root" not in data or "stations" not in data["root"] or "station" not in data["root"]["stations"]:
-        return []
-
-    stationlist = data["root"]["stations"]["station"]
-    stations = []
-    for station in stationlist:
-        if prefix.lower() in station["name"].lower():
-            stations.append(
-                schema.Option(
-                    value = station["abbr"],
-                    display = station["name"],
-                ),
-            )
-    return stations
+    return sanitize_predictions(json.decode(body, None), station)
 
 def get_schema():
     return schema.Schema(
@@ -326,12 +344,12 @@ def get_schema():
                 default = "",
                 secret = True,
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "abbr",
                 name = "Station",
-                desc = "Station to show times for",
+                desc = "Four-character BART station abbreviation",
                 icon = "trainSubway",
-                handler = search_stations,
+                default = DEFAULT_ABBR,
             ),
             schema.Toggle(
                 id = "long_abbr",

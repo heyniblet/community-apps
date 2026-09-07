@@ -27,6 +27,8 @@ SAD_ICON = SAD_ICON_ASSET.readall()
 # https://a816-dohbesp.nyc.gov/IndicatorPublic/data-features/realtime-air-quality/
 # It's updated every hour, so there's no need to hit it very often.
 NYC_DATA_URL = "https://raw.githubusercontent.com/nychealth/nyccas-data/refs/heads/main/portal/view.csv"
+DEFAULT_LOCATION = "Williamsburg_Bridge"
+LOCATIONS = ["BQE", "Broadway_35th_St", "Cross_Bronx_Expy", "DEC_Avg", "FDR", "Hamilton_Bridge", "Hunts_Point", "Manhattan_Bridge", "Midtown_DOT", "Mott_Haven", "Queens_College", "Queensboro_Bridge", "SI_Expwy", "Van_Wyck", "Williamsburg_Bridge"]
 
 def hex_2B(val):
     nibble = (val & 0xF0) >> 4
@@ -48,43 +50,34 @@ def main(config):
     rep = http.get(NYC_DATA_URL, ttl_seconds = 60 * 30)  # cache for 30 minutes
     if rep.status_code != 200:
         fail("Data request failed with status %d", rep.status_code)
-    data = csv.read_all(rep.body())
+    body = rep.body()
+    if not body or len(body) > 1048576:
+        fail("NYC air-quality source returned an invalid response")
+    data = csv.read_all(body)
 
-    # The first row is a CSV header: SiteName, Operator, starttime, timeofday, Value
-    # We'll use the first entry as the default location
-    default_loc = data[1][0]
-    loc = config.str("location", "")
-
-    # While debugging it's possible to supply a blank string
-    # So let's reject it and use the default if so:
-    if len(loc) == 0:
-        loc = default_loc
+    loc = config.str("location", DEFAULT_LOCATION)
+    if loc not in LOCATIONS:
+        loc = DEFAULT_LOCATION
 
     # Read through the dataset and only extract data points matching the location
     vals = []
     idx = 0
     for row in data:
-        if row[0] == loc:
+        if len(row) >= 5 and row[0] == loc and row[4].replace(".", "").replace("-", "").isdigit():
             # NOTE: subtracting 35 to place 35um at the y axis crossing
             # This will format the plot such that values over the limit are colored red
             vals.append((idx, float(row[4]) - 35.0))
             idx = idx + 1
 
-    # for development purposes: check if result was served from cache or not
-    if rep.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling API.")
-
     # Allow users to specify a number of points to plot
     # It looks nicer to be zoomed out, but gives less resolution
     # default of 64 should be one pixel per datapoint - perfect!
-    window_str = config.get("window", "63")
+    window_str = config.str("window", "63")
 
     # Also gracefully handle invalid window values
     if len(window_str) == 0 or not window_str.isdigit():
         window_str = "63"
-    window = int(window_str)
+    window = max(1, min(int(window_str), 256))
     start = len(vals) - window
     end = len(vals)
     if start < 0:
@@ -163,20 +156,6 @@ def main(config):
     )
 
 def get_schema():
-    # Pull the data so we can populate the list of lcoations
-    rep = http.get(NYC_DATA_URL, ttl_seconds = 60 * 30)  # cache for 30 minutes
-    if rep.status_code != 200:
-        fail("Data request failed with status %d", rep.status_code)
-    data = csv.read_all(rep.body())
-
-    # Iterate over all rows, extract each unique SiteName
-    locs = {}
-    for row in data[1:]:
-        locs[row[0]] = schema.Option(
-            display = row[0].replace("_", " "),
-            value = row[0],
-        )
-
     return schema.Schema(
         version = "1",
         fields = [
@@ -185,8 +164,8 @@ def get_schema():
                 name = "Site Name",
                 desc = "Display this location from within the NYC dataset",
                 icon = "locationDot",
-                default = locs.keys()[-1],
-                options = locs.values(),
+                default = DEFAULT_LOCATION,
+                options = [schema.Option(display = location.replace("_", " "), value = location) for location in LOCATIONS],
             ),
             schema.Text(
                 id = "window",

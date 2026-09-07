@@ -56,14 +56,14 @@ DEFAULTS = {
 }
 
 F1_URLS = {
-    "NRI": "https://raw.githubusercontent.com/jvivona/tidbyt-data/refs/heads/main/formula1/next.json",
-    "CS": "https://raw.githubusercontent.com/jvivona/tidbyt-data/refs/heads/main/formula1/constructorStandings.json",
-    "DS": "https://raw.githubusercontent.com/jvivona/tidbyt-data/refs/heads/main/formula1/driverStandings.json",
+    "NRI": "https://api.jolpi.ca/ergast/f1/current/next.json",
+    "CS": "https://api.jolpi.ca/ergast/f1/current/constructorstandings.json",
+    "DS": "https://api.jolpi.ca/ergast/f1/current/driverstandings.json",
 }
 METADATA_URLS = {
-    "TRACKS": "https://raw.githubusercontent.com/jvivona/tidbyt-data/refs/heads/main/formula1/metadata/tracks.json",
-    "NAMES": "https://raw.githubusercontent.com/jvivona/tidbyt-data/refs/heads/main/formula1/metadata/constructor_names.json",
-    "LOGOS": "https://raw.githubusercontent.com/jvivona/tidbyt-data/refs/heads/main/formula1/metadata/constructor_logo.json",
+    "TRACKS": "https://cdn.jsdelivr.net/gh/jvivona/tidbyt-data@main/formula1/metadata/tracks.json",
+    "NAMES": "https://cdn.jsdelivr.net/gh/jvivona/tidbyt-data@main/formula1/metadata/constructor_names.json",
+    "LOGOS": "https://cdn.jsdelivr.net/gh/jvivona/tidbyt-data@main/formula1/metadata/constructor_logo.json",
 }
 
 F1_API_TTL = 1800
@@ -85,10 +85,13 @@ def main(config):
 
     # get display option - default to Next Race
     display = config.get("F1_Information", DEFAULTS["display"])
+    if display not in F1_URLS:
+        display = DEFAULTS["display"]
 
     # Get Data
     Year = time.now().in_location(timezone).format("2006")
-    f1_cached = get_f1_data(F1_URLS[display].format(Year), F1_API_TTL)["MRData"]
+    f1_payload = get_f1_data(F1_URLS[display].format(Year), F1_API_TTL)
+    f1_cached = f1_payload.get("MRData", {}) if type(f1_payload) == "dict" else {}
 
     MARQUEE_OFFSET = 5
     TRACK_IMG_BASE_HEIGHT = 23
@@ -96,20 +99,30 @@ def main(config):
 
     if display == "NRI":
         tracks = get_f1_data(METADATA_URLS["TRACKS"], METADATA_TTL)
-        if len(f1_cached["RaceTable"]["Races"]) == 0:
+        races = f1_cached.get("RaceTable", {}).get("Races", []) if type(f1_cached) == "dict" else []
+        if type(races) != "list" or len(races) == 0:
             return []
         else:
             #Next Race
-            next_race = f1_cached["RaceTable"]["Races"][0]
+            next_race = races[0]
+        if type(next_race) != "dict" or type(next_race.get("Circuit")) != "dict" or type(next_race["Circuit"].get("Location")) != "dict":
+            return []
+        race_name = safe_text(next_race.get("raceName"), "Next race")
+        locality = safe_text(next_race["Circuit"]["Location"].get("locality"), "?")
+        country = safe_text(next_race["Circuit"]["Location"].get("country"), "?")
+        race_date = next_race.get("date")
+        if not valid_date(race_date):
+            return []
 
         # check to see if there's a time in the json, if not - set it to be TBD
-        if (next_race.get("time", "TBD")) == "TBD":
+        race_time = next_race.get("time", "TBD")
+        if race_time == "TBD" or not valid_time(race_time):
             # no time - date is probably correct in UTC
-            date_and_time = next_race["date"] + "T" + "12:00:00Z"
+            date_and_time = race_date + "T" + "12:00:00Z"
             date_and_time3 = time.parse_time(date_and_time, "2006-01-02T15:04:05Z", "UTC").in_location(timezone)
             time_str = "TBD"
         else:
-            date_and_time = next_race["date"] + "T" + next_race["time"]
+            date_and_time = race_date + "T" + race_time
 
             #code from @whyamihere to automatically adjust the date time sting from the API
             date_and_time3 = time.parse_time(date_and_time, "2006-01-02T15:04:05Z", "UTC").in_location(timezone)
@@ -117,26 +130,27 @@ def main(config):
 
         # handle date & time display options here
         date_str = date_and_time3.format("Jan 2" if config.bool("date_us", DEFAULTS["date_us"]) else "2 Jan")  #current format of your current date str
+        track_image = decode_image(tracks.get(str(next_race["Circuit"].get("circuitId", "")).lower()))
 
         return render.Root(
             child = render.Column(
                 children = [
                     render.Marquee(
                         width = canvas.width(),
-                        child = render.Text(" " + next_race["raceName"] + " - " + next_race["Circuit"]["Location"]["locality"] + " " + next_race["Circuit"]["Location"]["country"]),
+                        child = render.Text(" " + race_name + " - " + locality + " " + country),
                         offset_start = MARQUEE_OFFSET * scale,
                         offset_end = MARQUEE_OFFSET * scale,
                     ),
                     render.Box(width = canvas.width(), height = 1 * scale, color = "#a0a"),
                     render.Row(
                         children = [
-                            render.Image(src = base64.decode(tracks[next_race["Circuit"]["circuitId"].lower()]), height = TRACK_IMG_BASE_HEIGHT * scale, width = TRACK_IMG_BASE_WIDTH * scale),
+                            render.Image(src = track_image, height = TRACK_IMG_BASE_HEIGHT * scale, width = TRACK_IMG_BASE_WIDTH * scale) if track_image else render.Box(height = TRACK_IMG_BASE_HEIGHT * scale, width = TRACK_IMG_BASE_WIDTH * scale),
                             render.Padding(
                                 child = render.Column(
                                     children = [
                                         render.Text(date_str, font = font_medium),
                                         render.Text(time_str, font = font_small),
-                                        render.Text("Race " + next_race["round"], font = font_small),
+                                        render.Text("Race " + str(next_race.get("round", "?"))[:4], font = font_small),
                                     ],
                                 ),
                                 pad = (4, 0, 0, 0) if scale == 2 else (0, 0, 0, 0),
@@ -152,17 +166,20 @@ def main(config):
         names = get_f1_data(METADATA_URLS["NAMES"], METADATA_TTL)
         #Constructor
 
-        if len(f1_cached["StandingsTable"]["StandingsLists"]) == 0:
+        standings_lists = f1_cached.get("StandingsTable", {}).get("StandingsLists", []) if type(f1_cached) == "dict" else []
+        if type(standings_lists) != "list" or len(standings_lists) == 0:
             return []
 
-        standings = f1_cached["StandingsTable"]["StandingsLists"][0]
+        standings = standings_lists[0]
 
         children = [
             render.Text("WCC Standings", font = font_medium),
             render.Box(width = canvas.width(), height = 1 * scale, color = "#a0a"),
         ]
 
-        constructor_standings = standings.get("ConstructorStandings", [])
+        constructor_standings = standings.get("ConstructorStandings", []) if type(standings) == "dict" else []
+        if type(constructor_standings) != "list":
+            return []
 
         NUM_CONSTRUCTORS_TO_SHOW = 3
         CONSTRUCTOR_LOGO_BASE_HEIGHT = 7
@@ -172,15 +189,20 @@ def main(config):
 
         for i in range(min(NUM_CONSTRUCTORS_TO_SHOW, len(constructor_standings))):
             constructor = constructor_standings[i]
-            constructor_id = constructor["Constructor"]["constructorId"]
-            points = text_justify_trunc(POINTS_TRUNC_LEN, constructor["points"], "right")
-            name = names[constructor_id]
+            if type(constructor) != "dict" or type(constructor.get("Constructor")) != "dict":
+                continue
+            constructor_id = constructor["Constructor"].get("constructorId", "")
+            if type(constructor_id) != "string" or not constructor_id or len(constructor_id) > 64:
+                continue
+            points = text_justify_trunc(POINTS_TRUNC_LEN, str(constructor.get("points", "0")), "right")
+            name = safe_text(names.get(constructor_id, constructor["Constructor"].get("name")), constructor_id)
+            logo_image = decode_image(logos.get(constructor_id))
 
             children.append(render.Row(
                 children = [
                     render.Stack(
                         children = [
-                            render.Image(src = base64.decode(logos[constructor_id]), height = CONSTRUCTOR_LOGO_BASE_HEIGHT * scale, width = CONSTRUCTOR_LOGO_BASE_WIDTH * scale),
+                            render.Image(src = logo_image, height = CONSTRUCTOR_LOGO_BASE_HEIGHT * scale, width = CONSTRUCTOR_LOGO_BASE_WIDTH * scale) if logo_image else render.Box(height = CONSTRUCTOR_LOGO_BASE_HEIGHT * scale, width = CONSTRUCTOR_LOGO_BASE_WIDTH * scale),
                             render.Text(str(i + 1), font = font_small),
                         ],
                     ),
@@ -200,17 +222,20 @@ def main(config):
         )
     else:
         #Driver
-        if len(f1_cached["StandingsTable"]["StandingsLists"]) == 0:
+        standings_lists = f1_cached.get("StandingsTable", {}).get("StandingsLists", []) if type(f1_cached) == "dict" else []
+        if type(standings_lists) != "list" or len(standings_lists) == 0:
             return []
 
-        standings = f1_cached["StandingsTable"]["StandingsLists"][0]
+        standings = standings_lists[0]
 
         children = [
             render.Text("WDC Standings", font = font_medium),
             render.Box(width = canvas.width(), height = 1 * scale, color = "#a0a"),
         ]
 
-        driver_standings = standings.get("DriverStandings", [])
+        driver_standings = standings.get("DriverStandings", []) if type(standings) == "dict" else []
+        if type(driver_standings) != "list":
+            return []
 
         NUM_DRIVERS_TO_SHOW_1X = 3
         NUM_DRIVERS_TO_SHOW_2X = 5
@@ -222,8 +247,10 @@ def main(config):
 
         for i in range(min(num_drivers_to_show, len(driver_standings))):
             driver = driver_standings[i]
-            points = text_justify_trunc(POINTS_TRUNC_LEN, driver["points"], "right")
-            lname = driver["Driver"]["familyName"]
+            if type(driver) != "dict" or type(driver.get("Driver")) != "dict":
+                continue
+            points = text_justify_trunc(POINTS_TRUNC_LEN, str(driver.get("points", "0")), "right")
+            lname = safe_text(driver["Driver"].get("familyName"), "?", 24)
 
             children.append(render.Row(
                 children = [
@@ -270,17 +297,6 @@ def get_schema():
                     ),
                 ],
             ),
-            schema.Generated(
-                id = "generated",
-                source = "F1_Information",
-                handler = nri_options,
-            ),
-        ],
-    )
-
-def nri_options(f1_option):
-    if f1_option == "NRI":
-        return [
             schema.Toggle(
                 id = "time_24",
                 name = "24 hour format",
@@ -295,20 +311,43 @@ def nri_options(f1_option):
                 icon = "calendarDays",
                 default = DEFAULTS["date_us"],
             ),
-        ]
-    else:
-        return []
+        ],
+    )
 
 def get_f1_data(url, ttl):
     http_data = http.get(url, ttl_seconds = ttl)
     if http_data.status_code != 200:
-        fail("HTTP request failed with status {} for URL {}".format(http_data.status_code, url))
+        return {}
 
     f1_details = http_data.body()
-    if f1_details.startswith("Unable"):
-        fail("API having database issues, check again later URL {}".format(url))
+    if not f1_details or len(f1_details) > 1024 * 1024 or f1_details.startswith("Unable"):
+        return {}
 
-    return json.decode(f1_details)
+    data = json.decode(f1_details, {})
+    return data if type(data) == "dict" else {}
+
+def decode_image(value):
+    if type(value) != "string" or not value or len(value) > 100000 or len(value) % 4 != 0 or value[0] == "=" or "=" in value[:-2]:
+        return ""
+    allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+    if not all([char in allowed for char in value.codepoints()]):
+        return ""
+    return base64.decode(value)
+
+def valid_date(value):
+    if type(value) != "string" or len(value) != 10 or value[4] != "-" or value[7] != "-" or not (value[:4] + value[5:7] + value[8:]).isdigit():
+        return False
+    year = int(value[:4])
+    month = int(value[5:7])
+    day = int(value[8:])
+    days = [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    return month >= 1 and month <= 12 and day >= 1 and day <= days[month - 1]
+
+def valid_time(value):
+    return type(value) == "string" and len(value) == 9 and value[2] == ":" and value[5] == ":" and value[8] == "Z" and (value[:2] + value[3:5] + value[6:8]).isdigit() and int(value[:2]) < 24 and int(value[3:5]) < 60 and int(value[6:8]) < 60
+
+def safe_text(value, fallback, maximum = 64):
+    return value[:maximum] if type(value) == "string" and value else fallback
 
 def text_justify_trunc(length, text, direction):
     #  thanks to @inxi and @whyamihere / @rs7q5 for the codepoints() and codepoints_ords() help

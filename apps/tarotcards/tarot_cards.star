@@ -16,6 +16,7 @@ https://creativecommons.org/licenses/by/4.0/
 """
 
 load("animation.star", "animation")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/back_a.gif", BACK_A_ASSET = "file")
 load("images/back_b.gif", BACK_B_ASSET = "file")
@@ -406,11 +407,14 @@ def draw_single(back, color, maxdraw, freq):
     else:
         res = http.get(URL_DRAWS, ttl_seconds = CACHE_TTL)
 
-        if res.status_code != 200:
-            print("Request to %s failed with status code: %d - %s" % (URL_DRAWS, res.status_code, res.body()))
+        body = res.body()
+        if res.status_code != 200 or not body or len(body) > 64 * 1024:
             return render_error("Could not reach draws.json\n:(")
 
-        draw_from = res.json()
+        draw_from = json.decode(body, {})
+        if type(draw_from) != "dict":
+            return render_error("Invalid draws.json\n:(")
+
         # print(draw_from)  # For testing
 
         if card_max == 77:  # All cards
@@ -767,11 +771,14 @@ def draw_spread(back, color, maxdraw, freq):
     else:
         res = http.get(URL_DRAWS, ttl_seconds = CACHE_TTL)
 
-        if res.status_code != 200:
-            print("Request to %s failed with status code: %d - %s" % (URL_DRAWS, res.status_code, res.body()))
+        body = res.body()
+        if res.status_code != 200 or not body or len(body) > 64 * 1024:
             return render_error("Could not reach draws.json\n:(")
 
-        draw_from = res.json()
+        draw_from = json.decode(body, {})
+        if type(draw_from) != "dict":
+            return render_error("Invalid draws.json\n:(")
+
         # print(draw_from)  # For testing
 
         if card_max == 77:  # All cards

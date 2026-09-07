@@ -16,7 +16,6 @@ LIBRENMS_ICON = LIBRENMS_ICON_ASSET.readall()
 ENDPOINT_ALERTS = "/api/v0/alerts"
 ENDPOINT_DEVICES = "/api/v0/devices"
 FRAME_DELAY_MS = 25
-CACHE_TTL_SECONDS = 30
 
 colors = {
     "red": "F92323",
@@ -38,7 +37,7 @@ def get_schema():
             schema.Text(
                 id = "librenms_url",
                 name = "LibreNMS URL:",
-                desc = "URL of the LibreNMS server. Include the protocol and [optionally] port, e.g. https://my.nms, or https://my.nms:8443. TLS connections must use a publicly trusted TLS certificate such as LetsEncrypt, Digicert, etc.",
+                desc = "Public HTTPS URL of the LibreNMS server (port 443).",
                 icon = "globe",
             ),
             schema.Text(
@@ -63,14 +62,15 @@ def get_librenms_alerts(config):
 
     """
     headers = {"X-Auth-Token": config["api_key"]}
-    url = config["librenms_url"] + ENDPOINT_ALERTS
-    r = http.get(url, headers = headers, ttl_seconds = CACHE_TTL_SECONDS)
+    url = config["librenms_url"].rstrip("/") + ENDPOINT_ALERTS
+    r = http.get(url, headers = headers)
 
     if r.status_code != 200:
         return {"error": r.status_code}
 
     else:
-        return r.json()
+        data = r.json()
+        return data if type(data) == "dict" else {"error": "invalid response"}
 
 def print_logo():
     return render.Row(
@@ -158,14 +158,20 @@ def build_rows(alert_count, alerting_devices):
     return rows
 
 def get_device_config(hostname, config):
-    url = config["librenms_url"] + ENDPOINT_DEVICES + "/" + hostname
+    url = config["librenms_url"].rstrip("/") + ENDPOINT_DEVICES + "/" + hostname
     headers = {"X-Auth-Token": config["api_key"]}
-    r = http.get(url, headers = headers, ttl_seconds = CACHE_TTL_SECONDS)
-    return r.json()["devices"][0]
+    r = http.get(url, headers = headers)
+    if r.status_code != 200:
+        return None
+    data = r.json()
+    devices = data.get("devices") if type(data) == "dict" else None
+    return devices[0] if type(devices) == "list" and devices and type(devices[0]) == "dict" else None
 
 def get_device_friendly_name(hostname, config):
     device_config = get_device_config(hostname, config)
-    return device_config["display"] or device_config["sysName"]
+    if not device_config:
+        return hostname
+    return str(device_config.get("display") or device_config.get("sysName") or hostname)[:64]
 
 def render_output(alert_count, alerting_devices):
     # Build a list containing the output, starting with the LibreNMS logo
@@ -200,8 +206,10 @@ def main(config):
         Renders output to the Tidbyt display.
 
     """
-    if "librenms_url" not in config or "api_key" not in config:
+    if not config.get("librenms_url") or not config.get("api_key"):
         return demo_data()
+    if not config["librenms_url"].startswith("https://"):
+        return render_error("LibreNMS must use HTTPS")
 
     # Get the alert list
     alert_results = get_librenms_alerts(config)
@@ -213,11 +221,22 @@ def main(config):
     # Create a list of the friendly names of the devices in alert status
     alerting_devices = list()
     if "alerts" in alert_results:
-        for alert_item in alert_results["alerts"]:
-            device_friendly_name = get_device_friendly_name(alert_item["hostname"], config)
+        alerts = alert_results["alerts"]
+        if type(alerts) != "list":
+            return render_error("Invalid server response.")
+        for alert_item in alerts[:20]:
+            if type(alert_item) != "dict" or type(alert_item.get("hostname")) != "string":
+                continue
+            hostname = alert_item["hostname"]
+            if "/" in hostname or "?" in hostname or "#" in hostname:
+                continue
+            device_friendly_name = get_device_friendly_name(hostname, config)
             if device_friendly_name not in alerting_devices:
                 alerting_devices.append(device_friendly_name)
     else:
         return render_error("Data missing in server response.")
 
-    return render_output(int(alert_results["count"]), ", ".join(alerting_devices))
+    count = alert_results.get("count")
+    if type(count) not in ["int", "float"]:
+        count = len(alerts)
+    return render_output(int(count), ", ".join(alerting_devices))

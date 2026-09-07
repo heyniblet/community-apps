@@ -5,6 +5,7 @@ Description: View the flights tracked by a radar on Flightradar24.
 Author: kinson
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/plane.png", PLANE_ICON_ASSET = "file")
 load("render.star", "render")
@@ -12,30 +13,55 @@ load("schema.star", "schema")
 
 PLANE_ICON = PLANE_ICON_ASSET.readall()
 
-API_URL = "https://data-cloud.flightradar24.com/zones/fcgi/feed.js?radar="
+API_URL = "https://data-cloud.flightradar24.com/zones/fcgi/feed.js"
+MAX_FLIGHTS = 50
+MAX_RADARS = 5
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+def clean_text(value, maximum = 24):
+    if type(value) not in ("string", "int", "float"):
+        return ""
+    return " ".join(str(value).split())[:maximum]
+
+def valid_radar(value):
+    if not value or len(value) > 32:
+        return False
+    for char in value.codepoints():
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return False
+    return True
 
 def get_data(url, radar_code):
-    res = http.get(url + radar_code, ttl_seconds = 60)  # cache for 1 minute
-    if res.status_code != 200:
-        fail("GET %s failed with status %d: %s", url, res.status_code, res.body())
-    json_res = res.json()
+    res = http.get(url, params = {"radar": radar_code}, ttl_seconds = 60)
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return []
+    json_res = json.decode(body, None)
+    if type(json_res) != "dict":
+        return []
 
     flight_strings = []
 
-    index = 0
     for _id, flight in json_res.items():
-        index = index + 1
-        if type(flight) == "string" or type(flight) == "int" or type(flight) == "float":
+        if len(flight_strings) >= MAX_FLIGHTS or type(flight) != "list" or len(flight) <= 16:
             continue
 
-        callsign = flight[16]
-        origin = flight[11]
-        destination = flight[12]
+        callsign = clean_text(flight[16])
+        origin = clean_text(flight[11], 8)
+        destination = clean_text(flight[12], 8)
 
         has_route = origin != "" and destination != ""
         has_callsign = callsign != ""
         if has_route or has_callsign:
-            flight_strings.append(flight)
+            flight_strings.append({
+                "origin": origin or "???",
+                "destination": destination or "???",
+                "model": clean_text(flight[8]),
+                "registration": clean_text(flight[9]),
+                "speed": clean_text(flight[5], 8),
+                "altitude": clean_text(flight[4], 8),
+                "callsign": callsign or "???",
+            })
 
     return flight_strings
 
@@ -155,7 +181,14 @@ def main(config):
     if not radars:
         return []
 
-    radar_array = radars.split(",")
+    radar_array = []
+    for raw_radar in radars.split(",")[:MAX_RADARS]:
+        radar = raw_radar.strip()
+        if valid_radar(radar):
+            radar_array.append(radar)
+
+    if not radar_array:
+        return []
     rendered_flights = []
 
     for radar in radar_array:

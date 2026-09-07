@@ -40,6 +40,7 @@ BIBLE_ICON = BIBLE_ICON_ASSET.readall()
 
 # https://ourmanna.readme.io/reference/get-verse-of-the-day
 VOTD_URL = "https://beta.ourmanna.com/api/v1/get?format=json"
+MAX_RESPONSE_BYTES = 64 * 1024
 
 ABBREV_LOOKUP = json.decode("{\"Genesis\":\"Gen.\",\"Exodus\":\"Ex.\",\"Leviticus\":\"Lev.\",\"Numbers\":\"Num.\",\"Deuteronomy\":\"Dt.\",\"Joshua\":\"Josh.\",\"Judges\":\"Judg.\",\"Ruth\":\"Ruth\",\"1 Samuel\":\"1 S.\",\"2 Samuel\":\"2 S.\",\"1 Kings\":\"1 K.\",\"2 Kings\":\"2 K.\",\"1 Chronicles\":\"1 Chr.\",\"2 Chronicles\":\"2 Chr.\",\"Ezra\":\"Ezra\",\"Nehemiah\":\"Neh.\",\"Esther\":\"Esth.\",\"Job\":\"Job\",\"Psalms\":\"Ps.\",\"Proverbs\":\"Prov.\",\"Ecclesiastes\":\"Eccl.\",\"Song of Solomon\":\"S. S.\",\"Isaiah\":\"Is.\",\"Jeremiah\":\"Jer.\",\"Lamentations\":\"Lam.\",\"Ezekiel\":\"Ezek.\",\"Daniel\":\"Dan.\",\"Hosea\":\"Hos.\",\"Joel\":\"Joel\",\"Amos\":\"Am.\",\"Obadiah\":\"Obad.\",\"Jonah\":\"Jon.\",\"Micah\":\"Mic.\",\"Nahum\":\"Nah.\",\"Habakkuk\":\"Hab.\",\"Zephaniah\":\"Zeph.\",\"Haggai\":\"Hag.\",\"Zechariah\":\"Zech.\",\"Malachi\":\"Mal.\",\"Matthew\":\"Mt.\",\"Mark\":\"Mk.\",\"Luke\":\"Lk.\",\"John\":\"Jn.\",\"Acts\":\"Acts\",\"Romans\":\"Rom.\",\"1 Corinthians\":\"1 Cor.\",\"2 Corinthians\":\"2 Cor.\",\"Galatians\":\"Gal.\",\"Ephesians\":\"Eph.\",\"Philippians\":\"Phil.\",\"Colossians\":\"Col.\",\"1 Thessalonians\":\"1 Th.\",\"2 Thessalonians\":\"2 Th.\",\"1 Timothy\":\"1 Tim.\",\"2 Timothy\":\"2 Tim.\",\"Titus\":\"Tit.\",\"Philemon\":\"Philem.\",\"Hebrews\":\"Heb.\",\"James\":\"Jas.\",\"1 Peter\":\"1 Pet.\",\"2 Peter\":\"2 Pet.\",\"1 John\":\"1 Jn.\",\"2 John\":\"2 Jn.\",\"3 John\":\"3 Jn.\",\"Jude\":\"Jude\",\"Revelation\":\"Rev.\"}")
 
@@ -47,8 +48,6 @@ ABBREV_LOOKUP = json.decode("{\"Genesis\":\"Gen.\",\"Exodus\":\"Ex.\",\"Leviticu
 # Needed to shorten the reference or will overflow the label
 #
 def getFormattedVerseRef(ref):
-    print("Getting pretty verse for ref %s" % ref)
-
     for k in ABBREV_LOOKUP:
         v = ABBREV_LOOKUP[k]
         matches = re.findall(k, ref, 0)
@@ -59,20 +58,23 @@ def getFormattedVerseRef(ref):
     return ref
 
 def main():
-    print("~~~~~~~~~Starting App! ~~~~~~~~~~")
-
-    bible_votd = None
-    print("Calling VOTD API.")
-    rep = http.get(VOTD_URL, ttl_seconds = 86400)
+    rep = http.get(VOTD_URL, ttl_seconds = 3600)
     if rep.status_code != 200:
-        fail("API request failed with status %d", rep.status_code)
+        return render.Root(child = render.WrappedText(content = "Verse service unavailable", align = "center"))
 
-    print("Got response: %s" % rep.json())
+    body = rep.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return render.Root(child = render.WrappedText(content = "Verse service unavailable", align = "center"))
+    data = json.decode(body)
+    verse_data = data.get("verse") if type(data) == "dict" else None
+    verseDetails = verse_data.get("details") if type(verse_data) == "dict" else None
+    verse = verseDetails.get("text") if type(verseDetails) == "dict" else None
+    reference = verseDetails.get("reference") if type(verseDetails) == "dict" else None
+    if type(verse) != "string" or type(reference) != "string" or not verse or not reference:
+        return render.Root(child = render.WrappedText(content = "Verse service unavailable", align = "center"))
+    verse = verse[:2000]
 
-    verseDetails = rep.json()["verse"]["details"]
-    verse = verseDetails["text"]
-
-    ref = getFormattedVerseRef(verseDetails["reference"])
+    ref = getFormattedVerseRef(reference[:120])
 
     bible_votd = {"ref": ref, "verse": verse}
 
@@ -80,7 +82,7 @@ def main():
     ref_label = bible_votd["ref"]
 
     # Empirically the box length should be roughly double the number of characters to fit nicely in the screen
-    box_height = 2 * len(verse_text)
+    box_height = min(2 * len(verse_text), 2048)
 
     return render.Root(
         delay = 70,

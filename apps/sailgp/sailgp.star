@@ -444,12 +444,15 @@ def get_schema():
                 default = "nri",
                 options = dispopt,
             ),
-            schema.Generated(
-                id = "display_generated",
-                source = "datadisplay",
-                handler = display_options,
+            schema.Dropdown(
+                id = "imagetype",
+                name = "Team Image",
+                desc = "Show country flags or team logos in the standings.",
+                icon = "image",
+                default = "flags",
+                options = imgopt,
             ),
-        ],
+        ] + display_options("nri"),
     )
 
 def display_options(datadisplay):

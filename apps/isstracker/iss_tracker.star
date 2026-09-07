@@ -13,24 +13,32 @@ load("time.star", "time")
 
 ISS_LOGO = ISS_LOGO_ASSET.readall()
 
-ISS_URL = "http://api.open-notify.org/iss-now.json"
+ISS_URL = "https://api.wheretheiss.at/v1/satellites/25544"
 
 def get_ISS():
     resp = http.get(ISS_URL)
 
     if resp.status_code != 200:
-        return "API Error"
+        return None
 
     data = resp.json()
+    if type(data) != "dict":
+        return None
 
-    timestamp = time.from_timestamp(int(data["timestamp"])).format("15:04:03")
-    lat = data["iss_position"]["latitude"]
-    lon = data["iss_position"]["longitude"]
+    timestamp_value = data.get("timestamp")
+    lat = data.get("latitude")
+    lon = data.get("longitude")
+    if type(timestamp_value) not in ["int", "float"] or type(lat) not in ["int", "float"] or type(lon) not in ["int", "float"]:
+        return None
+    timestamp = time.from_timestamp(int(timestamp_value)).format("15:04:03")
 
     return timestamp, lat, lon
 
 def main():
-    timestamp, lat, lon = get_ISS()
+    position = get_ISS()
+    if position == None:
+        return render.Root(child = render.WrappedText("ISS position unavailable", width = 64, align = "center"))
+    timestamp, lat, lon = position
 
     return render.Root(
         child = render.Box(

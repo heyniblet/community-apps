@@ -9,7 +9,7 @@ from flask import Flask, jsonify, request
 import requests
 import os
 from datetime import datetime, timedelta
-from functools import wraps
+import hmac
 import time
 import pytz
 
@@ -39,7 +39,7 @@ API_KEY = os.environ.get("ENPHASE_API_KEY")
 CLIENT_ID = os.environ.get("ENPHASE_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("ENPHASE_CLIENT_SECRET")
 SYSTEM_ID = os.environ.get("ENPHASE_SYSTEM_ID")
-PROXY_API_KEY = os.environ.get("PROXY_API_KEY", "your-secret-key-here")
+PROXY_API_KEY = os.environ.get("PROXY_API_KEY")
 
 if not token_store["access_token"]:
     token_store["access_token"] = os.environ.get("ENPHASE_ACCESS_TOKEN")
@@ -54,7 +54,7 @@ def refresh_access_token():
     
     data = {"grant_type": "refresh_token", "refresh_token": token_store["refresh_token"]}
     auth = (CLIENT_ID, CLIENT_SECRET)
-    response = requests.post(ENPHASE_AUTH_URL, data=data, auth=auth)
+    response = requests.post(ENPHASE_AUTH_URL, data=data, auth=auth, timeout=15)
     
     if response.status_code == 200:
         token_data = response.json()
@@ -77,12 +77,12 @@ def call_enphase_api(endpoint, params=None):
     access_token = get_valid_access_token()
     headers = {"Authorization": f"Bearer {access_token}", "key": API_KEY}
     url = f"{ENPHASE_API_BASE}/{endpoint}"
-    response = requests.get(url, headers=headers, params=params)
+    response = requests.get(url, headers=headers, params=params, timeout=15)
     
     if response.status_code == 401:
         access_token = refresh_access_token()
         headers["Authorization"] = f"Bearer {access_token}"
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=15)
     
     response.raise_for_status()
     return response.json()
@@ -96,7 +96,7 @@ def health():
 @app.route("/api/solar")
 def get_solar_data():
     auth_key = request.headers.get("X-API-Key") or request.args.get("api_key")
-    if auth_key != PROXY_API_KEY:
+    if not auth_key or not PROXY_API_KEY or not hmac.compare_digest(auth_key, PROXY_API_KEY):
         return jsonify({"error": "Unauthorized"}), 401
     
     try:
@@ -254,17 +254,18 @@ def get_solar_data():
         }
         
         response = jsonify(result)
-        response.headers['Cache-Control'] = f'public, max-age={HOURLY_CACHE}'
+        response.headers['Cache-Control'] = f'private, max-age={HOURLY_CACHE}'
         return response
     
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.exception("Enphase request failed: %s", e)
+        return jsonify({"error": "Enphase request failed"}), 500
 
 
 @app.route("/api/token/status")
 def token_status():
     auth_key = request.headers.get("X-API-Key") or request.args.get("api_key")
-    if auth_key != PROXY_API_KEY:
+    if not auth_key or not PROXY_API_KEY or not hmac.compare_digest(auth_key, PROXY_API_KEY):
         return jsonify({"error": "Unauthorized"}), 401
     
     return jsonify({

@@ -43,6 +43,7 @@ Addition of Port Dock station and route, opening 25th August
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -52,6 +53,7 @@ STOPINFO_URL = "https://api-cloudfront.adelaidemetro.com.au/stops/info?stop="
 
 CACHE_TTL_SECS = 60
 CITYBOUND_STATION_LIST = ["18683", "18680", "18678", "18719", "17533", "18934", "18104", "19081"]
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 def main(config):
     SelectedStation = config.get("StationList", "16572")
@@ -59,6 +61,12 @@ def main(config):
     TrainOrTramOrBus = config.get("TrainOrTramOrBus", "Train")
     TimeOrRoute = config.get("TimeOrRoute", "Time")
     ServiceTime = config.get("TimeLength", "60")
+    if TrainOrTramOrBus not in ["Train", "Tram", "Bus"]:
+        TrainOrTramOrBus = "Train"
+    if TimeOrRoute not in ["Time", "Route"]:
+        TimeOrRoute = "Time"
+    if ServiceTime not in ["30", "60", "90", "120"]:
+        ServiceTime = "60"
     Display1 = []
 
     if TrainOrTramOrBus == "Tram":
@@ -71,25 +79,23 @@ def main(config):
         SelectedStation = config.get("StationList", "16571")
 
     if TrainToCity == False:
-        SelectedStation = AwayStops(SelectedStation)
+        SelectedStation = AwayStops(SelectedStation) or SelectedStation
 
     STOP_ID = str(SelectedStation)
-    #print(STOP_ID)
+    if not STOP_ID.isdigit() or len(STOP_ID) > 10:
+        return render.Root(delay = 2000, child = render.Animation(children = InvalidStop()))
 
     NEXTSCHED_URL = NEXTSCHED1_URL + STOP_ID
     #print(NEXTSCHED_URL)
 
     # Cache the next service times for 1 min
-    NextSchedCacheData = get_cachable_data(NEXTSCHED_URL, 60)
-    NEXTSCHED_JSON = json.decode(NextSchedCacheData)
+    NEXTSCHED_JSON = get_cachable_data(NEXTSCHED_URL, 60)
 
     INFO_URL = STOPINFO_URL + STOP_ID
 
-    # not caching this call as its just to check if Stop ID entered is valid. We don't want to cache the result of an incorrect ID and have the user wait for the cache to clear
-    INFO_JSON = http.get(INFO_URL).json()
-
-    # check its a valid stop, if not tell the user
-    if "error" in INFO_JSON:
+    INFO_JSON = get_cachable_data(INFO_URL, 86400)
+    clock = NEXTSCHED_JSON[0][0] if type(NEXTSCHED_JSON) == "list" and NEXTSCHED_JSON and type(NEXTSCHED_JSON[0]) == "list" and NEXTSCHED_JSON[0] else None
+    if type(NEXTSCHED_JSON) != "list" or len(NEXTSCHED_JSON) < 3 or type(NEXTSCHED_JSON[2]) != "list" or type(clock) != "dict" or type(clock.get("now_time")) != "string" or not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$", clock["now_time"]) or type(INFO_JSON) != "dict" or "error" in INFO_JSON:
         Display = InvalidStop()
 
         return render.Root(
@@ -97,13 +103,20 @@ def main(config):
             child = render.Animation(children = Display),
         )
 
-    # if its valid, then cache it
-    # 24hrs is fine - this is just to get the stop name and what routes service this stop so it never really changes
-    StopInfoCacheData = get_cachable_data(INFO_URL, 86400)
-    INFO_JSON = json.decode(StopInfoCacheData)
+    services = [service for service in NEXTSCHED_JSON[2][:200] if type(service) == "dict" and type(service.get("route_id")) == "string" and len(service["route_id"]) <= 20 and type(service.get("min")) in ["int", "float"] and service["min"] >= 0 and service["min"] <= 1440 and type(service.get("arrival_time")) == "string" and re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$", service["arrival_time"]) and type(service.get("trip_id")) in ["int", "string"]]
+    stop_data = INFO_JSON.get("stop_data")
+    routes = INFO_JSON.get("routes")
+    trips = INFO_JSON.get("trips")
+    if type(stop_data) != "dict" or type(stop_data.get("stop_name")) != "string" or type(stop_data.get("stop_code")) != "string" or type(routes) != "list" or type(trips) != "list":
+        return render.Root(delay = 2000, child = render.Animation(children = InvalidStop()))
+    routes = [route for route in routes[:100] if type(route) == "dict" and type(route.get("route_id")) == "string" and type(route.get("route_color")) == "string" and re.match(r"^[0-9A-Fa-f]{6}$", route["route_color"]) and type(route.get("route_type")) == "int"]
+    trips = [trip for trip in trips[:1000] if type(trip) == "dict" and type(trip.get("trip_id")) in ["int", "string"] and type(trip.get("trip_headsign")) == "string"]
+    NEXTSCHED_JSON[2] = services
+    INFO_JSON["routes"] = routes
+    INFO_JSON["trips"] = trips
 
     # trim the stop names
-    StopName = INFO_JSON["stop_data"]["stop_name"]
+    StopName = stop_data["stop_name"][:160]
 
     IsRailwayStation = StopName.endswith(" Railway Station")
     if IsRailwayStation == True:
@@ -1321,49 +1334,6 @@ def AwayStops(SelectedStation):
         return ("18452")
     return None
 
-def MoreOptions(TrainOrTramOrBus):
-    if TrainOrTramOrBus == "Train":
-        return [
-            schema.Dropdown(
-                id = "StationList",
-                name = "Train Station",
-                desc = "Choose your station",
-                icon = "train",
-                default = StationOptions[0].value,
-                options = StationOptions,
-            ),
-            schema.Toggle(
-                id = "TrainToCity",
-                name = "To Adelaide",
-                desc = "Enable for travel to Adelaide Station, disable for opposite direction",
-                icon = "toggle-on",
-                default = True,
-            ),
-        ]
-
-    elif TrainOrTramOrBus == "Tram":
-        return [
-            schema.Dropdown(
-                id = "TramStationList",
-                name = "Tram Stop",
-                desc = "Choose your station",
-                icon = "trainTram",
-                default = TramStationOptions[1].value,
-                options = TramStationOptions,
-            ),
-        ]
-    elif TrainOrTramOrBus == "Bus":
-        return [
-            schema.Text(
-                id = "BusStop",
-                name = "Bus Stop ID",
-                desc = "Enter the Stop ID",
-                icon = "bus",
-                default = "13339",
-            ),
-        ]
-    return None
-
 def get_schema():
     return schema.Schema(
         version = "1",
@@ -1392,10 +1362,35 @@ def get_schema():
                 default = TrainOrTramOrBusOptions[0].value,
                 options = TrainOrTramOrBusOptions,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "TrainOrTramOrBus",
-                handler = MoreOptions,
+            schema.Dropdown(
+                id = "StationList",
+                name = "Train Station",
+                desc = "Choose your station",
+                icon = "train",
+                default = StationOptions[0].value,
+                options = StationOptions,
+            ),
+            schema.Toggle(
+                id = "TrainToCity",
+                name = "To Adelaide",
+                desc = "Enable for travel to Adelaide Station, disable for opposite direction",
+                icon = "toggleOn",
+                default = True,
+            ),
+            schema.Dropdown(
+                id = "TramStationList",
+                name = "Tram Stop",
+                desc = "Choose your station",
+                icon = "trainTram",
+                default = TramStationOptions[1].value,
+                options = TramStationOptions,
+            ),
+            schema.Text(
+                id = "BusStop",
+                name = "Bus Stop ID",
+                desc = "Enter the Stop ID",
+                icon = "bus",
+                default = "13339",
             ),
         ],
     )
@@ -1404,6 +1399,7 @@ def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout)
 
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        return None
 
-    return res.body()
+    body = res.body()
+    return json.decode(body, None) if len(body) <= MAX_RESPONSE_BYTES else None

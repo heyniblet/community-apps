@@ -5,25 +5,30 @@ Description: Latest news, sports and other topics from the Chicago Tribune. Choo
 Author: sgomez72
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
-load("xpath.star", "xpath")
 
 # Declare Constants
 DEFAULT_NEWS = "news"
 DEFAULT_SETTING = "0"
 
-# This is the URL that contains the RSS Feed
-TRIBUNE_URL = "https://www.chicagotribune.com/{}/feed/"
+TRIBUNE_URL = "https://www.chicagotribune.com/{}/"
+MAX_RESPONSE_BYTES = 512 * 1024
+CHANNELS = ["news", "business", "things-to-do", "things-to-do/restaurants-food-drink", "nation", "news/world", "opinion", "sports", "espanol"]
 
 def main(config):
     channel = config.get("tribune_feed", DEFAULT_NEWS)
+    if channel not in CHANNELS:
+        channel = DEFAULT_NEWS
     type = config.get("news_format", DEFAULT_SETTING)
+    if type not in ["0", "1"]:
+        type = DEFAULT_SETTING
 
     stories = get_cacheable_data(channel)
+    if not stories:
+        return render.Root(child = render.WrappedText("Chicago Tribune unavailable", align = "center", width = 64))
 
     return render.Root(
         show_full_animation = True,
@@ -145,35 +150,26 @@ def get_schema():
     )
 
 def get_cacheable_data(url):
-    key = url
-    data = cache.get(key)
+    rep = http.get(
+        TRIBUNE_URL.format(url),
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; Niblet/1.0)"},
+        ttl_seconds = 1800,
+    )
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return []
+    main_parts = body.split('<main id="main"', 1)
+    page = main_parts[1] if len(main_parts) == 2 else body
+    titles = re.findall(r'(?s)<span class="dfm-title[^>]*>\s*(.*?)\s*</span>', page)[:3]
+    descriptions = re.findall(r'(?s)<div class="excerpt">\s*(.*?)\s*</div>', page)[:3]
     headlines = []
+    for i, title in enumerate(titles):
+        description = descriptions[i] if i < len(descriptions) else ""
+        headlines.append([clean_text(title)[:300], clean_text(description)[:1000]])
+    return [headline for headline in headlines if headline[0]]
 
-    if data == None:
-        print("No Cache Found, Calling Chicago Tribune RSS at " + TRIBUNE_URL.format(url))
-        jsonData = []
-
-        rep = http.get(TRIBUNE_URL.format(url))
-        if rep.status_code != 200:
-            fail("Could not pull stories from the Chicago Tribune. Request failed with status %d", rep.status_code)
-
-        data_xml = xpath.loads(rep.body())
-        nodeData = data_xml.query_all_nodes("/rss/channel/item[position()<4]")
-
-        for eachNode in nodeData:
-            nodeHeadline = eachNode.query("/title")
-            nodeArticle = eachNode.query("/description")
-            jsonData.append({"title": nodeHeadline, "description": nodeArticle})
-
-        data = json.encode(jsonData)
-
-        cache.set(key, data, ttl_seconds = 1800)
-
-    data_json = json.decode(data)
-
-    for eachArticle in data_json:
-        title = eachArticle["title"]
-        desc = eachArticle["description"]
-        headlines.append([title, desc])
-
-    return headlines
+def clean_text(value):
+    value = re.sub("<[^>]*>", " ", str(value or ""))
+    for entity, char in [("&amp;", "&"), ("&#8217;", "'"), ("&#8216;", "'"), ("&apos;", "'"), ("&#39;", "'"), ("&quot;", "\""), ("&nbsp;", " ")]:
+        value = value.replace(entity, char)
+    return " ".join(value.split())

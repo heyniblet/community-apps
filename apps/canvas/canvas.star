@@ -38,8 +38,8 @@ def makeError(type):
     )
 
 def getcourse(api_token):
-    api_url = "https://canvas.instructure.com/api/v1/courses?per_page=30&access_token=" + api_token
-    response = http.get(api_url, ttl_seconds = 3000)
+    api_url = "https://canvas.instructure.com/api/v1/courses?per_page=30"
+    response = http.get(api_url, headers = {"Authorization": "Bearer " + api_token}, ttl_seconds = 3000)
     if response.status_code != 200:
         return [], "Can not Connect to Canvas"
     classes = []
@@ -61,9 +61,8 @@ def getcourse(api_token):
 def get_remote_assignments(api_token, course_id):
     api_url = "https://canvas.instructure.com/api/v1/courses/" + str(
         course_id,
-    ) + "/assignments?bucket=upcoming&access_token=" + api_token
-    print(api_url)
-    rep = http.get(api_url, ttl_seconds = 300)
+    ) + "/assignments?bucket=upcoming"
+    rep = http.get(api_url, headers = {"Authorization": "Bearer " + api_token}, ttl_seconds = 300)
     if rep.status_code != 200:
         return [], "Can not Connect to Canvas"
     data = rep.json()

@@ -1,6 +1,37 @@
 load("render.star", "render")
 load("schema.star", "schema")
 
+DIGITS = {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+}
+
+def bounded_config_int(config, key, default, lower, upper):
+    text = str(config.get(key, str(default)))
+    if not text:
+        return default
+
+    result = 0
+    for index in range(len(text)):
+        character = text[index:index + 1]
+        digit = DIGITS.get(character)
+        if digit == None:
+            return default
+        result = result * 10 + digit
+        if result >= upper:
+            return upper
+    if result < lower:
+        return lower
+    return result
+
 # Custom PRNG
 def get_rand(state, min_val, max_val):
     state[0] = (state[0] * 1103515245 + 12345) % 2147483648
@@ -8,9 +39,11 @@ def get_rand(state, min_val, max_val):
     return min_val + (high_bits % (max_val - min_val + 1))
 
 def main(config):
-    NUM_PARTICLES = int(config.get("num_particles", "100"))
-    DIAMETER = int(config.get("circle_diameter", "6"))
-    SEED = int(config.get("seed", "8675309"))
+    # Text fields are user controlled in Cloud. Bound work and accept invalid
+    # legacy values without turning a bad configuration into a render failure.
+    NUM_PARTICLES = bounded_config_int(config, "num_particles", 100, 1, 150)
+    DIAMETER = bounded_config_int(config, "circle_diameter", 6, 2, 20)
+    SEED = bounded_config_int(config, "seed", 8675309, 0, 2147483647)
 
     CIRCLE_R = DIAMETER // 2
     if CIRCLE_R < 1:

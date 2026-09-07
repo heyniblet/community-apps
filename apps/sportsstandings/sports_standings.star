@@ -110,6 +110,9 @@ def get_schema():
         schema.Option(display = "League/Conference 1", value = "1"),
         schema.Option(display = "League/Conference 2", value = "2"),
     ]
+    league_fields = []
+    for sport in SPORTS_LIST:
+        league_fields.extend(more_options(sport))
     return schema.Schema(
         version = "1",
         fields = [
@@ -120,11 +123,6 @@ def get_schema():
                 icon = "medal",
                 options = sports,
                 default = "Baseball",
-            ),
-            schema.Generated(
-                id = "generated",  #other options are all in here because the generated fields go at the end always
-                source = "sport",
-                handler = more_options,
             ),
             schema.Dropdown(
                 id = "standings_filter",
@@ -163,7 +161,7 @@ def get_schema():
                 icon = "eyeSlash",
                 default = False,
             ),
-        ],
+        ] + league_fields,
     )
 
 def more_options(sport):

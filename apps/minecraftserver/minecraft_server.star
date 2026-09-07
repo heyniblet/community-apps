@@ -14,8 +14,12 @@ load("schema.star", "schema")
 def main(config):
     minecraftURL = config.get("server", "mc.azitoth.com")
 
-    apiURL = "".join(["https://api.mcsrvstat.us/2/", minecraftURL])
-    result = http.get(apiURL, ttl_seconds = 60)
+    apiURL = "".join(["https://api.mcsrvstat.us/3/", minecraftURL])
+    result = http.get(
+        apiURL,
+        headers = {"User-Agent": "Niblet/1.0 (hello@heyniblet.com)"},
+        ttl_seconds = 300,
+    )
     if result.status_code != 200:
         return render_error("Server unavailable (HTTP %d)" % result.status_code)
     result_json = result.json()
@@ -31,9 +35,11 @@ def main(config):
     motd = result_json["motd"]["clean"][0] if "motd" in result_json and len(result_json["motd"]["clean"]) > 0 else ""
     motd2 = result_json["motd"]["clean"][1] if "motd" in result_json and len(result_json["motd"]["clean"]) > 1 else ""
 
-    iconURL = result_json["icon"].split(",")[1] if "icon" in result_json else minecraft_server_ASSET.readall()
-
-    serverIcon = base64.decode(iconURL)
+    serverIcon = minecraft_server_ASSET.readall()
+    if "icon" in result_json:
+        icon_parts = result_json["icon"].split(",")
+        if len(icon_parts) > 1:
+            serverIcon = base64.decode(icon_parts[1])
 
     return render.Root(
         child = render.Box(

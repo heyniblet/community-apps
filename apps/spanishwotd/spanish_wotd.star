@@ -10,10 +10,9 @@ load("http.star", "http")
 load("re.star", "re")
 load("render.star", "render")
 
-CACHE_KEY = "wotd"
-CACHE_LLAVE = "pdd"
 CACHE_TTL = 3600  # 1 hour
 SPANISH_DICT_WOTD_URL = "https://www.spanishdict.com/wordoftheday"
+MAX_RESPONSE_BYTES = 512 * 1024
 
 def render_error():
     return render.Root(
@@ -27,33 +26,35 @@ def fetch_word_of_the_day():
         return False
 
     resp_body = wotd_resp.body()
+    if not resp_body or len(resp_body) > MAX_RESPONSE_BYTES:
+        return False
 
     pattern = r"window\.SD_COMPONENT_DATA\s*=(.*);"
     matches = re.findall(pattern, resp_body)
 
     if len(matches) == 0:
-        print("Failed to find word or definition from page")
         return False
 
     match = matches[0]
 
     data = match.replace("window.SD_COMPONENT_DATA = ", "").replace(";", "")
-    parsed_data = json.decode(data)
-
-    wotd = parsed_data["wordOfTheDayData"]
+    parsed_data = json.decode(data, {})
+    wotd = parsed_data.get("wordOfTheDayData", {}) if type(parsed_data) == "dict" else {}
+    word = wotd.get("wordDisplay") if type(wotd) == "dict" else None
+    definition = wotd.get("translationText") if type(wotd) == "dict" else None
+    if type(word) != "string" or type(definition) != "string" or not word or not definition:
+        return False
 
     return {
-        "word": wotd["wordDisplay"],
-        "definition": wotd["translationText"],
+        "word": word[:80],
+        "definition": definition[:1000],
     }
 
 def main():
-    print("Starting")
-
     wotd_dict = fetch_word_of_the_day()
 
     if not wotd_dict:
-        return render_error
+        return render_error()
 
     word = wotd_dict["word"]
     definition = wotd_dict["definition"]

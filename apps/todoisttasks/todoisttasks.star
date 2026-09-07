@@ -9,22 +9,21 @@ load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 
 DEFAULT_FILTER = "today | overdue"
 DEFAULT_SHOW_IF_EMPTY = True
 
 NO_TASKS_CONTENT = "No Tasks :)"
 
-TODOIST_URL = "https://api.todoist.com/rest/v2/tasks"
-
-OAUTH2_CLIENT_ID = secret.decrypt("AV6+xWcEQOfChp6DT4pbNdlJxTUzWzCkB+5yEIf8EP4/0PWuFsV+U1vNeV5LanJ12L/rnluXAeLQy9wki7zsxaOeeqGO1vLI47J1UR0um63dgzXTVj+Tdj9+m02XCPGWuhHE/oengWdSvjAVtfFW2qcUwMYFORNauBD1m7qH/fu4kzNWsnY=")
-OAUTH2_CLIENT_SECRET = secret.decrypt("AV6+xWcER6NHS+ZGzXEJ5a7JaRuCiTKmcifK5zlxUgjz3/HW0FkTq9LJSB+fsLPNjuOdnHQSfX3h5YPTcK7K7Onu1B2O3DV5F8T4edaIWTVg1FkMnfD7a4vrCXp74pxvwlvktrKQwjq9nsPGRw4MlKx/rBRKhfjadwx1xl0VKHMdH/dc2yQ=")
+TODOIST_URL = "https://api.todoist.com/api/v1/tasks/filter"
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_TOKEN_BYTES = 4096
 
 def main(config):
     token = config.get("auth") or config.get("dev_api_key")
+    token = token.strip() if type(token) == "string" else ""
 
-    if not token:
+    if not token or len(token) > MAX_TOKEN_BYTES or "\r" in token or "\n" in token:
         return render.Root(
             child = render.Row(
                 expanded = True,
@@ -48,14 +47,24 @@ def main(config):
         )
 
     filter = config.get("filter") or DEFAULT_FILTER
-    rep = http.get(TODOIST_URL, headers = {"Authorization": "Bearer %s" % token}, params = {"filter": filter}, ttl_seconds = 60)
+    filter = filter[:500] if type(filter) == "string" else DEFAULT_FILTER
+    rep = http.get(TODOIST_URL, headers = {"Authorization": "Bearer %s" % token}, params = {"query": filter})
+    body = rep.body()
 
     sorted_tasks = None
-    if rep.status_code == 200:
-        tasks = rep.json()
-        sorted_tasks = sorted(tasks, key = lambda task: task["priority"], reverse = True)
-    elif rep.status_code == 204:
-        sorted_tasks = []
+    if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES:
+        payload = json.decode(body, {})
+        tasks = payload.get("results", []) if type(payload) == "dict" else []
+        if type(tasks) == "list":
+            valid_tasks = []
+            for task in tasks[:200]:
+                if type(task) != "dict" or type(task.get("content")) != "string":
+                    continue
+                priority = task.get("priority", 1)
+                if type(priority) != "int" or priority < 1 or priority > 4:
+                    priority = 1
+                valid_tasks.append({"content": task["content"][:500], "priority": priority})
+            sorted_tasks = sorted(valid_tasks, key = lambda task: task["priority"], reverse = True)
 
     if sorted_tasks == None:
         return render.Root(child = render.WrappedText("Error fetching tasks"))
@@ -117,7 +126,7 @@ def main(config):
 
     return render.Root(
         delay = 100,
-        max_age = 86400,
+        max_age = 600,
         child = render.Box(
             width = 64,
             height = 32,
@@ -143,44 +152,16 @@ def main(config):
         ),
     )
 
-def oauth_handler(params):
-    params = json.decode(params)
-    res = http.post(
-        url = "https://todoist.com/oauth/access_token",
-        headers = {
-            "Accept": "application/json",
-        },
-        form_body = dict(
-            code = params["code"],
-            client_id = OAUTH2_CLIENT_ID,
-            client_secret = OAUTH2_CLIENT_SECRET,
-        ),
-        form_encoding = "application/x-www-form-urlencoded",
-    )
-    if res.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (res.status_code, res.body()))
-
-    token_params = res.json()
-    access_token = token_params["access_token"]
-
-    return access_token
-
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
+            schema.Text(
                 id = "auth",
-                name = "Todoist",
-                desc = "Connect your Todoist account.",
-                icon = "squareCheck",
-                handler = oauth_handler,
-                client_id = OAUTH2_CLIENT_ID or "fake-client-id",
-                authorization_endpoint = "https://todoist.com/oauth/authorize",
-                scopes = [
-                    "data:read",
-                ],
+                name = "Todoist API Token",
+                desc = "Personal token from Todoist Settings > Integrations > Developer.",
+                icon = "key",
+                secret = True,
             ),
             schema.Text(
                 id = "filter",

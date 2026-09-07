@@ -5,28 +5,22 @@ Description: Shows up to date powerball numbers and next drawing.
 Author: AmillionAir
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 
-NUMBERS_URL = "https://www.powerball.com/api/v1/numbers/powerball/recent10?_format=json"
-Next_Draw_URL = "https://powerball.com/api/v1/estimates/powerball?_format=json"
-Winner_URL = "https://powerball.com/api/v1/draw-summary/powerball?_format=json"
+NUMBERS_URL = "https://data.ny.gov/resource/d6yy-54nr.json?$limit=1&$order=draw_date%20DESC"
+TTL_SECONDS = 3600
+MAX_RESPONSE_BYTES = 8192
 
 def main():
-    print("Calling powerball data.")
-
-    PB_NUMS = http.get(NUMBERS_URL, ttl_seconds = 600).json()[0]["field_winning_numbers"]
-    Draw_Date = http.get(NUMBERS_URL, ttl_seconds = 600).json()[0]["field_draw_date"]
-    Next_Draw_Date = http.get(Next_Draw_URL, ttl_seconds = 600).json()[0]["field_next_draw_date"]
-    Winner = http.get(Winner_URL, ttl_seconds = 600).json()[0]["field_primary_winner_states"]
-    Jackpot = http.get(Next_Draw_URL, ttl_seconds = 600).json()[0]["field_prize_amount"]
-
-    pb_data = dict(PB_NUMS = PB_NUMS, Draw_Date = Draw_Date, Next_Draw_Date = Next_Draw_Date, Winner = Winner, Jackpot = Jackpot)
-
-    if pb_data["Winner"] == "None":
-        Won = "0 Winners"
-    else:
-        Won = "1+ Winner"
+    draw = get_latest_draw()
+    if not draw:
+        return render_message("Powerball results unavailable")
+    PB_NUMS = draw["winning_numbers"].split(" ")
+    Draw_Date = draw["draw_date"][5:10].replace("-", "/")
+    Jackpot = "POWERBALL"
+    Won = "Power Play x%s" % draw.get("multiplier", "-")
 
     return render.Root(
         child = render.Column(
@@ -56,17 +50,17 @@ def main():
                                 render.Row(
                                     children = [
                                         render.Box(width = 3, height = 4),
-                                        render.Text(content = PB_NUMS[0:2], color = "#000", font = "tom-thumb"),
+                                        render.Text(content = PB_NUMS[0], color = "#000", font = "tom-thumb"),
                                         render.Box(width = 2, height = 4),
-                                        render.Text(content = PB_NUMS[3:5], color = "#000", font = "tom-thumb"),
+                                        render.Text(content = PB_NUMS[1], color = "#000", font = "tom-thumb"),
                                         render.Box(width = 2, height = 4),
-                                        render.Text(content = PB_NUMS[6:8], color = "#000", font = "tom-thumb"),
+                                        render.Text(content = PB_NUMS[2], color = "#000", font = "tom-thumb"),
                                         render.Box(width = 2, height = 4),
-                                        render.Text(content = PB_NUMS[9:11], color = "#000", font = "tom-thumb"),
+                                        render.Text(content = PB_NUMS[3], color = "#000", font = "tom-thumb"),
                                         render.Box(width = 2, height = 4),
-                                        render.Text(content = PB_NUMS[12:14], color = "#000", font = "tom-thumb"),
+                                        render.Text(content = PB_NUMS[4], color = "#000", font = "tom-thumb"),
                                         render.Box(width = 2, height = 4),
-                                        render.Text(content = PB_NUMS[15:17], color = "#000", font = "tom-thumb"),
+                                        render.Text(content = PB_NUMS[5], color = "#000", font = "tom-thumb"),
                                     ],
                                 ),
                             ],
@@ -83,9 +77,9 @@ def main():
                         render.Box(width = 1, height = 20),
                         render.Column(
                             children = [
-                                render.Text(Draw_Date[5:7] + "/" + Draw_Date[8:10], font = "tom-thumb"),
+                                render.Text(Draw_Date, font = "tom-thumb"),
                                 render.Box(width = 20, height = 1),
-                                render.Text(Next_Draw_Date[5:7] + "/" + Next_Draw_Date[8:10], font = "tom-thumb"),
+                                render.Text("RESULT", font = "tom-thumb"),
                             ],
                         ),
                         render.Box(width = 2, height = 20),
@@ -93,11 +87,41 @@ def main():
                             children = [
                                 render.Text(Won, font = "tom-thumb"),
                                 render.Box(width = 38, height = 1),
-                                render.Text("Upcoming", font = "tom-thumb"),
+                                render.Text("Latest Draw", font = "tom-thumb"),
                             ],
                         ),
                     ],
                 ),
+            ],
+        ),
+    )
+
+def get_latest_draw():
+    response = http.get(NUMBERS_URL, ttl_seconds = TTL_SECONDS)
+    body = response.body()
+    if response.status_code != 200 or len(body) > MAX_RESPONSE_BYTES or not body.startswith("[") or not body.endswith("]"):
+        return None
+    rows = json.decode(body, None)
+    if type(rows) != "list" or len(rows) != 1 or type(rows[0]) != "dict":
+        return None
+    draw = rows[0]
+    numbers = draw.get("winning_numbers", "").split(" ")
+    if len(numbers) != 6 or type(draw.get("draw_date")) != "string" or len(draw["draw_date"]) < 10:
+        return None
+    for number in numbers:
+        if len(number) != 2 or not number.isdigit():
+            return None
+    return draw
+
+def render_message(message):
+    return render.Root(
+        child = render.Column(
+            expanded = True,
+            main_align = "center",
+            cross_align = "center",
+            children = [
+                render.Text("POWERBALL", font = "tb-8"),
+                render.WrappedText(message, align = "center"),
             ],
         ),
     )

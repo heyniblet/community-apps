@@ -18,10 +18,13 @@ WHITE = "#FFFFFF"
 LEFT_PAD_1PX = (1, 0, 0, 0)  # left pad by 1
 
 # request constants
-CACHE_TIMEOUT_DEFAULT = 120
+CACHE_TIMEOUT_DEFAULT = 300
 DAY_IN_SECONDS = 86400
 BASE_URL = "https://overwatch.blizzard.com"
-USER_AGENT = "Tidbyt"
+HERO_IMAGE_PREFIX = "https://d15f34w2p8l1cc.cloudfront.net/overwatch/"
+MAX_HTML_BYTES = 256 * 1024
+MAX_IMAGE_BYTES = 1024 * 1024
+USER_AGENT = "Niblet app verifier (heyniblet.com)"
 
 # content regex patterns
 PCT_PATTERN = "(?:100(?:\\.0+)?|[0-9]?[0-9](?:\\.[0-9]+)?)$"
@@ -123,10 +126,11 @@ def get_cachable_data(url, timeout, params = {}, headers = {}):
     """
     res = http.get(url = url, ttl_seconds = timeout, params = params, headers = headers)
 
-    if res.status_code != 200:
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > MAX_HTML_BYTES:
         return ""
 
-    return res.body()
+    return body
 
 def get_split_string_cleaned(input_text, split_pattern):
     """A helper function that splits a string and filters empty strings.
@@ -221,6 +225,7 @@ def get_rates_list(input_text, statistic):
     # the values are not sorted... sort them.
     def _sort_key(x):
         return float(x[1])
+
     sorted_rates = sorted(result_rates, key = _sort_key, reverse = True)
 
     return sorted_rates
@@ -435,7 +440,9 @@ def get_hero_image_map(heroes = None):
             continue
 
         image_attrs = image.attrs()
-        hero_image_map[hero_name] = image_attrs.get("src")
+        image_url = image_attrs.get("src")
+        if type(image_url) == "string" and image_url.startswith(HERO_IMAGE_PREFIX):
+            hero_image_map[hero_name] = image_url
 
     return hero_image_map
 
@@ -591,13 +598,14 @@ def render_statistics(
 
         image_url = hero_image_map[hero_name]
         image_rep = http.get(image_url, ttl_seconds = DAY_IN_SECONDS)
+        image_body = image_rep.body()
 
-        if image_rep.status_code != 200:
+        if image_rep.status_code != 200 or not image_body or len(image_body) > MAX_IMAGE_BYTES:
             continue
 
         section_data = struct(
             hero = hero_name,
-            hero_image = image_rep.body(),
+            hero_image = image_body,
             statistic = stat_value,
         )
 

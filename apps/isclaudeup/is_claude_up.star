@@ -1,12 +1,13 @@
 """IsClaudeUp — Live Anthropic/Claude.ai service status on your Tidbyt."""
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 VERSION = "1.0"
 
-STATUS_URL = "https://status.anthropic.com/api/v2/summary.json"
+STATUS_URL = "https://status.claude.com/api/v2/summary.json"
 
 # Anthropic brand colors
 CLAY = "#CC785C"
@@ -57,6 +58,8 @@ def comp_icon_for(status):
 
 def match_comp(name):
     """Map a Statuspage component name to a short display label."""
+    if type(name) != "string":
+        return None
     low = name.lower()
     if "workspace" in low:
         return "WS"
@@ -68,9 +71,11 @@ def match_comp(name):
 
 def fetch_status():
     resp = http.get(STATUS_URL, ttl_seconds = 300)
-    if resp.status_code != 200:
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > 256 * 1024:
         return None
-    return resp.json()
+    data = json.decode(body, None)
+    return data if type(data) == "dict" else None
 
 # ---------------------------------------------------------------------------
 # Logo animation — 16x32 pixel panel, Anthropic-inspired pulsing asterisk
@@ -113,7 +118,9 @@ def logo_animation(dot_color):
 def component_row(components):
     items = []
     seen = {}
-    for c in components:
+    for c in components[:20]:
+        if type(c) != "dict":
+            continue
         if c.get("group", False):
             continue
         label = match_comp(c.get("name", ""))
@@ -128,12 +135,14 @@ def component_row(components):
     return render.Row(children = items, main_align = "start", cross_align = "center")
 
 def incident_scroll(incidents, width):
-    if not incidents:
+    if type(incidents) != "list" or not incidents or type(incidents[0]) != "dict":
         return None
     inc = incidents[0]
     title = inc.get("name", "Incident")
+    title = title[:120] if type(title) == "string" else "Incident"
     updates = inc.get("incident_updates", [])
-    body = updates[0].get("body", "") if updates else ""
+    body = updates[0].get("body", "") if type(updates) == "list" and updates and type(updates[0]) == "dict" else ""
+    body = body[:300] if type(body) == "string" else ""
     text = (title + "  " + body) if body else title
     return render.Marquee(
         child = render.Text(text, font = "CG-pixel-3x5-mono", color = WARN),
@@ -159,9 +168,12 @@ def main(_):
         )
 
     overall = data.get("status", {})
+    overall = overall if type(overall) == "dict" else {}
     ind = overall.get("indicator", "unknown")
     components = data.get("components", [])
     incidents = data.get("incidents", [])
+    components = components if type(components) == "list" else []
+    incidents = incidents if type(incidents) == "list" else []
 
     s_color = indicator_color(ind)
     s_label = indicator_label(ind)

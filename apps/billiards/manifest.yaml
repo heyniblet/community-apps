@@ -6,6 +6,10 @@ desc: A continuous 15-second simulation of a game of pool, featuring randomized 
 author: Mark Greinke
 fileName: billiards.star
 packageName: billiards
+recommendedInterval: 5
+category: entertainment
 published: '2026-06-10T23:06:49Z'
 updated: '2026-06-10T23:35:40Z'
-tags: []
+tags:
+  - gaming
+  - art

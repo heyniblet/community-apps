@@ -4,7 +4,7 @@ name: Product Hunt
 summary: Product Hunt top products
 desc: View the daily top tech products from Product Hunt. Generate your Developer Token at https://www.producthunt.com/v2/oauth/applications.
 author: Daniel Sitnik
-recommendedInterval: 5
+recommendedInterval: 30
 fileName: product_hunt.star
 packageName: producthunt
 category: entertainment

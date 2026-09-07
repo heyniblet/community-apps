@@ -1,3 +1,4 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -16,6 +17,20 @@ HEADER_MAX_CHARS = HEADER_TEXT_WIDTH // HEADER_FONT_WIDTH
 SEPARATOR_HEIGHT = 1
 ROW_HEIGHT = 8
 MAX_VISIBLE_ROWS = (DISPLAY_HEIGHT - HEADER_HEIGHT - SEPARATOR_HEIGHT) // ROW_HEIGHT
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_TEXT_LENGTH = 80
+DEPARTURES_QUERY = """query($id: String!, $departures: Int!) {
+  stopPlace(id: $id) {
+    name
+    quays {
+      id
+      estimatedCalls(timeRange: 72000, numberOfDepartures: $departures) {
+        expectedDepartureTime
+        serviceJourney { line { publicCode } }
+      }
+    }
+  }
+}"""
 
 def truncate_text(text, max_len):
     if not text:
@@ -57,10 +72,18 @@ def display_stop_name(name):
 
 def minutes_until_departure(current_time, departure_time):
     # Extract HH:MM from ISO format strings
+    if type(current_time) != "string" or type(departure_time) != "string" or len(current_time) < 16 or len(departure_time) < 16:
+        return None
+    current_hhmm = current_time[11:13] + current_time[14:16]
+    departure_hhmm = departure_time[11:13] + departure_time[14:16]
+    if not current_hhmm.isdigit() or not departure_hhmm.isdigit():
+        return None
     current_hours = int(current_time[11:13])
     current_minutes = int(current_time[14:16])
     departure_hours = int(departure_time[11:13])
     departure_minutes = int(departure_time[14:16])
+    if current_hours > 23 or departure_hours > 23 or current_minutes > 59 or departure_minutes > 59:
+        return None
 
     # Convert to total minutes
     current_total = current_hours * 60 + current_minutes
@@ -134,13 +157,13 @@ def get_schema():
             schema.Text(
                 id = "stop_id",
                 name = "Stopp-ID",
-                desc = "Stopp-ID fra Entur, for eksempel NSR:StopPlace:6286. Finn det i Enturs Stoppestedregister: https://stoppested.entur.org",
+                desc = "Stopp-ID fra Entur, for eksempel NSR:StopPlace:6286. Finn det på stoppested.entur.org.",
                 icon = "locationDot",
             ),
             schema.Text(
                 id = "quay_id",
                 name = "Plattform-ID",
-                desc = "Plattform-ID fra Entur, for eksempel NSR:Quay:11544. Finn det i Enturs Stoppestedregister: https://stoppested.entur.org",
+                desc = "Plattform-ID fra Entur, for eksempel NSR:Quay:11544. Finn det på stoppested.entur.org.",
                 icon = "bus",
             ),
             schema.Text(
@@ -181,41 +204,25 @@ def main(config):
                 ),
             ),
         )
-    requested_departures = int(config.get("num_departures", 3))
-    if requested_departures < 1:
-        requested_departures = 1
-    if requested_departures > 5:
-        requested_departures = 5
-    num_departures = requested_departures
-
-    # GraphQL query for departures
-    query = """{
-      stopPlace(id: "%s") {
-        name
-        quays {
-          id
-          estimatedCalls(timeRange: 72000, numberOfDepartures: %d) {
-                        expectedDepartureTime
-            serviceJourney {
-              line {
-                publicCode
-              }
-            }
-          }
-        }
-      }
-    }""" % (stop_id, num_departures)
+    if not valid_entur_id(stop_id, "NSR:StopPlace:") or not valid_entur_id(quay_id, "NSR:Quay:"):
+        return error_root("Ugyldig stopp-ID")
+    stop_name = str(stop_name or "")[:MAX_TEXT_LENGTH]
+    requested_departures = str(config.get("num_departures", "3"))
+    num_departures = int(requested_departures) if requested_departures in ["1", "2", "3"] else 3
 
     # Set up headers
     headers = {
-        "ET-Client-Name": "entur-tidbyt-display",
+        "ET-Client-Name": "heyniblet-entur-departures",
         "Content-Type": "application/json",
     }
 
     # Make the request to Entur API
     rep = http.post(
         ENTUR_API_URL,
-        json_body = {"query": query},
+        json_body = {
+            "query": DEPARTURES_QUERY,
+            "variables": {"id": stop_id, "departures": num_departures},
+        },
         headers = headers,
     )
 
@@ -240,7 +247,8 @@ def main(config):
         )
 
     # Parse the JSON response
-    response_data = rep.json()
+    body = rep.body()
+    response_data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
     departures = []
     header = header_box(stop_name or "Stopp", "#b0b0b0")
     separator = render.Box(
@@ -250,27 +258,36 @@ def main(config):
     )
 
     # Extract departure information
-    if "data" in response_data and "stopPlace" in response_data["data"]:
-        stop_place = response_data["data"]["stopPlace"]
+    data = response_data.get("data") if type(response_data) == "dict" else None
+    stop_place = data.get("stopPlace") if type(data) == "dict" else None
+    if type(stop_place) == "dict":
         if not stop_name:
-            stop_name = stop_place.get("name", "Ukjent stopp")
+            stop_name = str(stop_place.get("name") or "Ukjent stopp")[:MAX_TEXT_LENGTH]
 
         # Create the header box
         header = header_box(stop_name, "#62cfebff")
 
-        if "quays" in stop_place:
-            for quay in stop_place["quays"]:
-                if quay["id"] == quay_id and "estimatedCalls" in quay:
-                    for call in quay["estimatedCalls"]:
+        quays = stop_place.get("quays")
+        if type(quays) == "list":
+            for quay in quays[:100]:
+                calls = quay.get("estimatedCalls") if type(quay) == "dict" and quay.get("id") == quay_id else None
+                if type(calls) == "list":
+                    for call in calls[:num_departures]:
                         if len(departures) >= MAX_VISIBLE_ROWS:
                             break
 
-                        line = call["serviceJourney"]["line"]["publicCode"]
-                        departure_time = call["expectedDepartureTime"]
+                        journey = call.get("serviceJourney") if type(call) == "dict" else None
+                        line_data = journey.get("line") if type(journey) == "dict" else None
+                        line = line_data.get("publicCode") if type(line_data) == "dict" else None
+                        departure_time = call.get("expectedDepartureTime") if type(call) == "dict" else None
+                        if type(line) not in ["string", "int"] or type(departure_time) != "string" or len(departure_time) > 40:
+                            continue
 
                         # Get current time in the same format as departure_time
                         current_time = time.now().format("2006-01-02T15:04:05-07:00")
                         minutes_left = minutes_until_departure(current_time, departure_time)
+                        if minutes_left == None:
+                            continue
                         time_str, time_color = departure_time_style(minutes_left)
 
                         departures.append(
@@ -283,7 +300,7 @@ def main(config):
                                         render.Box(
                                             width = 26,
                                             child = render.Text(
-                                                content = truncate_text(line, 6),
+                                                content = truncate_text(str(line), 6),
                                                 font = "CG-pixel-4x5-mono",
                                                 color = "#ffd166",
                                             ),
@@ -320,3 +337,9 @@ def main(config):
             children = [header, separator] + departures,
         ),
     )
+
+def valid_entur_id(value, prefix):
+    return type(value) == "string" and len(value) <= 80 and value.startswith(prefix) and value[len(prefix):].isdigit()
+
+def error_root(message):
+    return render.Root(child = render.Box(render.WrappedText(message, font = "CG-pixel-4x5-mono", color = "#ff6b6b")))

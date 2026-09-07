@@ -1,4 +1,3 @@
-load("encoding/base64.star", "base64")
 load("http.star", "http")
 load("images/lane_back.png", LANE_BACK_ASSET = "file")
 load("images/lane_closed.png", LANE_CLOSED_ASSET = "file")
@@ -10,16 +9,16 @@ LANE_BACK = LANE_BACK_ASSET.readall()
 LANE_CLOSED = LANE_CLOSED_ASSET.readall()
 LANE_FORWARD = LANE_FORWARD_ASSET.readall()
 
-API_URL = "https://www.drivebc.ca/data/dms.json"
-sign_number = "DMS 11_4"
+API_URL = "https://www.drivebc.ca/api/dms/"
+sign_number = "11_4"
 
 ARROWS_API_URL = "https://b60n09kp22.execute-api.us-west-2.amazonaws.com/prod/getarrows"
 
 def fetch_arrow_directions(api_key):
     headers = {"x-api-key": api_key}
-    r = http.get(ARROWS_API_URL, headers = headers, ttl_seconds = 30)
+    r = http.get(ARROWS_API_URL, headers = headers)
     if r.status_code == 200:
-        return r.json().get("arrow_directions", [])
+        return r.json().get("arrow_directions", [])[:5]
     else:
         return []
 
@@ -31,8 +30,8 @@ def fetch_dms_data():
         return None
 
 def get_sign_by_signNo(dms_data, sign_number):
-    for sign in dms_data:
-        if sign["location"]["signNo"] == sign_number:
+    for sign in dms_data or []:
+        if sign.get("id") == sign_number:
             return sign
     return None
 
@@ -51,9 +50,10 @@ def render_dms(api_key):
     dms_data = fetch_dms_data()
     arrow_directions = fetch_arrow_directions(api_key)
     dms_sign = get_sign_by_signNo(dms_data, sign_number)
-    decoded_text = base64.decode(dms_sign["location"]["content"]["pages"][0]["lines"][0]["text"])
-    decoded_text = decoded_text.replace("[nl]  ", " - ")
-    sign_text = decoded_text.replace("[pt30o2]  ", "")
+    if dms_sign == None:
+        return render.Root(child = render.Text("Bridge unavailable", font = "5x8"))
+    messages = [dms_sign.get("message_display_1", ""), dms_sign.get("message_display_2", ""), dms_sign.get("message_display_3", "")]
+    sign_text = " - ".join([message.replace("\n", " ") for message in messages if message]) or "Lions Gate status unavailable"
 
     lane_icons = []
     if arrow_directions:

@@ -5,6 +5,7 @@ Description: Fetches and shows the current Splatoon 3 map rotations. Data provid
 Author: MarkGamed7794
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/salmon_stage_bonerattle_arena.png", SALMON_STAGE_BONERATTLE_ARENA_ASSET = "file")
 load("images/salmon_stage_gone_fission_hydroplant.png", SALMON_STAGE_GONE_FISSION_HYDROPLANT_ASSET = "file")
@@ -343,15 +344,18 @@ def generateGeneralFrame(header_text, header_colours, img_a, img_b, footer, weap
 def loadImage(url):
     IMG_SIZE = 14
     BOX_SIZE = 9
-    req = http.get(url)
+    if type(url) != "string" or len(url) > 2048 or not url.startswith("https://splatoon3.ink/"):
+        return render.Box(width = IMG_SIZE, height = BOX_SIZE, child = render.Image(STAGE_IMG["no_stage"], width = IMG_SIZE, height = IMG_SIZE))
+    req = http.get(url, ttl_seconds = 3600)
+    body = req.body()
 
-    if (req.status_code != 200):
+    if req.status_code != 200 or not body or len(body) > 2 * 1024 * 1024 or not req.headers.get("Content-Type", "").lower().startswith("image/"):
         # Should never happen but just in case
         # TODO: replace with better icon
         return render.Box(width = IMG_SIZE, height = BOX_SIZE, child = render.Image(STAGE_IMG["no_stage"], width = IMG_SIZE, height = IMG_SIZE))
 
     # Bad cropping is still cropping
-    return render.Box(width = IMG_SIZE, height = BOX_SIZE, child = render.Image(req.body(), width = IMG_SIZE, height = IMG_SIZE))
+    return render.Box(width = IMG_SIZE, height = BOX_SIZE, child = render.Image(body, width = IMG_SIZE, height = IMG_SIZE))
 
 def generateFrame(battle, battle_type, extra):
     # Takes a specified title, header colour, and battle and returns the prettified frame.
@@ -403,10 +407,13 @@ def main(config):
 
     # Oh, we need new data
     rep = http.get(STAGE_URL, ttl_seconds = 3600 * 2)
-    if (rep.status_code != 200):
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > 512 * 1024:
         failed = rep.status_code or -1
     else:
-        stages = rep.json()  # Will it just let me do this?
+        stages = json.decode(body, {})
+        if type(stages) != "dict" or type(stages.get("data")) != "dict":
+            failed = -1
 
     if (failed):
         return generateErrorFrame("API error!\nError code %d" % (failed or -1))

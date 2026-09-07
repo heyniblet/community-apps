@@ -2,7 +2,7 @@
 
 Display real-time San Francisco Muni bus and rail departure times on your Tidbyt.
 
-![Muni Departures App](https://via.placeholder.com/64x32/000000/FFFFFF?text=MUNI)
+![Muni Departures App](muni_departures.webp)
 
 ## Features
 
@@ -10,7 +10,7 @@ Display real-time San Francisco Muni bus and rail departure times on your Tidbyt
 - **Direction indicators** showing inbound (IN) or outbound (OUT) services
 - **Color-coded badges** matching official Muni line colors
 - **Scrolling stop names** for long station names
-- **Live updates** with 30-second refresh intervals
+- **Live updates** on a five-minute cadence that fits the default API quota
 
 ## Setup
 
@@ -97,7 +97,8 @@ Example:
 - Your API key stays private and is only used by your Tidbyt
 - Each user gets their own 511.org rate limits
 - The app caches stop names for 5 minutes to reduce API calls
-- Real-time data refreshes every 30 seconds
+- Real-time data refreshes every five minutes. The default 60-request/hour
+  quota must cover both configured stops and the stop-name lookup.
 
 ## Credits
 

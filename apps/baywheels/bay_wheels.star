@@ -20,23 +20,29 @@ STATIONS_URL = "https://gbfs.lyft.com/gbfs/2.3/bay/en/station_information.json"
 STATUS_URL = "https://gbfs.lyft.com/gbfs/2.3/bay/en/station_status.json"
 
 DEFAULT_STATION = '{ "display": "18th St at Noe St", "value": "cd7359fc-6798-48ed-af32-9d5f6cff9ffa"}'
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_STATIONS = 2000
 
 def main(config):
-    station = json.decode(config.get("station_id", DEFAULT_STATION))
+    station_id, station_name = station_selection(config.get("station_id", DEFAULT_STATION))
 
-    allStatuses = fetch_cached(STATUS_URL, 240)["data"]["stations"]
+    all_statuses = stations_from_response(fetch_cached(STATUS_URL, 60))
+    station_info = find_station(stations_from_response(fetch_cached(STATIONS_URL, 86400)), station_id)
+    if station_info:
+        station_name = str(station_info.get("name", station_name))[:120]
 
     ebikes = 0
     bikes = 0
-    stationStatus = [status for status in allStatuses if status["station_id"] == station["value"]]
+    stationStatus = [status for status in all_statuses if status.get("station_id") == station_id]
 
     if len(stationStatus) > 0:
         stationStatus = stationStatus[0]
 
         # The Lyft API renders the total number of bikes, and the number of those that are
         # e-bikes, so we calculate the number of "classic" bikes.
-        ebikes = stationStatus["num_ebikes_available"]
-        bikes = stationStatus["num_bikes_available"] - ebikes
+        total = safe_count(stationStatus.get("num_bikes_available"))
+        ebikes = min(total, safe_count(stationStatus.get("num_ebikes_available")))
+        bikes = max(0, total - ebikes)
 
     return render.Root(
         child = render.Column(
@@ -46,7 +52,7 @@ def main(config):
                     children = [
                         render.Marquee(
                             width = 64,
-                            child = render.Text(station["display"]),
+                            child = render.Text(station_name),
                         ),
                         render.Box(width = 64, height = 1, color = "#FFF"),
                     ],
@@ -81,43 +87,46 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Text(
                 id = "station_id",
-                name = "Bay Wheels Station",
-                desc = "A list of bike share stations based on a location.",
+                name = "Bay Wheels Station ID",
+                desc = "Station ID from the public Bay Wheels GBFS feed. Existing nearby-station selections continue to work.",
                 icon = "bicycle",
-                handler = get_stations,
             ),
         ],
     )
 
-def get_stations(location):
-    loc = json.decode(location)
+def station_selection(raw):
+    parsed = json.decode(raw, None) if type(raw) == "string" else None
+    if type(parsed) == "dict":
+        station_id = parsed.get("value")
+        display = parsed.get("display", "Bay Wheels")
+    else:
+        station_id = raw
+        display = "Bay Wheels"
+    station_id = str(station_id or "").strip()
+    if not station_id or len(station_id) > 128 or "\r" in station_id or "\n" in station_id:
+        return "cd7359fc-6798-48ed-af32-9d5f6cff9ffa", "18th St at Noe St"
+    return station_id, str(display or "Bay Wheels")[:120]
 
-    result = fetch_cached(STATIONS_URL, 86400)
-    if "data" not in result:
-        fail("No data field found in result: %s" % str(result)[:100])
-    if "stations" not in result["data"]:
-        fail("No stations field found in data: %s" % str(result["data"])[:100])
-    stations = result["data"]["stations"]
+def stations_from_response(result):
+    data = result.get("data", {}) if type(result) == "dict" else {}
+    stations = data.get("stations", []) if type(data) == "dict" else []
+    return [station for station in stations[:MAX_STATIONS] if type(station) == "dict" and type(station.get("station_id")) == "string"] if type(stations) == "list" else []
 
-    return [
-        schema.Option(
-            display = station["name"],
-            value = station["station_id"],
-        )
-        for station in sorted(stations, key = lambda station: square_distance(loc["lat"], loc["lng"], station["lat"], station["lon"]))
-    ]
+def find_station(stations, station_id):
+    for station in stations:
+        if station.get("station_id") == station_id:
+            return station
+    return None
 
-def square_distance(lat1, lon1, lat2, lon2):
-    latitude_difference = int((float(lat2) - float(lat1)) * 10000)
-    longitude_difference = int((float(lon2) - float(lon1)) * 10000)
-    return latitude_difference * latitude_difference + longitude_difference * longitude_difference
+def safe_count(value):
+    return max(0, int(value)) if type(value) in ["int", "float"] else 0
 
 def fetch_cached(url, ttl):
     res = http.get(url, ttl_seconds = ttl)
     if res.status_code != 200:
-        fail("GBFS request to %s failed with status %d", (url, res.status_code))
-    data = res.json()
-
-    return data
+        return {}
+    body = res.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    return data if type(data) == "dict" else {}

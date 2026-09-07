@@ -10,7 +10,6 @@ load("http.star", "http")
 load("images/diamond_green.png", DIAMOND_GREEN_ASSET = "file")
 load("images/diamond_orange.png", DIAMOND_ORANGE_ASSET = "file")
 load("images/diamond_purple.png", DIAMOND_PURPLE_ASSET = "file")
-load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -23,6 +22,8 @@ SUBWAY_NOW_ROUTES_URL = "https://api.subwaynow.app/routes/"
 
 DISPLAY_ORDER_ETA = "eta"
 DISPLAY_ORDER_ALPHABETICAL = "alphabetical"
+MAX_RESPONSE_BYTES = 512 * 1024
+MAX_TRIPS = 100
 
 NAME_OVERRIDE = {
     "Grand Central-42 St": "Grand Cntrl",
@@ -64,187 +65,71 @@ DIAMONDS = {
 }
 
 def main(config):
-    routes_req = http.get(SUBWAY_NOW_ROUTES_URL)
-    if routes_req.status_code != 200:
-        fail("Subway Now routes request failed with status %d", routes_req.status_code)
+    stop_id = config.get("stop_id", DEFAULT_STOP_ID)
+    if not valid_stop_id(stop_id):
+        return error("Invalid subway stop")
+    travel_time_min = travel_minutes(config.get("travel_time", DEFAULT_TRAVEL_TIME))
+    if travel_time_min == None:
+        return error("Invalid travel time")
+    direction = config.get("direction", DEFAULT_DIRECTION)
+    directions = ["north", "south"] if direction == "both" else [direction] if direction in ["north", "south"] else []
+    if not directions:
+        return error("Invalid direction")
+    ordering = config.get("order_by", DISPLAY_ORDER_ETA)
+    ordering = ordering if ordering in [DISPLAY_ORDER_ETA, DISPLAY_ORDER_ALPHABETICAL] else DISPLAY_ORDER_ETA
+    third_threshold = config.get("third_time", "0")
+    third_threshold = int(third_threshold) if type(third_threshold) == "string" and third_threshold in ["0", "3", "5", "7", "10", "1000"] else 0
+    include_lines = config.get("include_lines", "")
+    if type(include_lines) != "string" or len(include_lines) > 200:
+        return error("Invalid line filter")
+    included = [line.strip().upper() for line in include_lines.split(",")[:20] if line.strip()]
 
-    stop_id = config.str("stop_id", DEFAULT_STOP_ID)
-    stop_req = http.get(SUBWAY_NOW_STOPS_URL_BASE + stop_id + "?agent=tidbyt")
-    if stop_req.status_code != 200:
-        fail("Subway Now stop request failed with status %d", stop_req.status_code)
+    routes = fetch_json(SUBWAY_NOW_ROUTES_URL)
+    stop = fetch_json(SUBWAY_NOW_STOPS_URL_BASE + stop_id + "?agent=tidbyt")
+    stops = fetch_json(SUBWAY_NOW_STOPS_URL_BASE)
+    if type(routes) != "dict" or type(routes.get("routes")) != "dict" or type(stop) != "dict" or type(stops) != "dict":
+        return error("Subway Now unavailable")
+    stop_names = {}
+    for item in stops.get("stops", [])[:600]:
+        if type(item) == "dict" and type(item.get("id")) == "string" and type(item.get("name")) == "string":
+            stop_names[item["id"]] = condense_name(item["name"][:100])
 
-    stops_req = http.get(SUBWAY_NOW_STOPS_URL_BASE)
-    if stops_req.status_code != 200:
-        fail("Subway Now stops request failed with status %d", stops_req.status_code)
-
-    travel_time_raw = json.decode(config.get("travel_time", DEFAULT_TRAVEL_TIME))["value"]
-    if not is_parsable_integer(travel_time_raw):
-        fail("non-integer value provided for travel_time: %s", travel_time_raw)
-    travel_time_min = int(travel_time_raw)
-
-    direction_config = config.str("direction", DEFAULT_DIRECTION)
-    if direction_config == "both":
-        directions = ["north", "south"]
-    else:
-        directions = [direction_config]
-
-    ordering = config.str("order_by", DISPLAY_ORDER_ETA)
-
-    ts = time.now().unix
+    now = time.now().unix
+    minimum = now + travel_time_min * 60
     blocks = []
-    min_estimated_arrival_time = ts + (travel_time_min * 60)
-
-    include_lines_str = config.str("include_lines", "").upper()
-    include_lines = include_lines_str.split(",")
-
-    for dir in directions:
-        upcoming_routes = {
-            "north": [],
-            "south": [],
-        }
-        dir_data = stop_req.json()["upcoming_trips"].get(dir)
-        if not dir_data:
-            continue
-
-        for trip in dir_data:
-            matching_route = None
-
-            if trip["estimated_current_stop_arrival_time"] < min_estimated_arrival_time:
+    upcoming = stop.get("upcoming_trips", {})
+    for direction in directions:
+        groups = group_trips(upcoming.get(direction, []) if type(upcoming) == "dict" else [], minimum)
+        if ordering == DISPLAY_ORDER_ALPHABETICAL:
+            groups = sorted(groups, key = lambda item: route_name(routes["routes"], item["route_id"]))
+        for group in groups:
+            selected_route = routes["routes"].get(group["route_id"])
+            if type(selected_route) != "dict":
                 continue
-
-            for r in upcoming_routes[dir]:
-                if r["route_id"] == trip["route_id"] and r["destination_stop"] == trip["destination_stop"]:
-                    matching_route = r
-                    break
-            if matching_route:
-                if len(matching_route["times"]) < 3:
-                    matching_route["times"].append(trip["estimated_current_stop_arrival_time"])
-                    matching_route["is_delayed"].append(trip["is_delayed"])
-                else:
-                    continue
-            else:
-                upcoming_routes[dir].append({"route_id": trip["route_id"], "destination_stop": trip["destination_stop"], "times": [trip["estimated_current_stop_arrival_time"]], "is_delayed": [trip["is_delayed"]]})
-
-        for dir in directions:
-            routes_by_dir = upcoming_routes[dir]
-
-            if ordering == DISPLAY_ORDER_ALPHABETICAL:
-                def order_by_alpha(e):
-                    selected_route = routes_req.json()["routes"][e["route_id"]]
-                    return selected_route["name"]
-
-                routes_by_dir = sorted(routes_by_dir, order_by_alpha)
-
-            for r in routes_by_dir:
-                if len(blocks) > 0:
-                    if dir == "south" and r == routes_by_dir[0]:
-                        blocks.append(render.Box(width = 64, height = 1, color = "#aaa"))
-                    else:
-                        blocks.append(render.Box(width = 64, height = 1, color = "#333"))
-
-                selected_route = routes_req.json()["routes"][r["route_id"]]
-
-                route_name = selected_route["name"].upper()
-
-                if include_lines_str and len(include_lines) and route_name not in include_lines:
-                    continue
-
-                route_color = selected_route["color"]
-                text_color = selected_route["text_color"] if selected_route["text_color"] else "#fff"
-                destination = None
-
-                for s in stops_req.json()["stops"]:
-                    if s["id"] == r["destination_stop"]:
-                        destination = condense_name(s["name"])
-                        break
-
-                first_eta = (int(r["times"][0]) - ts) / 60
-                first_train_is_delayed = r["is_delayed"][0]
-
-                if first_train_is_delayed:
-                    text = "delay"
-                elif first_eta < 1:
-                    text = "due"
-                else:
-                    text = str(int(first_eta))
-                if len(r["times"]) == 1 and text != "due" and text != "delay":
-                    text = text + " min"
-                elif text != "delay":
-                    second_eta = (int((r["times"][1]) - ts) / 60)
-                    second_train_is_delayed = r["is_delayed"][1]
-                    if second_train_is_delayed:
-                        if first_eta < 1:
-                            text = text + ", delay"
-                        else:
-                            text = text + " min, delay"
-                    elif second_eta < 1:
-                        text = text + ", due"
-                    else:
-                        third_time_delta = config.str("third_time")
-                        if len(r["times"]) > 2 and (third_time_delta != None) and second_eta - first_eta < int(third_time_delta):
-                            third_eta = (int((r["times"][2]) - ts) / 60)
-                            third_train_is_delayed = r["is_delayed"][2]
-                            if third_train_is_delayed != 1:
-                                text = text + ", " + str(int(second_eta)) + ", " + str(int(third_eta))
-                                if len(text) > 9:
-                                    text = text + " m"
-                                else:
-                                    text = text + " min"
-                            else:
-                                text = text + ", " + str(int(second_eta)) + ", delay"
-                        else:
-                            text = text + ", " + str(int(second_eta)) + " min"
-
-                if len(selected_route["name"]) > 1 and selected_route["name"][1] == "X":
-                    bullet = render.Stack(
-                        children = [
-                            render.Image(
-                                src = DIAMONDS[route_color],
-                            ),
-                            render.Padding(
-                                pad = (4, 2, 0, 0),
-                                child = render.Text(
-                                    content = selected_route["name"][0],
-                                    color = text_color,
-                                    height = 8,
-                                ),
-                            ),
-                        ],
-                    )
-                else:
-                    bullet = render.Circle(
-                        color = route_color,
-                        diameter = 11,
-                        child = render.Box(
-                            padding = 1,
-                            height = 11,
-                            width = 11,
-                            child = render.Text(
-                                content = selected_route["name"][0] if selected_route["name"] != "SIR" else "SI",
-                                color = text_color,
-                                height = 8,
-                            ),
-                        ),
-                    )
-                blocks.append(render.Padding(
-                    pad = (0, 0, 0, 1),
-                    child = render.Row(
-                        main_align = "start",
-                        cross_align = "center",
-                        children = [
-                            render.Padding(
-                                pad = (1, 0, 1, 0),
-                                child = bullet,
-                            ),
-                            render.Column(
-                                children = [
-                                    render.Text(destination),
-                                    render.Text(content = text, font = "tom-thumb", color = "#f2711c"),
-                                ],
-                            ),
-                        ],
-                    ),
-                ))
+            name = selected_route.get("name")
+            if type(name) != "string" or not name or len(name) > 16:
+                continue
+            route_label = name.upper()
+            if included and route_label not in included:
+                continue
+            destination = stop_names.get(group["destination_stop"], group["destination_stop"][:20])
+            route_color = valid_color(selected_route.get("color"), "#666666")
+            text_color = valid_color(selected_route.get("text_color"), "#ffffff")
+            if blocks:
+                blocks.append(render.Box(width = 64, height = 1, color = "#aaa" if direction == "south" else "#333"))
+            blocks.append(render.Padding(
+                pad = (0, 0, 0, 1),
+                child = render.Row(
+                    cross_align = "center",
+                    children = [
+                        render.Padding(pad = (1, 0, 1, 0), child = route_bullet(name, route_color, text_color)),
+                        render.Column(children = [
+                            render.Text(destination[:24]),
+                            render.Text(content = eta_text(group, now, third_threshold), font = "tom-thumb", color = "#f2711c"),
+                        ]),
+                    ],
+                ),
+            ))
 
     if len(blocks) == 0:
         return []
@@ -262,48 +147,98 @@ def main(config):
         max_age = 60,
     )
 
-def is_parsable_integer(maybe_number):
-    return not re.findall("[^0-9]", maybe_number)
+def fetch_json(url):
+    response = http.get(url, ttl_seconds = 30)
+    body = response.body()
+    if response.status_code != 200 or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    return json.decode(body, None)
 
-def travel_time_search(pattern):
-    create_option = lambda value: schema.Option(display = value, value = value)
+def valid_stop_id(value):
+    return type(value) == "string" and len(value) >= 1 and len(value) <= 12 and all([char.isalnum() or char in "-_" for char in value.elems()])
 
-    if pattern == "0" or not is_parsable_integer(pattern):
-        return [create_option(str(i)) for i in range(10)]
+def travel_minutes(value):
+    decoded = json.decode(value, {}) if type(value) == "string" else {}
+    raw = decoded.get("value") if type(decoded) == "dict" else value
+    raw = value if type(raw) != "string" and type(value) == "string" else raw
+    if type(raw) != "string" or not raw.isdigit():
+        return None
+    minutes = int(raw)
+    return minutes if minutes >= 0 and minutes <= 60 else None
 
-    int_pattern = int(pattern)
-    if int_pattern > 60:
-        return [create_option("60")]
-    else:
-        return [create_option(pattern)] + [create_option(pattern + str(i)) for i in range(10) if int_pattern * 10 + i < 60]
+def group_trips(trips, minimum):
+    groups = []
+    if type(trips) != "list":
+        return groups
+    for trip in trips[:MAX_TRIPS]:
+        if type(trip) != "dict":
+            continue
+        route_id = trip.get("route_id")
+        destination = trip.get("destination_stop")
+        arrival = trip.get("estimated_current_stop_arrival_time")
+        delayed = trip.get("is_delayed") == True
+        if not valid_stop_id(route_id) or not valid_stop_id(destination) or type(arrival) != "int" or arrival < minimum or arrival > minimum + 6 * 3600:
+            continue
+        match = None
+        for group in groups:
+            if group["route_id"] == route_id and group["destination_stop"] == destination:
+                match = group
+                break
+        if match == None:
+            match = {"route_id": route_id, "destination_stop": destination, "times": [], "delayed": []}
+            groups.append(match)
+        if len(match["times"]) < 3:
+            match["times"].append(arrival)
+            match["delayed"].append(delayed)
+    return groups
+
+def route_name(routes, route_id):
+    route = routes.get(route_id)
+    return route.get("name", route_id) if type(route) == "dict" else route_id
+
+def eta_text(group, now, third_threshold):
+    labels = []
+    limit = 2
+    first = int((group["times"][0] - now) / 60)
+    second = int((group["times"][1] - now) / 60) if len(group["times"]) > 1 else None
+    if len(group["times"]) > 2 and second != None and second - first < third_threshold:
+        limit = 3
+    for i in range(min(limit, len(group["times"]))):
+        eta = int((group["times"][i] - now) / 60)
+        labels.append("delay" if group["delayed"][i] else "due" if eta < 1 else str(eta))
+    suffix = " min" if len(labels) == 1 and labels[0] not in ["due", "delay"] else ""
+    return ", ".join(labels) + suffix
+
+def valid_color(value, fallback):
+    if type(value) == "string" and len(value) == 7 and value.startswith("#") and all([char.lower() in "0123456789abcdef" for char in value[1:].elems()]):
+        return value
+    return fallback
+
+def route_bullet(name, route_color, text_color):
+    if len(name) > 1 and name[1] == "X" and DIAMONDS.get(route_color):
+        return render.Stack(children = [
+            render.Image(src = DIAMONDS[route_color]),
+            render.Padding(pad = (4, 2, 0, 0), child = render.Text(content = name[0], color = text_color, height = 8)),
+        ])
+    return render.Circle(
+        color = route_color,
+        diameter = 11,
+        child = render.Box(padding = 1, height = 11, width = 11, child = render.Text(content = name[0] if name != "SIR" else "SI", color = text_color, height = 8)),
+    )
+
+def error(message):
+    return render.Root(child = render.WrappedText(content = message, width = 62, align = "center"))
 
 def get_schema():
-    stops_req = http.get(SUBWAY_NOW_STOPS_URL_BASE)
-    if stops_req.status_code != 200:
-        fail("Subway Now stops request failed with status %d", stops_req.status_code)
-
-    stops_options = []
-
-    for s in stops_req.json()["stops"]:
-        stop_name = s["name"].replace(" - ", "-") + " - " + s["secondary_name"] if s["secondary_name"] else s["name"].replace(" - ", "-")
-        routes = sorted(s["scheduled_routes"].keys())
-        stops_options.append(
-            schema.Option(
-                display = stop_name + " (" + ", ".join(routes) + ")",
-                value = s["id"],
-            ),
-        )
-
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "stop_id",
                 name = "Station",
-                desc = "Station to show subway departures",
+                desc = "NYC Subway stop ID, such as M16 for Marcy Av.",
                 icon = "trainSubway",
                 default = "M16",
-                options = stops_options,
             ),
             schema.Dropdown(
                 id = "direction",
@@ -326,12 +261,12 @@ def get_schema():
                     ),
                 ],
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "travel_time",
                 name = "Travel Time to Station",
-                desc = "Amount of time it takes to reach this station (trains with earlier arrival times will be hidden).",
+                desc = "Whole minutes from 0 to 60; earlier trains are hidden.",
                 icon = "hourglass",
-                handler = travel_time_search,
+                default = "0",
             ),
             schema.Dropdown(
                 id = "third_time",

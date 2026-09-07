@@ -6,14 +6,13 @@ Author: karmeleon
 Updated: API modernization
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 # Updated API endpoint
 PATH_URL = "https://www.panynj.gov/bin/portauthority/ridepath.json"
+HEADERS = {"User-Agent": "Niblet/1.0 support@heyniblet.com"}
 
 # Station mapping - keys are used in config, values are station IDs from new API
 STATIONS = {
@@ -58,9 +57,10 @@ def get_display_row(message, widgetMode):
         wait_time_text = "now"
 
     # Convert hex color to proper format
-    if "," in message["lineColor"]:  # look to see if it's a list of colors
-        line_color1 = "#" + message["lineColor"][:6]
-        line_color2 = "#" + message["lineColor"][-6:]
+    colors = [safe_color(color) for color in message["lineColor"].split(",")]
+    if len(colors) > 1:
+        line_color1 = colors[0]
+        line_color2 = colors[-1]
 
         # make a circle, half of each color
         circle_widget = render.PieChart(
@@ -69,7 +69,7 @@ def get_display_row(message, widgetMode):
             diameter = 11,
         )
     else:  # it's a single color
-        line_color1 = "#" + message["lineColor"]
+        line_color1 = colors[0]
 
         # make a circle - for ease of troubleshooting it's going to be a piechart, although it doesn't need to be
         circle_widget = render.PieChart(
@@ -106,12 +106,17 @@ def parse_api_response(api_response, station_id, direction):
     messages = []
 
     # Find our station in the results
+    if type(api_response) != "dict" or type(api_response.get("results")) != "list":
+        return []
     for station in api_response["results"]:
-        if station["consideredStation"] != station_id:
+        if type(station) != "dict" or station.get("consideredStation") != station_id or type(station.get("destinations")) != "list":
             continue
 
         # Process each destination direction
         for dest in station["destinations"]:
+            if type(dest) != "dict" or dest.get("label") not in ["ToNY", "ToNJ"] or type(dest.get("messages")) != "list":
+                continue
+
             # Map API direction labels to our direction values
             current_direction = "TO_NY" if dest["label"] == "ToNY" else "TO_NJ"
 
@@ -121,33 +126,37 @@ def parse_api_response(api_response, station_id, direction):
 
             # Add all messages for this direction
             for message in dest["messages"]:
-                if message["secondsToArrival"] != "":  # Skip entries with no arrival time
-                    messages.append(message)
+                if type(message) != "dict":
+                    continue
+                seconds = message.get("secondsToArrival")
+                if type(seconds) != "string" or not seconds.isdigit():
+                    continue
+                if type(message.get("arrivalTimeMessage")) != "string" or type(message.get("headSign")) != "string" or type(message.get("lineColor")) != "string":
+                    continue
+                messages.append(message)
 
     # Sort by arrival time
     return sorted(messages, key = lambda x: int(x["secondsToArrival"]))
 
 def query_api():
     """Query the PATH API with caching"""
-    response = cache.get("path_data")
-    if response != None:
-        return json.decode(response)
-
-    api_response = http.get(PATH_URL)
+    api_response = http.get(PATH_URL, headers = HEADERS, ttl_seconds = 30)
     if api_response.status_code != 200:
-        fail("PATH API request failed with status {}".format(api_response.status_code))
-
-    response_json = api_response.json()
-    cache.set("path_data", json.encode(response_json), ttl_seconds = 30)
-    return response_json
+        return None
+    response = api_response.json()
+    return response if type(response) == "dict" else None
 
 def main(config):
     station = config.get("station") or "grove_street"
     desired_direction = config.get("direction") or "both"
+    if station not in STATIONS:
+        station = "grove_street"
+    if desired_direction not in ["both", "TO_NY", "TO_NJ"]:
+        desired_direction = "both"
     widgetMode = config.bool("$widget")
 
     api_response = query_api()
-    messages = parse_api_response(api_response, STATIONS[station], desired_direction)
+    messages = parse_api_response(api_response, STATIONS[station], desired_direction) if api_response != None else []
 
     if len(messages) == 0:
         extra_text = ""
@@ -175,6 +184,12 @@ def main(config):
         max_age = 60,
         delay = 100,
     )
+
+def safe_color(value):
+    value = value.strip().lower()
+    if len(value) != 6 or len([char for char in value.elems() if char not in "0123456789abcdef"]) > 0:
+        return "#888888"
+    return "#" + value
 
 def get_station_options():
     """Generate station options for the config schema"""

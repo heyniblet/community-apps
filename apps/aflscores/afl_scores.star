@@ -66,6 +66,7 @@ Added User Agent info to API request as per new requirements from provider
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -87,11 +88,51 @@ MATCH_CACHE = 21600
 LADDER_CACHE = 86400
 ROUND_CACHE = 60
 LIVE_CACHE = 30
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+def error_display():
+    return render.Root(child = render.WrappedText(content = "AFL data unavailable", width = 64, align = "center"))
+
+def valid_score(score):
+    return type(score) == "dict" and all([type(score.get(key)) in ["int", "float"] for key in ["goals", "behinds", "totalScore"]])
+
+def valid_match(match):
+    if type(match) != "dict" or type(match.get("status")) != "string" or type(match.get("utcStartTime")) != "string" or not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:00\.000\+0000$", match["utcStartTime"]):
+        return False
+    season = match.get("compSeason")
+    if type(season) != "dict" or type(season.get("currentRoundNumber")) != "int":
+        return False
+    for side_name in ["home", "away"]:
+        side = match.get(side_name)
+        team = side.get("team") if type(side) == "dict" else None
+        if type(team) != "dict" or type(team.get("id")) != "int" or str(team["id"]) not in [option.value for option in TeamOptions] or type(team.get("name")) != "string" or len(team["name"]) > 80 or not valid_score(side.get("score")):
+            return False
+    return True
+
+def valid_ladder_entry(entry):
+    team = entry.get("team") if type(entry) == "dict" else None
+    season = entry.get("thisSeasonRecord") if type(entry) == "dict" else None
+    record = season.get("winLossRecord") if type(season) == "dict" else None
+    return type(team) == "dict" and type(team.get("id")) == "int" and type(record) == "dict" and all([type(record.get(key)) == "int" for key in ["wins", "losses", "draws"]])
+
+def valid_squiggle_game(game):
+    if type(game) != "dict" or type(game.get("hteam")) != "string" or len(game["hteam"]) > 80:
+        return False
+    for key in ["hscore", "hgoals", "hbehinds", "ascore", "agoals", "abehinds"]:
+        if type(game.get(key)) not in ["NoneType", "int", "float"]:
+            return False
+    return type(game.get("timestr")) in ["NoneType", "string"]
 
 def main(config):
     RotationSpeed = config.get("speed", "3")
     ViewSelection = config.get("View", "All")
     TeamListSelection = config.get("TeamList", DEFAULT_TEAM)
+    if RotationSpeed not in ["2", "3", "4", "5"]:
+        RotationSpeed = "3"
+    if ViewSelection not in ["All", "Live", "Team"]:
+        ViewSelection = "All"
+    if TeamListSelection not in [option.value for option in TeamOptions]:
+        TeamListSelection = DEFAULT_TEAM
 
     timezone = time.tz()
     now = time.now().in_location(timezone)
@@ -112,9 +153,20 @@ def main(config):
     # MatchesJSON is just to get the current round number
     # LadderJSON is just to get standings for teams yet to play
     MatchData = get_cachable_data(MATCHES_URL, MATCH_CACHE)
-    MatchesJSON = json.decode(MatchData)
+    if MatchData == None:
+        return error_display()
+    MatchesJSON = json.decode(MatchData, None)
     LadderData = get_cachable_data(LADDER_URL, LADDER_CACHE)
-    LadderJSON = json.decode(LadderData)
+    if LadderData == None:
+        return error_display()
+    LadderJSON = json.decode(LadderData, None)
+    matches = MatchesJSON.get("matches") if type(MatchesJSON) == "dict" else None
+    ladders = LadderJSON.get("ladders") if type(LadderJSON) == "dict" else None
+    season = matches[0].get("compSeason") if type(matches) == "list" and matches and type(matches[0]) == "dict" else None
+    ladder_entries = ladders[0].get("entries") if type(ladders) == "list" and ladders and type(ladders[0]) == "dict" else None
+    if type(season) != "dict" or type(season.get("currentRoundNumber")) != "int" or season["currentRoundNumber"] < 1 or season["currentRoundNumber"] > 50 or type(season.get("name")) != "string" or not re.match(r"^[0-9]{4}", season["name"]) or type(ladder_entries) != "list" or len(ladder_entries) < 18 or not all([valid_ladder_entry(entry) for entry in ladder_entries[:18]]):
+        return error_display()
+    MatchesJSON["matches"] = matches[:50]
 
     # Get the Current Round, according to the API
     CurrentRound = str(MatchesJSON["matches"][0]["compSeason"]["currentRoundNumber"])
@@ -127,13 +179,27 @@ def main(config):
 
     # Cache match info for 1 min
     RoundData = get_cachable_data(CURRENT_ROUND_URL, ROUND_CACHE)
-    CurrentRoundJSON = json.decode(RoundData)
+    if RoundData == None:
+        return error_display()
+    CurrentRoundJSON = json.decode(RoundData, None)
+    current_matches_raw = CurrentRoundJSON.get("matches") if type(CurrentRoundJSON) == "dict" else None
+    current_matches = [match for match in current_matches_raw[:20] if valid_match(match)] if type(current_matches_raw) == "list" else None
+    if type(current_matches) != "list" or (not current_matches and ViewSelection != "Team"):
+        return error_display()
+    CurrentRoundJSON["matches"] = current_matches
 
-    # Use the Squiggle API for live games, cache data for 30 secs
-    SQUIGGLE_URL = SQUIGGLE_PREFIX + CurrentRound + INCOMPLETE_SUFFIX + YEAR
-
-    LiveData = get_cachable_data(SQUIGGLE_URL, LIVE_CACHE)
-    LiveJSON = json.decode(LiveData)
+    # Squiggle supplements the first-party API only while a game is live.
+    LiveJSON = {"games": []}
+    if any([match["status"] == "LIVE" for match in current_matches]):
+        SQUIGGLE_URL = SQUIGGLE_PREFIX + CurrentRound + INCOMPLETE_SUFFIX + YEAR
+        LiveData = get_cachable_data(SQUIGGLE_URL, LIVE_CACHE)
+        if LiveData == None:
+            return error_display()
+        live_payload = json.decode(LiveData, None)
+        live_games_raw = live_payload.get("games") if type(live_payload) == "dict" else None
+        if type(live_games_raw) != "list":
+            return error_display()
+        LiveJSON["games"] = [game for game in live_games_raw[:20] if valid_squiggle_game(game)]
 
     GamesThisRound = len(CurrentRoundJSON["matches"])
     IncompleteMatches = len(LiveJSON["games"])
@@ -596,7 +662,14 @@ def showLiveGame(CurrentRoundJSON, LiveJSON, IncompleteMatches, x, YEAR):
         CurrentRound = str(CurrentRoundJSON["matches"][0]["compSeason"]["currentRoundNumber"])
         SQUIGGLE_URL = SQUIGGLE_PREFIX + CurrentRound + COMPLETE_SUFFIX + YEAR
         CompletedData = get_cachable_data(SQUIGGLE_URL, LIVE_CACHE)
-        CompletedJSON = json.decode(CompletedData)
+        if CompletedData == None:
+            return renderDisplay
+        CompletedJSON = json.decode(CompletedData, None)
+        completed_games_raw = CompletedJSON.get("games") if type(CompletedJSON) == "dict" else None
+        completed_games = [game for game in completed_games_raw[:20] if valid_squiggle_game(game)] if type(completed_games_raw) == "list" else None
+        if type(completed_games) != "list":
+            return renderDisplay
+        CompletedJSON["games"] = completed_games
         CompletedMatches = len(CompletedJSON["games"])
 
         # loop through the completed matches until we find our team
@@ -905,38 +978,27 @@ def get_schema():
                 default = ViewingOptions[0].value,
                 options = ViewingOptions,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "View",
-                handler = MoreOptions,
-            ),
-        ],
-    )
-
-def MoreOptions(View):
-    if View == "Team":
-        return [
             schema.Dropdown(
                 id = "TeamList",
                 name = "Teams",
-                desc = "Choose your team",
+                desc = "Choose your team when the specific-team view is selected",
                 icon = "football",
                 default = TeamOptions[6].value,
                 options = TeamOptions,
             ),
-        ]
-    else:
-        return None
+        ],
+    )
 
 def get_cachable_data(url, timeout):
     res = http.get(url = url, ttl_seconds = timeout, headers = {
-        "User-Agent": "Tronbyt Application (AFL Scores) - steve@schtev.com",
+        "User-Agent": "Niblet AFL Scores (contact@heyniblet.com)",
     })
 
     if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
+        return None
 
-    return res.body()
+    body = res.body()
+    return body if len(body) <= MAX_RESPONSE_BYTES else None
 
 ViewingOptions = [
     schema.Option(

@@ -7,8 +7,10 @@ Author: eanplatter
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("math.star", "math")
 load("random.star", "random")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -40,28 +42,40 @@ def main(config):
     API_KEY = config.get("api_key", DEFAULT_API)
     speed = DEFAULT_SPEED
     orientation = config.get("orientation", DEFAULT_ORIENTATION)
+    orientation = orientation if orientation in ["horizontal", "vertical"] else DEFAULT_ORIENTATION
     size = config.get("size", DEFAULT_SIZE)
+    size = size if size in ["s", "m", "l"] else DEFAULT_SIZE
     shape = config.get("shape", "square")
-    location = config.get("location", DEFAULT_LOCATION)
-    loc = json.decode(location)
+    shape = shape if shape in ["square", "circle", "rectangle"] else "square"
+    loc = configured_location(config.get("location", DEFAULT_LOCATION))
 
     # Safely render without API key or location
-    if API_KEY == None:
+    if type(API_KEY) != "string" or not API_KEY or len(API_KEY) > 256:
         return render.Root(
             child = render_rows([MAX_COLOR_VALUE, MAX_COLOR_VALUE, MAX_COLOR_VALUE], size, shape, DEFAULT_SPEED, 0, orientation),
         )
 
-    url = "https://api.openweathermap.org/data/2.5/weather?lat={LAT}&lon={LON}&units=imperial&appid={API_KEY}".format(LAT = loc["lat"], LON = loc["lng"], API_KEY = API_KEY)
+    url = "https://api.openweathermap.org/data/2.5/weather?lat={LAT}&lon={LON}&units=imperial&appid={API_KEY}".format(LAT = loc["lat"], LON = loc["lng"], API_KEY = humanize.url_encode(API_KEY))
 
-    weather = http.get(url, ttl_seconds = 3600)
+    weather = http.get(url)
     if weather.status_code != 200:
         return render.Root(
             child = render_rows([MAX_COLOR_VALUE, MAX_COLOR_VALUE, MAX_COLOR_VALUE], size, shape, speed, 0, orientation),
         )
-    weather_json = weather.json()
-    temp = weather_json["main"]["feels_like"]
-    wind = math.floor(weather_json["wind"]["speed"])
-    precipitation = weather_json["rain"]["1h"] if "rain" in weather_json and "1h" in weather_json["rain"] else 0
+    body = weather.body()
+    weather_json = json.decode(body, None) if body and len(body) <= 512 * 1024 else None
+    main_data = weather_json.get("main") if type(weather_json) == "dict" else None
+    wind_data = weather_json.get("wind") if type(weather_json) == "dict" else None
+    rain_data = weather_json.get("rain") if type(weather_json) == "dict" else None
+    temp = main_data.get("feels_like") if type(main_data) == "dict" else None
+    wind_speed = wind_data.get("speed") if type(wind_data) == "dict" else None
+    precipitation = rain_data.get("1h", 0) if type(rain_data) == "dict" else 0
+    if type(temp) not in ["int", "float"] or type(wind_speed) not in ["int", "float"] or type(precipitation) not in ["int", "float"]:
+        return render.Root(
+            child = render_rows([MAX_COLOR_VALUE, MAX_COLOR_VALUE, MAX_COLOR_VALUE], size, shape, speed, 0, orientation),
+        )
+    wind = math.floor(max(0, min(wind_speed, 500)))
+    precipitation = max(0, min(precipitation, 1000))
     if wind < 3:
         speed = 3
     else:
@@ -70,6 +84,18 @@ def main(config):
     return render.Root(
         child = render_rows(set_colors(math.floor(temp)), size, shape, speed, precipitation, orientation),
     )
+
+def configured_location(raw):
+    location = json.decode(raw, None) if type(raw) == "string" else None
+    if type(location) != "dict" or not valid_coordinate(location.get("lat"), -90, 90) or not valid_coordinate(location.get("lng"), -180, 180):
+        location = json.decode(DEFAULT_LOCATION)
+    return {"lat": str(location["lat"]), "lng": str(location["lng"])}
+
+def valid_coordinate(value, lower, upper):
+    if value == None or re.match(r"^-?[0-9]+(?:\.[0-9]+)?$", str(value)) == None:
+        return False
+    number = float(value)
+    return number >= lower and number <= upper
 
 def set_colors(temp):
     r = [i * 5 for i in range(50)]
@@ -186,21 +212,6 @@ def render_node(red, green, blue, size, shape, speed, precipitation, orientation
         frames.append(node)
     return frames
 
-def more_options(shape):
-    if shape == "rectangle":
-        return [
-            schema.Dropdown(
-                id = "orientation",
-                name = "Orientation",
-                desc = "Orienation setting for rectangle shaped nodes.",
-                icon = "arrows-rotate",
-                default = orientation_options[1].value,
-                options = orientation_options,
-            ),
-        ]
-    else:
-        return []
-
 orientation_options = [
     schema.Option(
         display = "Horizontal",
@@ -275,10 +286,13 @@ def get_schema():
                 default = shape_options[1].value,
                 options = shape_options,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "shape",
-                handler = more_options,
+            schema.Dropdown(
+                id = "orientation",
+                name = "Orientation",
+                desc = "Orientation setting for rectangle shaped nodes.",
+                icon = "arrowsRotate",
+                default = orientation_options[1].value,
+                options = orientation_options,
             ),
         ],
     )

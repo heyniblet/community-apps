@@ -1,12 +1,10 @@
 load("api.star", "fetch_icon", "fetch_server_data")
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("games.star", "GAME_ICONS", "GAME_MIDDLE_RENDERERS")
 load("render.star", "render")
 load("schema.star", "schema")
 load("utils.star", "truncate")
 
-def render_missing_server_id():
+def render_missing_server_id(detail = "SERVER ID"):
     return render.Root(
         child = render.Column(
             expanded = True,
@@ -16,7 +14,7 @@ def render_missing_server_id():
                 render.Text("BattleMetrics", font = "tb-8", color = "#ffffff"),
                 render.Box(height = 4),
                 render.Text("MISSING", font = "tb-8", color = "#ff3333"),
-                render.Text("SERVER ID", font = "tb-8", color = "#ff3333"),
+                render.Text(detail, font = "tb-8", color = "#ff3333"),
             ],
         ),
     )
@@ -130,25 +128,20 @@ def render_error_state(name, icon_bytes):
 
 def main(config):
     server_id = config.get("server_id")
-    if not server_id:
+    if type(server_id) != "string" or not server_id.isdigit() or len(server_id) > 20:
         return render_missing_server_id()
+    api_token = config.get("api_token")
+    if type(api_token) != "string" or not api_token or len(api_token) > 2048 or "\r" in api_token or "\n" in api_token:
+        return render_missing_server_id("API TOKEN")
 
     use_marquee = config.bool("title_marquee")
 
     custom_title = config.get("custom_title") or ""
+    custom_title = custom_title[:160] if type(custom_title) == "string" else ""
 
-    server = fetch_server_data(server_id)
+    server = fetch_server_data(server_id, api_token)
     if server == None:
-        fallback_json = cache.get("bm_fallback_" + server_id)
-        if fallback_json != None:
-            fallback = json.decode(fallback_json)
-            name = fallback["name"]
-            game_id = fallback["game_id"]
-        else:
-            name = "Unknown"
-            game_id = None
-        icon_bytes = fetch_icon(GAME_ICONS.get(game_id)) if game_id != None else None
-        return render_error_state(custom_title if custom_title != "" else name, icon_bytes)
+        return render_error_state(custom_title if custom_title != "" else "Unknown", None)
 
     icon_bytes = fetch_icon(GAME_ICONS.get(server["game_id"]))
     display_name = custom_title if custom_title != "" else server["name"]
@@ -188,6 +181,13 @@ def get_schema():
                 desc = "Scroll the server name instead of truncating it",
                 icon = "arrowsLeftRight",
                 default = True,
+            ),
+            schema.Text(
+                id = "api_token",
+                name = "API token",
+                desc = "BattleMetrics API token from an API-enabled account",
+                icon = "key",
+                secret = True,
             ),
         ],
     )

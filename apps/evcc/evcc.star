@@ -5,8 +5,6 @@ Description: EVCC is an energy management system with a focus on electromobility
 Author: cruschke
 """
 
-load("cache.star", "cache")
-load("encoding/base64.star", "base64")
 load("encoding/csv.star", "csv")
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -61,10 +59,9 @@ DEFAULT_LOCATION = {
 DEFAULT_TIMEZONE = "Europe/Berlin"
 
 INFLUXDB_HOST_DEFAULT = "https://eu-central-1-1.aws.cloud2.influxdata.com/api/v2/query"
-
-TTL_FOR_LAST = 300  # the TTL for up2date info
-TTL_FOR_MAX = 900  # how often the max values are being refreshed
-TTL_FOR_SERIES = 900  # how often the time series for pvPower and homePower are being refreshed
+INFLUXDB_HOST_US = "https://us-east-1-1.aws.cloud2.influxdata.com/api/v2/query"
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_SERIES_POINTS = 100
 
 # COLOR DEFINITIONS
 
@@ -92,13 +89,18 @@ FONT = "tom-thumb"
 def main(config):
     # read the configuration
     influxdb_host = config.str("influxdb", INFLUXDB_HOST_DEFAULT)
-    api_key = config.str("api_key", "UNDEFINED")
-    vehicle = config.str("vehicle", "mycar")
-    bucket = config.get("bucket", DEFAULT_BUCKET)
+    if influxdb_host not in [INFLUXDB_HOST_DEFAULT, INFLUXDB_HOST_US]:
+        influxdb_host = INFLUXDB_HOST_DEFAULT
+    api_key = safe_api_key(config.str("api_key", ""))
+    vehicle = safe_flux_value(config.str("vehicle", "mycar"), "mycar")
+    bucket = safe_flux_value(config.get("bucket", DEFAULT_BUCKET), DEFAULT_BUCKET)
+    if api_key == None:
+        return api_error()
 
     location = config.get("location")
-    loc = json.decode(location) if location else DEFAULT_LOCATION
-    timezone = loc.get("timezone", DEFAULT_TIMEZONE)
+    loc = json.decode(location, None) if type(location) == "string" and location and len(location) <= 8192 else None
+    loc = loc if type(loc) == "dict" else DEFAULT_LOCATION
+    timezone = safe_timezone(loc.get("timezone", DEFAULT_TIMEZONE))
 
     # some FluxQL query parameters that every single query needs
     flux_defaults = '                                                     \
@@ -106,7 +108,7 @@ def main(config):
         option location = timezone.location(name: "' + timezone + '")   \
         from(bucket:"' + bucket + '")'
 
-    if api_key == "UNDEFINED":
+    if not api_key or api_key == "UNDEFINED":
         gridPowerSeries = [(0, 382.5), (1, 437.3), (2, 142), (3, 907.), (4, 758), (5, 632), (6, -0.0), (7, 745), (8, 674), (9, 781), (10, 985), (11, 547), (12, 967), (13, 1043), (14, 604), (15, 2709), (16, 2267), (17, 1763.4), (18, -142), (19, 2100), (20, 3900), (21, 3800), (22, 3600), (23, 3900), (24, 2900), (25, 3200), (26, 3200), (27, 3100), (28, 2400), (29, 3700), (30, 3400), (31, 455), (32, 844), (33, 1942), (34, 765), (35, 551), (36, 710), (37, 384), (38, -36), (39, 213), (40, -1974), (41, -1451), (42, -2165), (43, -2614.5), (44, -2450), (45, -2233.6), (46, -2111), (47, -2100), (48, -1800)]
         chargePowerSeries = [(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.0), (4, 0.0), (5, 0.0), (6, 0.0), (7, 0.0), (8, 0.0), (9, 0.0), (10, 0.0), (11, 0.0), (12, 0.0), (13, 0.0), (14, 0.0), (15, 0.0), (16, 0.0), (17, 0.0), (18, 0.0), (19, 0.0), (20, 812), (21, 1973), (22, 3367), (23, 3514), (24, 3320), (25, 3503), (26, 2691), (27, 2979), (28, 2185), (29, 2787), (30, 1790), (31, 0.0), (32, 0.0), (33, 0.0), (34, 0.0), (35, 0.0), (36, 0.0), (37, 0.0), (38, 0.0), (39, 0.0), (40, 0.0), (41, 0.0), (42, 1800), (43, 1750), (44, 1800), (45, 1900), (46, 1800), (47, 1700), (48, 1645)]
 
@@ -125,6 +127,8 @@ def main(config):
     else:
         # individual queries for the values
         chargePowerLast = getLastValue("chargePower", influxdb_host, flux_defaults, api_key)
+        if chargePowerLast == None:
+            return api_error()
         chargePowerMax = getMaxValue("chargePower", influxdb_host, flux_defaults, api_key)
         gridPowerLast = getLastValue("gridPower", influxdb_host, flux_defaults, api_key)
         gridPowerMax = getMaxValue("gridPower", influxdb_host, flux_defaults, api_key)
@@ -139,6 +143,8 @@ def main(config):
         # the time series for the plots
         chargePowerSeries = getSeries("chargePower", influxdb_host, flux_defaults, api_key)
         gridPowerSeries = getgridPowerSeries(influxdb_host, flux_defaults, api_key)
+        if any([value == None for value in [chargePowerMax, gridPowerLast, gridPowerMax, phasesActive, pvPowerLast, pvPowerMax, vehicleSocLast, vehicleRangeLast, chargePowerSeries, gridPowerSeries]]):
+            return api_error()
 
     # the main display
 
@@ -403,7 +409,7 @@ def getSeries(measurement, dbhost, defaults, api_key):
         |> keep(columns: ["_time", "_value"])'
 
     #print ("query=" + fluxql)
-    return getTouples(dbhost, fluxql, api_key, TTL_FOR_SERIES)
+    return getTouples(dbhost, fluxql, api_key)
 
 # this one is special as I need inverted numbers (multiply by -1)
 def getgridPowerSeries(dbhost, defaults, api_key):
@@ -416,7 +422,7 @@ def getgridPowerSeries(dbhost, defaults, api_key):
         |> keep(columns: ["_time", "_value"])'
 
     #print ("query=" + fluxql)
-    return getTouples(dbhost, fluxql, api_key, TTL_FOR_SERIES)
+    return getTouples(dbhost, fluxql, api_key)
 
 # average over 5 min, cached for 15 min
 def getMaxValue(measurement, dbhost, defaults, api_key):
@@ -429,10 +435,7 @@ def getMaxValue(measurement, dbhost, defaults, api_key):
         |> toInt() \
         |> keep(columns: ["_value"])'
 
-    data = csv.read_all(readInfluxDB(dbhost, fluxql, api_key, TTL_FOR_MAX))
-    value = data[1][3] if len(data) > 0 else "0"
-    print("%sMax = %s" % (measurement, value))
-    return int(value)
+    return csv_number(readInfluxDB(dbhost, fluxql, api_key))
 
 # average over 5 min, cached for 5 min
 def getLastValue(measurement, dbhost, defaults, api_key):
@@ -444,10 +447,7 @@ def getLastValue(measurement, dbhost, defaults, api_key):
         |> toInt() \
         |> keep(columns: ["_value"])'
 
-    data = csv.read_all(readInfluxDB(dbhost, fluxql, api_key, TTL_FOR_LAST))
-    value = data[1][3] if len(data) > 0 else "0"
-    print("%sLast = %s" % (measurement, value))
-    return int(value)
+    return csv_number(readInfluxDB(dbhost, fluxql, api_key))
 
 # By default, when the car is not connected to a charger, SOC and range are not updated. Hence looking back a little longer
 # Check evcc loadpoint documentation how to change this behaviour.
@@ -459,59 +459,74 @@ def getLastValueCar(measurement, vehicle, dbhost, defaults, api_key):
         |> toInt() \
         |> keep(columns: ["_value"])'
 
-    data = csv.read_all(readInfluxDB(dbhost, fluxql, api_key, TTL_FOR_LAST))
-    value = data[1][3] if len(data) > 0 else "0"
-    print("%sLast = %s" % (measurement, value))
-    return int(value)
+    return csv_number(readInfluxDB(dbhost, fluxql, api_key))
 
-def readInfluxDB(dbhost, query, api_key, ttl):
-    key = base64.encode(api_key + query)
-    data = cache.get(key)
-
-    if data != None:  # the cache key does exist and has not expired
-        #print("Cache HIT for %s" % query)
-        return base64.decode(data)
-
-    #print("Cache MISS for %s" % query)
-
+def readInfluxDB(dbhost, query, api_key):
     rep = http.post(
         dbhost,
         headers = {
             "Authorization": "Token " + api_key,
-            "Accept": "application/json",
+            "Accept": "application/csv",
             "Content-type": "application/json",
         },
         json_body = {"query": query, "type": "flux"},
     )
 
-    #print(rep.status_code)
-    #print(rep.body())
+    body = rep.body()
+    return body if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
 
-    # check if the request was successful
-    if rep.status_code != 200:
-        fail("InfluxDB API request failed with status {}".format(rep.status_code))
-    cache.set(key, base64.encode(rep.body()), ttl_seconds = ttl)
-
-    return rep.body()
-
-def getTouples(dbhost, query, api_key, ttl):
-    result = readInfluxDB(dbhost, query, api_key, ttl)
-    return csv2touples(result)
+def getTouples(dbhost, query, api_key):
+    result = readInfluxDB(dbhost, query, api_key)
+    return csv2touples(result) if result else None
 
 # InfluxDB returns time series as CSV, we want touples instead
 def csv2touples(csvinput):
     data = csv.read_all(csvinput)
     result = []
     line_number = 0
-    for row in data[1:]:
+    for row in data[1:MAX_SERIES_POINTS + 1]:
+        if not row:
+            continue
         value = row[-1]
-
-        #print(value)
-        result.append((line_number, float(value)))
+        value = safe_number(value)
+        if value == None:
+            continue
+        result.append((line_number, value))
         line_number += 1
+    return result if result else None
 
-    #print(result)
-    return result
+def csv_number(body):
+    if not body:
+        return None
+    data = csv.read_all(body)
+    value = None
+    for row in data[:MAX_SERIES_POINTS + 20]:
+        candidate = safe_number(row[-1]) if row else None
+        if candidate != None:
+            value = candidate
+    return int(value) if value != None else None
+
+def safe_number(value):
+    text = str(value or "").strip()
+    unsigned = text[1:] if text.startswith("-") or text.startswith("+") else text
+    if not unsigned or len(text) > 32 or unsigned.count(".") > 1 or not unsigned.replace(".", "").isdigit():
+        return None
+    return float(text)
+
+def safe_api_key(value):
+    value = str(value or "").strip()
+    return value if len(value) <= 4096 and "\r" not in value and "\n" not in value else None
+
+def safe_flux_value(value, fallback):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 64 and all([char.isalnum() or char in "-_. " for char in value.codepoints()]) else fallback
+
+def safe_timezone(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 64 and all([char.isalnum() or char in "/_-+" for char in value.codepoints()]) else DEFAULT_TIMEZONE
+
+def api_error():
+    return render.Root(child = render.WrappedText("InfluxDB unavailable", font = FONT))
 
 def custom_round(number):
     integer_part = number // 1000
@@ -554,7 +569,7 @@ options_influxdb = [
     ),
     schema.Option(
         display = "US East (Virginia)",
-        value = "https://us-east-1-1.aws.cloud2.influxdata.com/api/v2/query",
+        value = INFLUXDB_HOST_US,
     ),
 ]
 

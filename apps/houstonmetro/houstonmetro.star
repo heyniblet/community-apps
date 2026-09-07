@@ -1,4 +1,3 @@
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/metro_icon.png", METRO_ICON_ASSET = "file")
 load("render.star", "render")
@@ -7,29 +6,30 @@ load("schema.star", "schema")
 METRO_ICON = METRO_ICON_ASSET.readall()
 
 DEFAULT_STOP = "Ho414_4620_12308"
-SUBSCRIPTION_KEY = "da271ffa89c74196b9c9e64efae57100"
 
-ROUTE_INFO_CACHE_KEY = "routeinfo"
 ROUTE_INFO_CACHE_TTL = 604800  #1 Week
 
 ARRIVALS_CACHE_KEY = "arrivals"
 ARRIVALS_CACHE_TTL = 60  # 1 minute
 
 def main(config):
-    stop_id = config.get("station_id", DEFAULT_STOP)
-    time_toggle = config.get("time", DEFAULT_STOP)
+    stop_id = config.str("station_id", DEFAULT_STOP)
+    api_key = config.str("api_key", "")
+    time_toggle = "true" if config.bool("time", False) else "false"
 
     render_elements = []
-    if SUBSCRIPTION_KEY:
-        endpoint = "https://api.ridemetro.org/data/Stops('" + stop_id + "')?subscription-key=" + SUBSCRIPTION_KEY
-        response = http.get(endpoint, ttl_seconds = ROUTE_INFO_CACHE_TTL).body()
+    if api_key and valid_stop_id(stop_id):
+        params = {"subscription-key": api_key}
+        endpoint = "https://api.ridemetro.org/data/Stops('" + stop_id + "')"
+        stop_response = http.get(endpoint, params = params, ttl_seconds = ROUTE_INFO_CACHE_TTL)
+        stop_data = stop_response.json() if stop_response.status_code == 200 else {}
+        stops = stop_data.get("value", []) if type(stop_data) == "dict" else []
+        stop_name = stops[0].get("Name", "Houston Metro") if len(stops) > 0 and type(stops[0]) == "dict" else "Houston Metro"
 
-        stop_name = json.decode(response)["value"][0]["Name"]
-
-        arrivals_endpoint = "https://api.ridemetro.org/data/Stops('" + stop_id + "')/Arrivals?subscription-key=" + SUBSCRIPTION_KEY
-        response = http.get(arrivals_endpoint, ttl_seconds = ARRIVALS_CACHE_TTL).body()
-
-        arrivals = json.decode(response)["value"]
+        arrivals_response = http.get(endpoint + "/Arrivals", params = params, ttl_seconds = ARRIVALS_CACHE_TTL)
+        arrivals_data = arrivals_response.json() if arrivals_response.status_code == 200 else {}
+        arrivals = arrivals_data.get("value", []) if type(arrivals_data) == "dict" else []
+        arrivals = arrivals[0:4]
         if not arrivals:
             render_elements.append(
                 render.Row(
@@ -42,11 +42,11 @@ def main(config):
                 ),
             )
         else:
-            for i in range(0, 4):
-                if i < len(arrivals):
-                    route_number = arrivals[i]["RouteName"]
-                    arrival_time = arrivals[i]["LocalArrivalTime"]
-                    direction = arrivals[i]["DestinationName"]
+            for arrival in arrivals:
+                if type(arrival) == "dict":
+                    route_number = str(arrival.get("RouteName", ""))[0:8]
+                    arrival_time = str(arrival.get("LocalArrivalTime", ""))
+                    direction = str(arrival.get("DestinationName", "?"))
                     arrival_time = time_string(arrival_time, time_toggle)
                     route_color = "004080"
                     render_element = render.Row(
@@ -61,7 +61,7 @@ def main(config):
                                     color = "#0000",
                                     width = 30,
                                     height = 10,
-                                    child = render.Text(route_number + " " + direction[0], color = "#000", font = "CG-pixel-4x5-mono"),
+                                    child = render.Text(route_number + " " + direction[0:1], color = "#000", font = "CG-pixel-4x5-mono"),
                                 ),
                             ]),
                             render.Column(
@@ -81,7 +81,7 @@ def main(config):
                 children = [
                     render.Box(
                         color = "#0000",
-                        child = render.Text("No API Key", color = "#f3ab3f"),
+                        child = render.Text("Setup required", color = "#f3ab3f"),
                     ),
                 ],
             ),
@@ -177,45 +177,41 @@ def main(config):
 
 def time_string(full_string, time_toggle):
     time_index = full_string.find("T")
+    if time_index < 0 or len(full_string) < time_index + 6:
+        return "--:--"
     hours = full_string[time_index + 1:len(full_string) - 7]
     minutes = full_string[len(full_string) - 6:len(full_string) - 4]
+    if not hours.isdigit() or not minutes.isdigit():
+        return "--:--"
     if time_toggle.lower() == "false" and int(hours) > 12:
         hours = int(hours) - 12
     return str(hours) + ":" + minutes
 
-def truncate_location(full_string):
-    decimal_index = full_string.find(".")
-    return full_string[0:decimal_index + 3]
-
-def get_stations(location):
-    loc = json.decode(location)
-    coordinates = truncate_location(str(loc["lat"])) + "|" + truncate_location(str(loc["lng"]))
-    key = SUBSCRIPTION_KEY
-    stops = []
-    if key:
-        location_endpoint = "https://houstonmetro.azure-api.net/data/GeoAreas('" + coordinates + "|.5')/Stops?subscription-key=" + SUBSCRIPTION_KEY
-        response = http.get(location_endpoint, ttl_seconds = ROUTE_INFO_CACHE_TTL)
-
-        if response.json()["value"]:
-            for station in response.json()["value"]:
-                stops.append(
-                    schema.Option(
-                        display = station["Name"],
-                        value = station["StopId"],
-                    ),
-                )
-    return stops
+def valid_stop_id(value):
+    if not value or len(value) > 64:
+        return False
+    for ch in value.elems():
+        if ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-":
+            return False
+    return True
 
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Text(
+                id = "api_key",
+                name = "METRO API key",
+                desc = "Your Houston METRO developer subscription key.",
+                icon = "key",
+                secret = True,
+            ),
+            schema.Text(
                 id = "station_id",
                 name = "Bus/Train Station",
-                desc = "A list of bus or train stations based on a location.",
+                desc = "METRO stop ID (for example 3527).",
                 icon = "train",
-                handler = get_stations,
+                default = DEFAULT_STOP,
             ),
             schema.Toggle(
                 id = "time",

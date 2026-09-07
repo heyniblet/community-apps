@@ -34,8 +34,8 @@ DEFAULT_RESTAURANT_LOCATION = "-89.729866027832,43.2706871032715"
 DEFAULT_BG_COLOR = WHITE
 
 def get_image(url):
-    rep = http.get(url, ttl_seconds = TTL_SECONDS)
-    if rep.status_code != 200:
+    rep = http.get(url)
+    if rep.status_code != 200 or len(rep.body()) > 2 * 1024 * 1024:
         return None
 
     return rep.body()
@@ -49,41 +49,55 @@ def get_flavor_info(restaurant_location):
     # restaurant; should it? Each restaurant has a unique "slug" (i.e.
     # ID), and an earlier version of this app used to save it instead of
     # the lat/long.
-    lng, lat = restaurant_location.split(",")
+    coordinates = restaurant_location.split(",")
+    if len(coordinates) != 2:
+        return {"error": "Choose a valid location"}
+    lng, lat = coordinates
+    if float(lat) < -90 or float(lat) > 90 or float(lng) < -180 or float(lng) > 180:
+        return {"error": "Choose a valid location"}
     rep = http.get(
         (
             "https://culvers.com/api/locator/getLocations?lat=%s&long=%s&" +
             "radius=100&limit=1"
         ) % (lat, lng),
-        ttl_seconds = TTL_SECONDS,
     )
-    if rep.status_code != 200:
+    if rep.status_code != 200 or len(rep.body()) > 1024 * 1024:
         return {
             "error": "Culver's status code: %s" % rep.status_code,
         }
     j = rep.json()
 
     # Check whether restaurant exists
-    restaurants = j["data"]["geofences"]
+    if type(j) != "dict" or type(j.get("data")) != "dict" or type(j["data"].get("geofences")) != "list":
+        return {"error": "Invalid Culver's response"}
+    restaurants = j["data"]["geofences"][:10]
     if not restaurants:
         return {
             "error": "Restaurant not found",
         }
 
     restaurant = restaurants[0]
-    restaurant_name = "Culver's of " + restaurant["description"]
+    if type(restaurant) != "dict" or type(restaurant.get("metadata")) != "dict":
+        return {"error": "Invalid Culver's response"}
+    restaurant_name = "Culver's of " + str(restaurant.get("description", ""))[:100]
 
     # Check whether flavor exists
     # REVIEW The only time I've seen a blank flavor name is with a store
     # that's "coming soon".
-    fotd_name = restaurant["metadata"]["flavorOfDayName"]
+    fotd_name = str(restaurant["metadata"].get("flavorOfDayName", ""))[:100]
     if not fotd_name:
         return {
             "error": "Flavor not found",
         }
 
+    flavor_slug = str(restaurant["metadata"].get("flavorOfDaySlug", ""))
+    if not flavor_slug or len(flavor_slug) > 100:
+        return {"error": "Flavor image not found"}
+    for c in flavor_slug.elems():
+        if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return {"error": "Flavor image not found"}
     fotd_image = "https://cdn.culvers.com/menu-item-detail/%s?h=%d" % (
-        restaurant["metadata"]["flavorOfDaySlug"],
+        flavor_slug,
         IMAGE_HEIGHT,
     )
 
@@ -156,9 +170,15 @@ def get_wrapped_text_height(wrapped_text):
 
 def main(config):
     if "restaurant_location" in config:
-        restaurant_location = json.decode(
-            config["restaurant_location"],
-        )["value"]
+        location = json.decode(config["restaurant_location"])
+        if type(location) != "dict":
+            restaurant_location = ""
+        elif location.get("value"):
+            restaurant_location = location["value"]
+        elif "lat" in location and "lng" in location:
+            restaurant_location = "%s,%s" % (location["lng"], location["lat"])
+        else:
+            restaurant_location = ""
     else:
         restaurant_location = DEFAULT_RESTAURANT_LOCATION
 
@@ -259,32 +279,6 @@ def main(config):
         ),
     )
 
-def get_restaurants(location):
-    loc = json.decode(location)
-
-    # Search for all Culver's restaurants within 40,233 m (25 mi)
-    rep = http.get(
-        (
-            "https://culvers.com/api/locator/getLocations?lat=%s&long=%s&" +
-            "radius=40233&limit=10"
-        ) % (loc["lat"], loc["lng"]),
-        ttl_seconds = TTL_SECONDS,
-    )
-    if rep.status_code != 200:
-        return []
-    j = rep.json()
-
-    return [
-        schema.Option(
-            display = restaurant["description"],
-            value = ",".join([
-                str(v)
-                for v in restaurant["geometryCenter"]["coordinates"]
-            ]),
-        )
-        for restaurant in j["data"]["geofences"]
-    ]
-
 def get_schema():
     options_bg_color = [
         schema.Option(
@@ -300,12 +294,11 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Location(
                 id = "restaurant_location",
                 name = "Culver's location",
                 desc = "The location of the Culver's restaurant.",
                 icon = "iceCream",
-                handler = get_restaurants,
             ),
             schema.Dropdown(
                 id = "bg_color",

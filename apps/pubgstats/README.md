@@ -1,5 +1,5 @@
 # PUBG Stats
-PUBG Stats displays a selected lifetime statistic for any given PUBG player on Steam, PSN, Xbox, Stadia, or Kakao platforms. It's powered by the [PlayerUnknown's Battlegrounds Developer API](https://documentation.pubg.com/en/introduction.html).
+PUBG Stats displays a selected lifetime statistic for a PUBG player. It uses the official [PUBG Developer API](https://documentation.pubg.com/en/getting-started.html), which requires a key from [developer.pubg.com](https://developer.pubg.com/).
 
 Stats displayed are totaled together from all game modes (solo/duo/squad/tpp/fpp) on the selected platform.
 

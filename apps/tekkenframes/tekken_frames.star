@@ -273,8 +273,11 @@ def get_framedata(character):
         return None
 
     body = resp.body()
+    if not body or len(body) > 2 * 1024 * 1024:
+        return None
     cache.set(cache_key, body, ttl_seconds = CACHE_TTL)
-    return json.decode(body)
+    data = json.decode(body, None)
+    return data if type(data) in ["dict", "list"] else None
 
 def render_split_row(left, right):
     """Render a 50/50 split row with 3px gap, both sides marquee."""

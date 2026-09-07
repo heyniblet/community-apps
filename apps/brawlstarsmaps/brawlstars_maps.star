@@ -5,39 +5,46 @@ Description: Shows a random map from the current maps available in the game Braw
 Author: Lucas Farah
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-def main(ctx):
-    random.seed(time.now().unix // 15)
-    resp = http.get("https://api.brawlapi.com/v1/events")
-    if resp.status_code != 200:
-        return render.Text("Error fetching maps", ctx)
+MAPS_URL = "https://api.brawlapi.com/v1/maps"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_MAPS = 2000
 
-    data = resp.json()
-    maps = data["active"]  # Replace 'maps' with the correct property name according to the API response structure
+def render_error(message):
+    return render.Root(child = render.WrappedText(content = message, width = 62, align = "center", color = "#ff6666"))
+
+def fetch_image(url):
+    if type(url) != "string" or not (url.startswith("https://cdn.brawlify.com/") or url.startswith("https://cdn-misc.brawlify.com/")):
+        return None
+    resp = http.get(url, ttl_seconds = 3600)
+    body = resp.body()
+    return body if resp.status_code == 200 and body and len(body) <= MAX_IMAGE_BYTES else None
+
+def main(_config):
+    random.seed(time.now().unix // 3600)
+    resp = http.get(MAPS_URL, ttl_seconds = 3600)
+    body = resp.body()
+    data = json.decode(body, None) if resp.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    raw_maps = data.get("list", []) if type(data) == "dict" else []
+    maps = [item for item in raw_maps[:MAX_MAPS] if type(item) == "dict" and not item.get("disabled") and type(item.get("gameMode")) == "dict"]
 
     if len(maps) == 0:
-        return render.Text("No maps found", ctx)
+        return render_error("No Brawl Stars maps found")
 
     num = random.number(0, len(maps) - 1)
     random_map = maps[num]
-    map_name = random_map["map"]["name"]  # Replace 'name' with the correct property name according to the API response structure
-    map_image_url = random_map["map"]["imageUrl"]  # Replace 'imageUrl' with the correct property name according to the API response structure
-
-    map_info = map_name
-
-    gameModeId = random_map["slot"]["id"]
-    gameResp = http.get("https://api.brawlapi.com/v1/gamemodes/%d" % gameModeId)
-    gameURL = gameResp.json()["imageUrl"]
-    gameImage = http.get(gameURL).body()
-
-    imageResp = http.get(map_image_url)
-
-    map_image = imageResp.body()
+    map_info = str(random_map.get("name") or "Unknown map")[:80]
+    map_image = fetch_image(random_map.get("imageUrl"))
+    game_image = fetch_image(random_map["gameMode"].get("imageUrl"))
+    if not map_image:
+        return render_error("Map image unavailable")
 
     return render.Root(
         child = render.Box(
@@ -50,7 +57,7 @@ def main(ctx):
                     render.Image(src = map_image, width = 20, height = 40),
                     render.Column(
                         children = [
-                            render.Image(src = gameImage, width = 10, height = 10),
+                            render.Image(src = game_image, width = 10, height = 10) if game_image else render.Box(width = 10, height = 10),
                             render.WrappedText(map_info),
                         ],
                     ),

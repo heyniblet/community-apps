@@ -24,34 +24,35 @@ def main(config):
             child = render.Text("Please login"),
         )
 
-    AUTH_TOKEN = config.get("token")
+    auth_token = config.get("token")
 
     # load exchange rates
     # get current exchange rates
     res = http.get("https://api.coinbase.com/v2/exchange-rates", ttl_seconds = 900)
 
-    if res.status_code != 200:
+    if res.status_code != 200 or len(res.body()) > 1048576:
         return render.Root(
             child = render.Text("Rates unavailable!"),
         )
-    else:
-        # cache for 15 minutes
-        rates = res.json()["data"]["rates"]
+    rates_data = res.json()
+    rate_container = rates_data.get("data", {}) if type(rates_data) == "dict" else {}
+    rates = rate_container.get("rates", {}) if type(rate_container) == "dict" else {}
+    if type(rates) != "dict":
+        return render.Root(child = render.Text("Rates unavailable!"))
 
     # load account balances
-    res = http.get("https://coinbase.com/api/v3/brokerage/accounts?limit=250", headers = {
-        "Authorization": "Bearer " + AUTH_TOKEN,
-    }, ttl_seconds = 900)
+    res = http.get("https://api.coinbase.com/api/v3/brokerage/accounts?limit=250", headers = {
+        "Authorization": "Bearer " + auth_token,
+    })
 
-    if res.status_code != 200:
+    if res.status_code != 200 or len(res.body()) > 2097152:
         return render.Root(
             child = render.Text("Accounts unavailable!"),
         )
-    else:
-        # cache for 15 minutes
-        accounts = res.json()["accounts"]
+    accounts_data = res.json()
+    accounts = accounts_data.get("accounts", []) if type(accounts_data) == "dict" else []
 
-    if accounts == None:
+    if type(accounts) != "list":
         return render.Root(
             child = render.Text("Accounts unavailable!"),
         )
@@ -61,13 +62,18 @@ def main(config):
     balance = 0.0
 
     # match account balances to rates
-    for x in accounts:
-        available = float(x["available_balance"]["value"])
+    for x in accounts[:250]:
+        if type(x) != "dict" or type(x.get("available_balance")) != "dict":
+            continue
+        currency = x.get("currency")
+        if currency not in rates:
+            continue
+        available = float(x["available_balance"].get("value", "0"))
 
         # only count if we have a balance
         if available > 0.0:
-            balance += float(x["available_balance"]["value"]) // float(rates[x["currency"]])
-            currencies.append(x["currency"])
+            balance += available / float(rates[currency])
+            currencies.append(currency)
 
     return render.Root(
         child = render.Column(
@@ -116,12 +122,18 @@ def oauth_handler(params):
 
     params["client_secret"] = COINBASE_CLIENT_SECRET or "fake-client-secret"
 
-    res = http.post("https://api.coinbase.com/oauth/token", params = params)
+    res = http.post("https://login.coinbase.com/oauth2/token", params = params)
 
     if res.status_code != 200:
-        fail("token request failed with status code: %d - %s" % (res.status_code, res.body()))
+        fail("token request failed with status code: %d" % res.status_code)
 
-    return res.json()["access_token"]
+    body = res.body()
+    if len(body) > 65536:
+        fail("token response is too large")
+    token_data = res.json()
+    if type(token_data) != "dict" or not token_data.get("access_token"):
+        fail("token response is invalid")
+    return token_data["access_token"]
 
 def get_schema():
     return schema.Schema(
@@ -134,7 +146,7 @@ def get_schema():
                 icon = "",
                 handler = oauth_handler,
                 client_id = COINBASE_CLIENT_ID or "fake-client-id",
-                authorization_endpoint = "https://www.coinbase.com/oauth/authorize",
+                authorization_endpoint = "https://login.coinbase.com/oauth2/auth",
                 scopes = [
                     "wallet:accounts:read",
                 ],

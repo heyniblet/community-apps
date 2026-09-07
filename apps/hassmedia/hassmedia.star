@@ -37,13 +37,17 @@ def main(config):
         return []
 
 def get_entity_data(config):
-    url = config.str("ha_instance") + "/api/states/" + config.str("ha_entity")
+    base_url = config.str("ha_instance").rstrip("/")
+    entity = config.str("ha_entity")
+    if not base_url.startswith("https://") or not entity or any([c in entity for c in "/?#".elems()]):
+        return None, "invalid configuration"
+    url = base_url + "/api/states/" + entity
     headers = {
         "Authorization": "Bearer " + config.str("ha_token"),
         "Content-Type": "application/json",
     }
 
-    rep = http.get(url, ttl_seconds = 10, headers = headers)
+    rep = http.get(url, headers = headers)
     if rep.status_code != 200:
         return None, rep.status_code
 
@@ -53,15 +57,16 @@ def get_entity_data(config):
 def get_image(url, config):
     if not url:
         return None, None
-    elif not url.startswith("http"):
-        url = config.str("ha_instance") + url
+    if not url.startswith("/") or url.startswith("//"):
+        return None, "external image blocked"
+    url = config.str("ha_instance").rstrip("/") + url
 
     headers = {
         "Authorization": "Bearer " + config.str("ha_token"),
         "Content-Type": "application/json",
     }
 
-    rep = http.get(url, ttl_seconds = 240, headers = headers)
+    rep = http.get(url, headers = headers)
     if rep.status_code != 200:
         return None, rep.status_code
 
@@ -71,7 +76,7 @@ def render_app(config, data):
     if "entity_picture" in data.get("attributes", {}):
         image_url = data["attributes"]["entity_picture"]
         image, _ = get_image(image_url, config)
-        image_element = render.Image(src = base64.decode(image), width = 20, height = 20)
+        image_element = render.Image(src = base64.decode(image), width = 20, height = 20) if image else render.Image(src = ICONS["spotify"], width = 17, height = 17)
     else:
         image_element = render.Image(src = ICONS["spotify"], width = 17, height = 17)
 

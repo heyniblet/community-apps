@@ -5,6 +5,7 @@ Description: Shows the weather warning(s) currently in force from the Hong Kong 
 Author: flynnlambrechts
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/cold.png", COLD_FILE = "file")
 load("images/fire_red.png", FIRE_RED_FILE = "file")
@@ -29,9 +30,9 @@ load("images/thunderstorm.png", THUNDERSTORM_FILE = "file")
 load("images/tsunami.png", TSUNAMI_FILE = "file")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 WARNSUM_URL = "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=warnsum&lang=en"
+MAX_RESPONSE_BYTES = 64 * 1024
 
 # warnsum's "code" field is the specific signal in force; this is an
 # exhaustive map of every code the API can return to its official HKO icon.
@@ -95,10 +96,13 @@ def main(config):
 
     resp = http.get(WARNSUM_URL, ttl_seconds = 120)
 
-    if resp.status_code != 200:
+    body = resp.body()
+    if resp.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return []
 
-    data = resp.json()
+    data = json.decode(body, {})
+    if type(data) != "dict":
+        return []
 
     # Test data to show all warnings
     # data = {
@@ -124,7 +128,7 @@ def main(config):
     #     "WTMW": {"name": "Tsunami Warning", "code": "WTMW", "actionCode": "ISSUE", "issueTime": "2026-06-16T08:00:00+08:00", "updateTime": "2026-06-16T08:00:00+08:00"},
     #     "WTS": {"name": "Thunderstorm Warning", "code": "WTS", "actionCode": "ISSUE", "issueTime": "2026-06-16T08:00:00+08:00", "updateTime": "2026-06-16T08:00:00+08:00"},
     # }
-    warnings = [w for w in data.values() if w.get("actionCode") != "CANCEL" and config.bool(w.get("code", "").lower(), True)]
+    warnings = [w for w in data.values() if type(w) == "dict" and w.get("code") in ICON_FOR_CODE and w.get("actionCode") != "CANCEL" and config.bool(w.get("code", "").lower(), True)]
 
     if not warnings:
         if skip_when_clear:
@@ -362,9 +366,9 @@ def bottom_label(warning):
     return LABEL_FOR_CODE.get(code, name.split(" ")[0] if name else "")
 
 def issued_label(issue_time):
-    if not issue_time:
+    if type(issue_time) != "string" or len(issue_time) < 16 or issue_time[10] != "T" or issue_time[13] != ":":
         return ""
-    return time.parse_time(issue_time).format("15:04")
+    return issue_time[11:16]
 
 def no_warnings_frame(scale):
     return render.Box(

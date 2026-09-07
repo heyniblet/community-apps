@@ -5,17 +5,17 @@ Description: Display Arrival Times for TCAT Ithaca Buses at a Specific Stop.
 Author: Harry Samuels
 """
 
-load("cache.star", "cache")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/tcat_and_car.png", TCAT_AND_CAR_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
+load("time.star", "time")
 
 TCAT_AND_CAR = TCAT_AND_CAR_ASSET.readall()
 
-ROUTES_DETAILS = "https://transitime-api.goswift.ly/api/v1/key/81YENWXv/agency/tcat/command/routesDetails"
-
-PREDICTION = "https://transitime-api.goswift.ly/api/v1/key/81YENWXv/agency/tcat/command/predictions?rs="
+TCAT_API = "https://realtimetcatbus.availtec.com/InfoPoint/rest"
 
 NO_BUSES = [
     render.Circle(
@@ -60,103 +60,43 @@ NO_BUSES = [
 ]
 
 def main(config):
-    stopCode = config.get("stopCode", "1524")
+    stopCode = str(config.get("stopCode", "1524")).strip()
+    if not re.match("^[0-9]{1,8}$", stopCode):
+        return message("Enter a valid TCAT stop")
+
+    stop = fetch_json(TCAT_API + "/Stops/Get/" + stopCode, {})
+    departures = fetch_json(TCAT_API + "/StopDepartures/Get/" + stopCode, [])
+    if type(stop) != "dict" or type(departures) != "list":
+        return message("TCAT data unavailable")
+
+    stopName = stop.get("Name", "Stop " + stopCode)
+    stopName = stopName[:80] if type(stopName) == "string" else "Stop " + stopCode
     kid_list = []
     time_list = []
-    cached_info = cache.get(stopCode)
-    if cached_info != None:
-        stopName = cached_info[0:cached_info.index("&")]
-        cached_info = cached_info[(cached_info.index("&") + 1):]
-        dataSets = cached_info.count("&")
-        for _ in range(0, dataSets):
-            cached_info = cached_info[(cached_info.find("$COLOR") + 6):]
-            cacheColor = cached_info[:cached_info.find("$ROUTE")]
-            cached_info = cached_info[(cached_info.find("$ROUTE") + 6):]
-            cacheRoute = cached_info[:cached_info.find("$MINUTES")]
-            cached_info = cached_info[(cached_info.find("$MINUTES") + 8):]
-            cacheMinutes = cached_info[:cached_info.find("&")]
-            kid_list.append(
-                render.Row(
-                    cross_align = "center",
-                    children = [
-                        render.Circle(
-                            diameter = 12,
-                            color = cacheColor,
-                            child =
-                                render.Text(content = cacheRoute),
-                        ),
-                        render.Text(
-                            color = "#25FF51",
-                            content = (" in " + cacheMinutes + " min  "),
-                        ),
-                    ],
-                ),
-            )
-            time_list.append(cacheMinutes)
-
-    else:
-        routesList = http.get(ROUTES_DETAILS)
-        if routesList.status_code != 200:
-            return render.Root(child = render.WrappedText(color = "#FF0000", content = ("TCAT request failed w/ %d. Bus Data Not Found" % routesList.status_code)))
-        servicingRoutes = []
-        stopName = "blank"
-        for line in routesList.json()["routes"]:
-            foundStopInLine = False
-            for direction in line["directions"]:
-                if foundStopInLine:
+    for board in departures[:2]:
+        directions = board.get("RouteDirections", []) if type(board) == "dict" else []
+        for direction in directions[:20] if type(directions) == "list" else []:
+            if type(direction) != "dict":
+                continue
+            route = str(direction.get("RouteId", "?"))[:4]
+            route_departures = direction.get("Departures", [])
+            for departure in route_departures[:3] if type(route_departures) == "list" else []:
+                minutes = departureMinutes(departure)
+                if minutes == None:
+                    continue
+                minute_text = str(minutes)
+                kid_list.append(
+                    render.Row(
+                        cross_align = "center",
+                        children = [
+                            render.Circle(diameter = 12, color = routeColor(route), child = render.Text(content = route)),
+                            render.Text(color = "#25FF51", content = " in " + minute_text + " min  "),
+                        ],
+                    ),
+                )
+                time_list.append(minute_text)
+                if len(kid_list) >= 12:
                     break
-                for stop in direction["stops"]:
-                    if stop["code"] == int(stopCode) and (not (line["id"] in servicingRoutes)):
-                        servicingRoutes.append(line["id"])
-                        stopName = stop["name"]
-                        foundStopInLine = True
-                        break
-
-        cache_string = stopName + "&"
-        for route in servicingRoutes:
-            routeColor = "#000000"
-            for line in routesList.json()["routes"]:
-                if line["id"] == route:
-                    routeColor = ("#" + line["color"])
-                    break
-            current_predictions = http.get(PREDICTION + route + "," + stopCode)
-            if current_predictions.status_code != 200:
-                return render.Root(child = render.WrappedText(color = "#FF0000", content = ("TCAT request failed w/ %d. Bus Data Not Found" % current_predictions.status_code)))
-            if current_predictions.json()["predictions"] == []:
-                break
-            if current_predictions.json()["predictions"][0]["destinations"] == []:
-                break
-            num_active_buses = len(current_predictions.json()["predictions"][0]["destinations"][0]["predictions"])
-            active_buses = []
-            if num_active_buses != 0:
-                x = 0
-                for x in range(0, num_active_buses):
-                    if current_predictions.json()["predictions"][0]["destinations"][0]["predictions"][x] != []:
-                        arrival_mins = str(current_predictions.json()["predictions"][0]["destinations"][0]["predictions"][x]["min"])
-                        headsign = current_predictions.json()["predictions"][0]["destinations"][0]["headsign"]
-                        stopName = current_predictions.json()["predictions"][0]["stopName"]
-                        active_buses.append([route, stopName, headsign, arrival_mins[0:arrival_mins.index(".")]])
-                        kid_list.append(
-                            render.Row(
-                                cross_align = "center",
-                                children = [
-                                    render.Circle(
-                                        diameter = 12,
-                                        color = routeColor,
-                                        child =
-                                            render.Text(content = active_buses[x][0]),
-                                    ),
-                                    render.Text(
-                                        color = "#25FF51",
-                                        content = (" in " + active_buses[x][3] + " min  "),
-                                    ),
-                                ],
-                            ),
-                        )
-                        time_list.append(active_buses[x][3])
-                        cache_string = (cache_string + "$COLOR" + routeColor + "$ROUTE" + active_buses[x][0] + "$MINUTES" + active_buses[x][3] + "&")
-
-        cache.set(stopCode, cache_string, ttl_seconds = 60)
 
     return render.Root(
         child = render.Column(
@@ -207,6 +147,32 @@ def main(config):
             ],
         ),
     )
+
+def fetch_json(url, fallback):
+    response = http.get(url, ttl_seconds = 60)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > 256 * 1024:
+        return fallback
+    return json.decode(body, fallback)
+
+def departureMinutes(departure):
+    if type(departure) != "dict":
+        return None
+    value = departure.get("ETA") or departure.get("EDT") or departure.get("STA") or departure.get("SDT")
+    timestamps = re.findall("[0-9]{10,13}", value) if type(value) == "string" else []
+    if not timestamps:
+        return None
+    return max(0, (int(timestamps[0][:10]) - time.now().unix) // 60)
+
+def routeColor(route):
+    colors = ["#20B7BC", "#2722B3", "#7C26A6", "#E22DD0", "#EE1C1C", "#F0A524", "#DCDC37"]
+    total = 0
+    for char in route.codepoints():
+        total += ord(char)
+    return colors[total % len(colors)]
+
+def message(text):
+    return render.Root(child = render.WrappedText(color = "#FF5555", content = text, align = "center"))
 
 def timeSort(kid_list, time_list):
     sorted_list = []

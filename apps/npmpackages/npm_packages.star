@@ -16,7 +16,6 @@ load("schema.star", "schema")
 DOWNLOAD_LOGO = DOWNLOAD_LOGO_ASSET.readall()
 NPM_LOGO = NPM_LOGO_ASSET.readall()
 
-SEARCH_URL = "https://registry.npmjs.com/-/v1/search?text={}&size=20"
 DATA_URL = "https://api.npmjs.org/downloads/range/last-%s/%s"
 DEFAULT_PACKAGE = json.encode({"display": "axios", "value": "axios"})
 DEFAULT_DOWNLOAD_PERIOD = "week"
@@ -33,34 +32,41 @@ def main(config):
     """
 
     # get configs
-    package = json.decode(config.get("package", DEFAULT_PACKAGE))
-    download_period = config.get("download_period", DEFAULT_DOWNLOAD_PERIOD)
+    package_config = config.str("package", DEFAULT_PACKAGE).strip()
+    package = (json.decode(package_config).get("value", "") if package_config.startswith("{") else package_config)
+    download_period = config.str("download_period", DEFAULT_DOWNLOAD_PERIOD)
+    if not valid_package(package):
+        return render_error(400, "Invalid package")
+    if download_period not in ["day", "week", "month"]:
+        download_period = DEFAULT_DOWNLOAD_PERIOD
 
     # get package data
-    package_name = package["value"]
+    package_name = package
     url = DATA_URL % (download_period, humanize.url_encode(package_name))
     res = http.get(url, ttl_seconds = CACHE_TTL)
 
     # handle api response
     if res.status_code != 200:
-        print("API error %d: %s" % (res.status_code, res.body()))
+        return render_error(res.status_code, "NPM API unavailable")
 
-        data = res.json()
-        if "error" in data:
-            return render_error(res.status_code, data["error"])
-        else:
-            return render_error(res.status_code, res.body())
-
-    data = res.json()
+    body = res.body()
+    if not body or len(body) > 1048576:
+        return render_error(502, "Invalid NPM response")
+    data = json.decode(body)
+    downloads = data.get("downloads", []) if type(data) == "dict" else []
+    if type(downloads) != "list" or not downloads:
+        return render_error(502, "No download data")
 
     # prepare chart data
     counter = 0
     total_downloads = 0
     chart_data = []
 
-    for item in data["downloads"]:
-        chart_data.append((float(counter), item["downloads"]))
-        total_downloads += item["downloads"]
+    for item in downloads[:31]:
+        count = item.get("downloads", 0) if type(item) == "dict" else 0
+        count = count if type(count) == "int" and count >= 0 else 0
+        chart_data.append((float(counter), count))
+        total_downloads += count
         counter += 1
 
     humanized_downloads = humanize.comma(total_downloads)
@@ -129,12 +135,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "package",
                 name = "Package name",
                 desc = "Name of the NPM package.",
                 icon = "cubes",
-                handler = search_package,
+                default = "axios",
             ),
             schema.Dropdown(
                 id = "download_period",
@@ -147,44 +153,8 @@ def get_schema():
         ],
     )
 
-def search_package(name):
-    """Searches NPM packages to populate the Typeahead widget.
-
-    Args:
-        name (str): The name of the package to search for.
-
-    Returns:
-        list of schema.Option: Options to be displayed for the user.
-    """
-
-    url = SEARCH_URL.format(humanize.url_encode(name))
-    res = http.get(url)
-
-    if res.status_code != 200:
-        print("API error %d: %s" % (res.status_code, res.body()))
-        return []
-
-    data = res.json()
-
-    options = []
-
-    if data.get("objects") == None:
-        return []
-
-    for object in data["objects"]:
-        package_name = object["package"]["name"]
-        package_desc = object["package"].get("description", "No description")
-
-        if len(package_desc) > 30:
-            package_desc = package_desc[:27] + "..."
-
-        display = "{} ({})".format(package_name, package_desc)
-
-        options.append(
-            schema.Option(display = display, value = package_name),
-        )
-
-    return options
+def valid_package(name):
+    return type(name) == "string" and 0 < len(name) and len(name) <= 214 and all([char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@/_.-" for char in name.codepoints()])
 
 def render_error(code, message):
     """Creates a widget tree to render an error message.

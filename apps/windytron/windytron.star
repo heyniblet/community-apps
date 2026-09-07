@@ -38,7 +38,7 @@ station_lookup = {
 def fetch_data(station):
     if DEBUG:
         return json.decode(DEFAULT_DATA)
-    url = "http://windytron.com/out/{}?time={}".format(station, time.now().unix)
+    url = "https://windytron.com/out/{}?time={}".format(station, time.now().unix)
     print(url)
     rep = http.get(url, ttl_seconds = 10)
     if rep.status_code != 200:

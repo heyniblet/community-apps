@@ -32,12 +32,11 @@ def load_quotes():
     """Load the quote file from cache or from github."""
 
     req = http.get(QUOTE_FILE, ttl_seconds = CACHE_TTL)
-    if req.status_code != 200:
-        print("Request failed: " + str(req.status_code))
+    if req.status_code != 200 or len(req.body()) > 2097152:
         return {}
 
-    quotes = req.body()
-    return json.decode(quotes)
+    quotes = json.decode(req.body())
+    return quotes if type(quotes) == "dict" and type(quotes.get("characters")) == "dict" else {}
 
 def get_random_quote(quote_data):
     """Choose and return a quote by flattening the quote data and
@@ -47,18 +46,24 @@ def get_random_quote(quote_data):
 
     # If debug is set, pick from those.
     if DEBUG_CHARACTER:
-        print("Debug character override: " + DEBUG_CHARACTER)
-        char_quotes = quote_data["characters"].get(DEBUG_CHARACTER)
+        char_quotes = quote_data["characters"].get(DEBUG_CHARACTER, [])
     else:
         # Flatten into a single list to choose randomly from.
-        for _, quotes in quote_data.get("characters", {}).items():
-            for quote in quotes:
-                char_quotes.append(quote)
+        for _, quotes in list(quote_data.get("characters", {}).items())[:100]:
+            if type(quotes) != "list":
+                continue
+            for quote in quotes[:500]:
+                if valid_quote(quote):
+                    char_quotes.append(quote)
+                    if len(char_quotes) == 1000:
+                        break
+
+    char_quotes = [quote for quote in char_quotes if valid_quote(quote)]
+    if not char_quotes:
+        return None
 
     idx = random.number(0, len(char_quotes) - 1)
-    print("random index {}".format(idx))
     if DEBUG_INDEX != None:
-        print("Debug quote index override: " + str(DEBUG_INDEX))
         idx = DEBUG_INDEX
     rand_quote = char_quotes[idx]
 
@@ -70,7 +75,16 @@ def main(config):
     anim_speed = 150
     if quote_data:
         current_quote = get_random_quote(quote_data)
+    else:
+        current_quote = None
+    if current_quote != None:
         img = current_quote["image"]
+        align = current_quote.get("align", "left")
+        align = align if align in ["left", "center", "right"] else "left"
+        text_width = current_quote.get("text_width", 45)
+        text_width = text_width if type(text_width) == "int" and 1 <= text_width and text_width <= 64 else 45
+        font = current_quote.get("font", "tb-8")
+        font = font if font in ["tb-8", "tom-thumb"] else "tb-8"
         children = [
             render.Image(src = base64.decode(img)),
             render.Marquee(
@@ -80,14 +94,15 @@ def main(config):
                 offset_end = 32,
                 child = render.WrappedText(
                     content = current_quote["text"],
-                    align = current_quote.get("align", "left"),
-                    width = current_quote.get("text_width", 45),
-                    font = current_quote.get("font", "tb-8"),
+                    align = align,
+                    width = text_width,
+                    font = font,
                 ),
                 scroll_direction = "vertical",
             ),
         ]
-        anim_speed = current_quote["speed"]
+        speed = current_quote.get("speed", 150)
+        anim_speed = speed if type(speed) == "int" and 20 <= speed and speed <= 10000 else 150
     else:
         children = [
             render.Marquee(
@@ -102,7 +117,6 @@ def main(config):
             ),
         ]
     img_position = config.get("img_position", "random")
-    print("Img pos is {}".format(img_position))
     if img_position == "random":
         if random.number(0, 1):
             children = reversed(children)
@@ -122,6 +136,9 @@ def main(config):
         delay = anim_speed,
         show_full_animation = True,
     )
+
+def valid_quote(quote):
+    return type(quote) == "dict" and type(quote.get("image")) == "string" and 0 < len(quote["image"]) and len(quote["image"]) <= 1048576 and type(quote.get("text")) == "string" and 0 < len(quote["text"]) and len(quote["text"]) <= 1000
 
 def get_schema():
     return schema.Schema(

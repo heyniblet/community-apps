@@ -641,7 +641,7 @@ def render_vinyl(config, release_data):
 
     # Fetch album art if available
     album_art = None
-    if thumb_url:
+    if thumb_url and thumb_url.startswith("https://i.discogs.com/"):
         art_resp = http.get(thumb_url)
         if art_resp.status_code == 200:
             album_art = art_resp.body()
@@ -909,6 +909,7 @@ def get_schema():
                 desc = "Enter your Discogs personal access token",
                 icon = "key",
                 default = "",
+                secret = True,
             ),
             schema.Text(
                 id = "filter_by_folder",
@@ -963,11 +964,6 @@ def get_schema():
                 icon = "play",
                 default = False,
             ),
-            schema.Generated(
-                id = "logo_intro_options",
-                source = "show_logo_intro",  # Watch this field
-                handler = logo_intro_options_handler,  # Call this when it changes
-            ),
             schema.Toggle(
                 id = "show_stats",
                 name = "Show Stats",
@@ -975,10 +971,5 @@ def get_schema():
                 icon = "info",
                 default = False,
             ),
-            schema.Generated(
-                id = "stats_options",
-                source = "show_stats",  # Watch this field
-                handler = stats_options_handler,  # Call this when it changes
-            ),
-        ],
+        ] + logo_intro_options_handler("true") + stats_options_handler("true"),
     )

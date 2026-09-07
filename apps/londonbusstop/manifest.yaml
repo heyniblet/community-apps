@@ -6,7 +6,7 @@ desc: Shows upcoming arrivals at a specific bus stop in London.
 author: dinosaursrarr
 fileName: london_bus_stop.star
 packageName: londonbusstop
-recommendedInterval: 5
+recommendedInterval: 1
 category: transit
 tags:
   - local

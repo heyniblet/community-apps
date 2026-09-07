@@ -35,8 +35,9 @@ IMG = IMG_ASSET.readall()
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-STATION_NAMES_URL = "https://traintracker.transitmatters.org/stops/Green-B,Green-C,Green-D,Green-E,Orange,Red"
-TRAIN_LOCATION_URL = "https://traintracker.transitmatters.org/trains/Green-B,Green-C,Green-D,Green-E,Orange,Red-A,Red-B"
+API_BASE_URL = "https://traintracker-api.labs.transitmatters.org"
+STATION_NAMES_URL = API_BASE_URL + "/stops/Green-B,Green-C,Green-D,Green-E,Orange,Red"
+TRAIN_LOCATION_URL = API_BASE_URL + "/trains/Green-B,Green-C,Green-D,Green-E,Orange,Red-A,Red-B"
 
 ARROW_DOWN = "⇩"
 ARROW_UP = "⇧"
@@ -48,6 +49,7 @@ GREEN = "#00FF00"
 ORANGE = "#FFA500"
 
 CACHE_TTL_SECONDS = 3600 * 24  # 1 day in seconds.
+TRAIN_CACHE_TTL_SECONDS = 60
 
 # mockData = [
 #     {
@@ -76,14 +78,10 @@ CACHE_TTL_SECONDS = 3600 * 24  # 1 day in seconds.
 #     },
 # ]
 
-def fetchStationNames(useCache):
-    if useCache:
-        res = http.get(STATION_NAMES_URL, ttl_seconds = CACHE_TTL_SECONDS)
-    else:
-        res = http.get(STATION_NAMES_URL)
-
+def fetchStationNames():
+    res = http.get(STATION_NAMES_URL, ttl_seconds = CACHE_TTL_SECONDS)
     if res.status_code != 200:
-        fail("stations request failed with status %d", res.status_code)
+        return {}
     cachedStations = res.body()
 
     stations = json.decode(cachedStations)
@@ -92,10 +90,6 @@ def fetchStationNames(useCache):
         map[station["id"]] = station["name"]
 
     return map
-
-def mapStationIdToName(id):
-    stations = fetchStationNames(True)
-    return stations[id]
 
 def mapRouteToColor(route, config):
     split = route.split("-")
@@ -112,7 +106,7 @@ def mapRouteToColor(route, config):
 
     return None
 
-def createTrain(loc, config):
+def createTrain(loc, config, stations):
     if loc["isNewTrain"] != True:
         return None
 
@@ -121,7 +115,7 @@ def createTrain(loc, config):
         return None
     (color, line) = routeResult
 
-    stationName = mapStationIdToName(loc["stationId"])
+    stationName = stations.get(loc["stationId"], loc["stationId"])
 
     if line != "":
         stationName += " (" + line + ")"
@@ -152,8 +146,9 @@ def createTrain(loc, config):
 
 def displayIndividualTrains(apiResult, config):
     trains = []
+    stations = fetchStationNames()
     for loc in apiResult:
-        train = createTrain(loc, config)
+        train = createTrain(loc, config, stations)
         if train != None:
             trains.append(train)
 
@@ -245,7 +240,7 @@ def displayDigest(apiResult, config):
     )
 
 def main(config):
-    res = http.get(TRAIN_LOCATION_URL)
+    res = http.get(TRAIN_LOCATION_URL, ttl_seconds = TRAIN_CACHE_TTL_SECONDS)
     if res.status_code != 200:
         return render.Root(
             child = render.WrappedText("Location request failed with status %d" % res.status_code),

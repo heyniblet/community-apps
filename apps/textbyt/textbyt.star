@@ -5,7 +5,9 @@ Description: Display a scrolling message sent in via text.
 Author: Josh Reed
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -17,13 +19,17 @@ def main(config):
 
     if (feed == None or feed == ""):
         msg_txt = "Enter a Textbyt feed id to get started"
+    elif not re.match(r"^[A-Za-z0-9_-]{1,80}$", feed):
+        msg_txt = "Invalid Textbyt feed id"
     else:
         textbyt = http.get(TEXTBYT_API_URL + feed)
-        if textbyt.status_code != 200:
+        body = textbyt.body()
+        data = json.decode(body, {}) if textbyt.status_code == 200 and body and len(body) <= 32 * 1024 else {}
+        if type(data) != "dict" or type(data.get("author")) != "string" or type(data.get("message")) != "string":
             msg_txt = "Unknown Textbyt feed: " + feed
         else:
-            author = textbyt.json()["author"] + ":"
-            msg_txt = textbyt.json()["message"]
+            author = data["author"][:80] + ":"
+            msg_txt = data["message"][:1000]
 
     return render.Root(
         delay = 120,

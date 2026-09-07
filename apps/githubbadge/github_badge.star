@@ -5,6 +5,7 @@ Description: Displays a GitHub badge for the status of the configured action.
 Author: Cavallando
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/badge_background.png", BADGE_BACKGROUND_ASSET = "file")
 load("images/github_failed_icon.png", GITHUB_FAILED_ICON_ASSET = "file")
@@ -25,6 +26,7 @@ GITHUB_NEUTRAL_ICON = GITHUB_NEUTRAL_ICON_ASSET.readall()
 GITHUB_SUCCESS_ICON = GITHUB_SUCCESS_ICON_ASSET.readall()
 
 DEFAULT_BRANCH = "main"
+GITHUB_API_VERSION = "2026-03-10"
 
 def get_status_icon(status):
     """Gets the decoded icon string for a given Workflow Status from github 
@@ -38,7 +40,7 @@ def get_status_icon(status):
     """
     if status == "completed" or status == "success":
         return GITHUB_SUCCESS_ICON
-    elif status == "failed" or status == "timed_out":
+    elif status == "failed" or status == "failure" or status == "timed_out":
         return GITHUB_FAILED_ICON
     elif status == "cancelled" or status == "skipped" or status == "stale" or status == "neutral":
         return GITHUB_NEUTRAL_ICON
@@ -57,28 +59,36 @@ def fetch_workflow_data(config):
         The workflow data if it can be found or an error message from the request
     """
     access_token = config.str("access_token")
-    repo_name = config.str("repo_name")
-    owner_name = config.str("owner_name")
-    workflow_id = config.str("workflow_id")
+    repo_name = valid_component(config.str("repo_name"))
+    owner_name = valid_component(config.str("owner_name"))
+    workflow_id = valid_component(config.str("workflow_id"))
     branch = config.str("branch", DEFAULT_BRANCH)
 
-    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    if not repo_name or not owner_name or not workflow_id or not valid_branch(branch):
+        return [], "Check GitHub configuration"
+
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": GITHUB_API_VERSION}
     if access_token:
+        if not valid_secret(access_token):
+            return [], "Check GitHub token"
         headers["Authorization"] = "Bearer {}".format(access_token)
 
-    data = http.get(
+    response = http.get(
         "https://api.github.com/repos/{}/{}/actions/workflows/{}/runs".format(owner_name, repo_name, workflow_id),
         params = {"branch": branch, "per_page": "1", "page": "1"},
         headers = headers,
-        ttl_seconds = 240,
-    ).json()
+    )
+    if response.status_code != 200 or len(response.body()) > 2 * 1024 * 1024:
+        return [], "GitHub unavailable (%d)" % response.status_code
+    data = json.decode(response.body(), {})
 
-    if data and data.get("workflow_runs"):
-        return data.get("workflow_runs")[0], None
-    elif data.get("message"):
-        return [], data.get("message")
+    runs = data.get("workflow_runs", []) if type(data) == "dict" else []
+    if type(runs) == "list" and runs and type(runs[0]) == "dict":
+        return runs[0], None
+    elif type(data) == "dict" and type(data.get("message")) == "string":
+        return [], data.get("message")[:80]
 
-    return [], "Error occurred"
+    return [], "No workflow runs"
 
 def get_display_text(config):
     return config.get("display_text") or "{}/{}".format(config.str("owner_name"), config.str("repo_name"))
@@ -120,7 +130,6 @@ def main(config):
     Returns:
         A Root view to render to the app
     """
-    access_token = config.get("access_token") or None
     display_text = get_display_text(config)
 
     workflow_data = []
@@ -129,16 +138,28 @@ def main(config):
 
     if err:
         return render_status_badge("failed", err)
-    elif len(workflow_data) == 0 and access_token == None:
-        return render_status_badge("success", "tidbyt/pixlet")
     elif workflow_data and type(workflow_data) != "string":
-        status = workflow_data.get("status")
+        status = workflow_data.get("conclusion") or workflow_data.get("status") or "unknown"
 
         return render_status_badge(status, display_text)
     elif workflow_data:
         return render_status_badge("failed", workflow_data)
     else:
         return render_status_badge("failed", "Could not connect to GitHub")
+
+def valid_component(value):
+    if type(value) != "string":
+        return None
+    value = value.strip()
+    if not value or len(value) > 100 or not all([char.isalnum() or char in "-_." for char in value.codepoints()]):
+        return None
+    return value
+
+def valid_branch(value):
+    return type(value) == "string" and value and len(value) <= 200 and "\r" not in value and "\n" not in value
+
+def valid_secret(value):
+    return type(value) == "string" and value and len(value) <= 2048 and "\r" not in value and "\n" not in value
 
 def get_schema():
     return schema.Schema(

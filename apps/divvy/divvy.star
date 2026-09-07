@@ -13,24 +13,24 @@ load("schema.star", "schema")
 
 LYFT_ICON = LYFT_ICON_ASSET.readall()
 
-STATIONS_URL = "https://gbfs.lyft.com/gbfs/1.1/chi/en/station_information.json"
-STATION_STATUS_URL = "https://gbfs.lyft.com/gbfs/1.1/chi/en/station_status.json"
+STATIONS_URL = "https://gbfs.lyft.com/gbfs/2.3/chi/en/station_information.json"
+STATION_STATUS_URL = "https://gbfs.lyft.com/gbfs/2.3/chi/en/station_status.json"
 DEFAULT_STATION = '{"id":"1789242536879942642","name":"Halsted St & Fulton St"}'
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_STATIONS = 3000
 
 def main(config):
-    resp = http.get(STATION_STATUS_URL, ttl_seconds = 60)
-    if resp.status_code != 200:
-        fail("gbfs status request failed with status %d", resp.status_code)
-
-    station_data = resp.json()["data"]["stations"]
-    station = json.decode(config.get("station_id", DEFAULT_STATION))
-
-    text = ""
-
-    for _index, value in enumerate(station_data):
-        if value["station_id"] == station["id"]:
-            text = "Bikes:" + str(int(value["num_bikes_available"] - value["num_ebikes_available"])) + "\nE-Bikes:" + str(int(value["num_ebikes_available"]))
-            break
+    station_id, station_name = station_selection(config.get("station_id", DEFAULT_STATION))
+    status = find_station(fetch_stations(STATION_STATUS_URL, 60), station_id)
+    info = find_station(fetch_stations(STATIONS_URL, 3600), station_id)
+    if info:
+        station_name = str(info.get("name") or station_name)[:120]
+    if not status:
+        text = "Station\nunavailable"
+    else:
+        total = safe_count(status.get("num_bikes_available"))
+        ebikes = min(total, safe_count(status.get("num_ebikes_available")))
+        text = "Bikes:" + str(total - ebikes) + "\nE-Bikes:" + str(ebikes)
 
     return render.Root(
         child = render.Column(
@@ -39,7 +39,7 @@ def main(config):
                     children = [
                         render.Marquee(
                             width = 64,
-                            child = render.Text(station["name"]),
+                            child = render.Text(station_name),
                         ),
                         render.Box(width = 64, height = 1, color = "#4338ca"),
                     ],
@@ -59,29 +59,46 @@ def main(config):
         ),
     )
 
-def toOption(station):
-    return schema.Option(
-        display = station["name"],
-        value = '{"id":"' + station["station_id"] + '", "name":"' + station["name"] + '"}',
-    )
-
 def get_schema():
-    resp = http.get(STATIONS_URL, ttl_seconds = 60 * 60 * 24)
-    if resp.status_code != 200:
-        fail("gbfs station request failed with status %d", resp.status_code)
-
-    options = sorted([toOption(x) for x in resp.json()["data"]["stations"]], key = lambda x: x.display)
-
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "station_id",
-                name = "Station",
-                desc = "Which station's data to show",
+                name = "Divvy Station ID",
+                desc = "Station ID from Divvy's public GBFS feed. Existing station selections remain supported.",
                 icon = "bicycle",
-                default = options[0].value,
-                options = options,
+                default = DEFAULT_STATION,
             ),
         ],
     )
+
+def station_selection(raw):
+    parsed = json.decode(raw, None) if type(raw) == "string" else None
+    if type(parsed) == "dict":
+        station_id = parsed.get("id") or parsed.get("value")
+        station_name = parsed.get("name") or parsed.get("display") or "Divvy station"
+    else:
+        station_id = raw
+        station_name = "Divvy station"
+    station_id = str(station_id or "").strip()
+    if not station_id or len(station_id) > 128 or "\r" in station_id or "\n" in station_id:
+        return "1789242536879942642", "Halsted St & Fulton St"
+    return station_id, str(station_name)[:120]
+
+def fetch_stations(url, ttl_seconds):
+    response = http.get(url, ttl_seconds = ttl_seconds)
+    body = response.body()
+    data = json.decode(body, None) if response.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    nested = data.get("data") if type(data) == "dict" else None
+    stations = nested.get("stations") if type(nested) == "dict" else None
+    return [station for station in stations[:MAX_STATIONS] if type(station) == "dict"] if type(stations) == "list" else []
+
+def find_station(stations, station_id):
+    for station in stations:
+        if str(station.get("station_id") or "") == station_id:
+            return station
+    return None
+
+def safe_count(value):
+    return min(10000, max(0, int(value))) if type(value) in ["int", "float"] else 0

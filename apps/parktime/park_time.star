@@ -12,6 +12,7 @@ v1.0 - Initial Tidbyt release
 
 load("http.star", "http")
 load("humanize.star", "humanize")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -24,9 +25,11 @@ DEFAULT_COLOR_DARK_GRAY = "#333333"
 DEFAULT_COLOR_WHITE = "#FFFFFF"
 DEFAULT_COLOR_DANGER = "#dc3545"
 DEFAULT_COLOR_WARNING = "#ffc107"
-DEFAULT_TTL = int(60 * 60 * 6)  # 4 hours
+DEFAULT_TTL = int(60 * 60 * 6)  # 6 hours
 DEFAULT_TTL_LIVE = int(60 * 5)  # 5 minutes
 DEFAULT_ENTITY = "75ea578a-adc8-4116-a54d-dccb60765ef9"  #"ff52cb64-c1d5-4feb-9d43-5dbd429bac81"  #
+ENTITY_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+MAX_RESPONSE_BYTES = 256 * 1024
 TIDY_NAMES = ["Universal's ", " Theme Park", " Water Park", " Park", "Disney's ", " Florida", "™", "©", "®", " – New!"]
 MAIN_ENTITIES = [
     {"name": "Disneyland Resort", "id": "bfc89fd6-314d-44b4-b89e-df1a89cf991e", "entityType": "DESTINATION", "color": "#FFFFFF"},
@@ -46,6 +49,18 @@ MAIN_ENTITIES = [
     {"name": "Universal's Islands of Adventure", "id": "267615cc-8943-4c2a-ae2c-5da728ca591f", "entityType": "PARK", "color": "#0468d9"},
     {"name": "Universal Studios", "id": "bc4005c5-8c7e-41d7-b349-cdddf1796427", "entityType": "PARK", "color": "#0468d9"},
 ]
+
+def get_entity_data(entity, suffix, ttl_seconds):
+    if not re.match(ENTITY_ID_PATTERN, entity):
+        fail("invalid ThemeParks.wiki entity ID")
+    response = http.get(THEME_PARKS_WIKI_URL + entity + suffix, ttl_seconds = ttl_seconds)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        fail("ThemeParks.wiki request failed with status %d" % response.status_code)
+    payload = response.json()
+    if type(payload) != "dict":
+        fail("ThemeParks.wiki returned invalid data")
+    return payload
 
 # Format the Schema Options
 def entity_to_option(entity):
@@ -76,10 +91,9 @@ def get_destination_options():
 
 # Get the Schema Options for Entities
 def get_entity_options(park):
-    entity_children = http.get(THEME_PARKS_WIKI_URL + park + "/children", ttl_seconds = DEFAULT_TTL)
-    if entity_children.status_code != 200:
-        fail("request to %s failed with status code: %d" % (entity_children, entity_children.status_code))
-    entity_children = entity_children.json()["children"]
+    entity_children = get_entity_data(park, "/children", DEFAULT_TTL).get("children")
+    if type(entity_children) != "list":
+        return []
 
     # Get Parks
     destination_children = [x for x in entity_children if (x["entityType"] == "PARK" or x["entityType"] == "SHOW" or x["entityType"] == "ATTRACTION")]
@@ -90,6 +104,8 @@ def get_entity_options(park):
 # Generate the Entity Dropdown
 def entity_options(destination):
     entities = get_entity_options(destination)
+    if not entities:
+        return []
     return [
         schema.Dropdown(
             id = "entity",
@@ -144,12 +160,12 @@ def park_hours(timezone, entity_schedule, display_name, color, today, tomorrow):
     if schedule_today:
         opening_today = time.parse_time(schedule_today[0]["openingTime"])
         closing_today = time.parse_time(schedule_today[0]["closingTime"])
-        opening_tomorrow = time.parse_time(schedule_tomorrow[0]["openingTime"])
-        closing_tomorrow = time.parse_time(schedule_tomorrow[0]["closingTime"])
 
         # When park is closed
         if time.now().in_location(timezone) > closing_today.in_location(timezone):
             if schedule_tomorrow:
+                opening_tomorrow = time.parse_time(schedule_tomorrow[0]["openingTime"])
+                closing_tomorrow = time.parse_time(schedule_tomorrow[0]["closingTime"])
                 park_hours_label = "OPEN TOMORROW"
                 operating_hours = tidy_time(opening_tomorrow) + " - " + tidy_time(closing_tomorrow)
                 operating_hours_color = DEFAULT_COLOR_WARNING
@@ -208,8 +224,8 @@ def show_times(showtimes_today, display_name, color):
 
 def boarding_groups(entity_live, display_name, color):
     group_start = str(int(entity_live["queue"]["BOARDING_GROUP"]["currentGroupStart"]))
-    group_end = str(int(entity_live["queue"]["BOARDING_GROUP"]["currentGroupEnd"]))
-    wait_time = group_start + "-" + group_end
+    group_end = entity_live["queue"]["BOARDING_GROUP"].get("currentGroupEnd")
+    wait_time = group_start + ("-" + str(int(group_end)) if group_end else "")
     return [
         render.Marquee(width = 64, child = render.Text(content = display_name, font = "Dina_r400-6", color = color)),
         render.Text(content = "NOW BOARDING", font = "CG-pixel-4x5-mono", height = 6, color = DEFAULT_COLOR_LIGHT_GRAY),
@@ -229,8 +245,8 @@ def wait_times(entity_live, display_name, color):
     elif entity_live["status"] == "DOWN":
         wait_time_units = "TEMP CLOSED"
         wait_time_units_color = DEFAULT_COLOR_WARNING
-    elif "queue" in entity_live:
-        if entity_live["queue"]["STANDBY"]["waitTime"]:
+    elif type(entity_live.get("queue")) == "dict" and type(entity_live["queue"].get("STANDBY")) == "dict":
+        if entity_live["queue"]["STANDBY"].get("waitTime"):
             minutes = str(int(entity_live["queue"]["STANDBY"]["waitTime"]))
             wait_time = minutes
         else:
@@ -268,9 +284,6 @@ def no_data(display_name, color):
 def main(config):
     display_widgets = []
     color = DEFAULT_COLOR
-    timezone = time.tz()  # Utilize special timezone variable
-    today = time.now().in_location(timezone).format("2006-01-02")
-    tomorrow = (time.now().in_location(timezone) + time.parse_duration("24h")).format("2006-01-02")
 
     # Get entity if specified
     entity = DEFAULT_ENTITY
@@ -278,11 +291,13 @@ def main(config):
         entity = config.get("entity")
 
     #Get the entity info
-    entity_live = http.get(THEME_PARKS_WIKI_URL + entity + "/live", ttl_seconds = DEFAULT_TTL_LIVE)
-    if entity_live.status_code != 200:
-        fail("request to %s failed with status code: %d" % (entity_live, entity_live.status_code))
-    entity_live = entity_live.json()["liveData"]
-    entity_schedule = http.get(THEME_PARKS_WIKI_URL + entity + "/schedule", ttl_seconds = DEFAULT_TTL).json()
+    entity_live = get_entity_data(entity, "/live", DEFAULT_TTL_LIVE).get("liveData")
+    entity_schedule = get_entity_data(entity, "/schedule", DEFAULT_TTL)
+    if type(entity_live) != "list" or type(entity_schedule.get("schedule")) != "list":
+        fail("ThemeParks.wiki returned invalid entity data")
+    timezone = entity_schedule.get("timezone") or time.tz()
+    today = time.now().in_location(timezone).format("2006-01-02")
+    tomorrow = (time.now().in_location(timezone) + time.parse_duration("24h")).format("2006-01-02")
     display_name = tidy_name(entity_schedule["name"])
 
     # Check for liveData
@@ -290,10 +305,8 @@ def main(config):
         entity_live = entity_live[0]
 
         # Check for parkId
-        if entity_live["parkId"]:
-            color = [x["color"] for x in MAIN_ENTITIES if x["id"] == entity_live["parkId"]][0]
-        else:
-            color = DEFAULT_COLOR
+        park_colors = [x["color"] for x in MAIN_ENTITIES if x["id"] == entity_live.get("parkId")]
+        color = park_colors[0] if park_colors else DEFAULT_COLOR
 
         # -- PARK OPERATING HOURS -- #
         if entity_schedule["entityType"] == "PARK":

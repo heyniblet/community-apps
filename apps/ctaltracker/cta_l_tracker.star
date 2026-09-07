@@ -12,7 +12,6 @@ load("time.star", "time")
 
 ##### constants #####
 
-CTA_STATIONS_URL = "https://data.cityofchicago.org/resource/8pix-ypme.json"
 CTA_ARRIVALS_URL = "https://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
 
 # Gets Hex color code for a given train line
@@ -49,34 +48,7 @@ DEFAULT_DESTINATION_STATION = "No Destination"
 
 ##### config #####
 
-def fetch_cta_stations():
-    """
-    Gets a list of "L" stations from API and
-    eliminates duplicate stations
-    """
-    response = http.get(CTA_STATIONS_URL, ttl_seconds = 3600)
-
-    if response.status_code != 200:
-        fail("CTA L Stops request failed with status %d", response.status_code)
-
-    data = response.json()
-
-    if len(data) == 0:
-        fail("CTA L Stops API returned no stops")
-
-    stations = [{
-        "station_descriptive_name": station["station_descriptive_name"],
-        "map_id": station["map_id"],
-    } for station in data]
-    deduped_stations = [i for n, i in enumerate(stations) if i not in stations[n + 1:]]
-
-    return deduped_stations
-
 def get_schema():
-    departure_station_options = [schema.Option(
-        display = station["station_descriptive_name"],
-        value = station["map_id"],
-    ) for station in fetch_cta_stations()]
     time_delay_options = [schema.Option(
         display = str(time),
         value = str(time),
@@ -89,13 +61,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "station",
-                name = "Departing Station",
-                desc = "The CTA \"L\" Station you would depart from",
+                name = "Station map ID",
+                desc = "The five-digit CTA station map ID.",
                 icon = "train",
-                default = departure_station_options[0].value,
-                options = departure_station_options,
+                default = DEFAULT_STATION,
             ),
             schema.Dropdown(
                 id = "destination_station",
@@ -131,22 +102,22 @@ def fetch_cta_arrival_estimates(station_code, api_key):
     from CTA Arrivals API
     """
 
-    response = http.get(CTA_ARRIVALS_URL, params = {"key": api_key, "mapid": station_code, "outputType": "JSON"}, ttl_seconds = 60)
+    response = http.get(CTA_ARRIVALS_URL, params = {"key": api_key, "mapid": station_code, "outputType": "JSON"})
 
-    if response.status_code != 200:
-        fail("CTA Arrivals request failed with status %d", response.status_code)
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return []
 
-    if "eta" in response.json()["ctatt"]:
-        arrivals = response.json()["ctatt"]["eta"]
-    else:
-        arrivals = []
+    data = response.json().get("ctatt", {})
+    if type(data) != "dict" or type(data.get("eta")) != "list":
+        return []
+    arrivals = data["eta"][:20]
 
     return [{
-        "destination_name": prediction["destNm"],
+        "destination_name": str(prediction["destNm"])[:100],
         "line": prediction["rt"],
         "eta": (time.parse_time(prediction["arrT"], format = "2006-01-02T15:04:05", location = "America/Chicago") - time.now().in_location("America/Chicago")).minutes,
-        "is_scheduled": prediction["isSch"],
-    } for prediction in arrivals]
+        "is_scheduled": "1" if str(prediction["isSch"]) == "1" else "0",
+    } for prediction in arrivals if type(prediction) == "dict" and "destNm" in prediction and "rt" in prediction and "arrT" in prediction and "isSch" in prediction]
 
 def filter_arrival_predictions(arrival_predictions, destination_station, time_delay):
     filtered_arrivals = []
@@ -160,7 +131,7 @@ def render_arrival_prediction(prediction, widgetMode):
     Creates a Row and adds needed children objects
     for a single arrival
     """
-    background_color = render.Box(width = 22, height = 11, color = COLOR_MAP[prediction["line"]])
+    background_color = render.Box(width = 22, height = 11, color = COLOR_MAP.get(prediction["line"], "#666666"))
     destination_text = render.Text(prediction["destination_name"], font = "CG-pixel-4x5-mono", height = 7)
     eta_text = "%d min" % int(prediction["eta"]) if int(prediction["eta"]) > 1 else "Due"
     eta_text += " S" if bool(int(prediction["is_scheduled"])) else ""
@@ -198,12 +169,20 @@ def render_no_arrival_predications_data_available(widgetMode):
 def main(config):
     widgetMode = config.bool("$widget")
     selected_station = config.get("station", DEFAULT_STATION)
-    destination_station = config.get("destination_name", DEFAULT_DESTINATION_STATION)
-    time_delay = int(config.get("time_delay", "0"))
+    destination_station = config.get("destination_station", DEFAULT_DESTINATION_STATION)
+    time_delay_value = config.get("time_delay", "0")
     api_key = config.get("api_key")
 
-    if not api_key:
+    if not api_key or len(api_key) > 256:
         return render.Root(child = render.Text("CTA API Key not set"))
+    if len(selected_station) != 5:
+        return render.Root(child = render.Text("Invalid station ID"))
+    for c in selected_station.elems():
+        if c not in "0123456789":
+            return render.Root(child = render.Text("Invalid station ID"))
+    if time_delay_value not in [str(i) for i in range(21)]:
+        return render.Root(child = render.Text("Invalid time delay"))
+    time_delay = int(time_delay_value)
 
     arrival_predictions = fetch_cta_arrival_estimates(selected_station, api_key)
     filter_arrivals = filter_arrival_predictions(arrival_predictions, destination_station, time_delay)

@@ -76,8 +76,7 @@ def display_error(msg):
 def main(config):
     # Get the config values
     station_full = config.get("station")
-    station_json = json.decode(station_full) if station_full else DEFAULT_STATION
-    station = station_json.get("value")
+    station = station_value(station_full)
     skiptime = config.get("skiptime", 0)
 
     # Check if we need to convert the skiptime
@@ -89,7 +88,6 @@ def main(config):
         skiptime = 0
 
     # Get a new reponse
-    print("Miss! Calling API.")
     sbb_dict = {"stop": station}  # Provide the station with a dict, as this will be encoded
     resp = http.get(SBB_URL, params = sbb_dict, ttl_seconds = 120)
     if resp.status_code != 200:
@@ -285,7 +283,6 @@ def main(config):
 
 def search_station(pattern):
     # Get a new reponse
-    print("Pattern Miss! Calling API.")
     sbb_dict = {"term": pattern}  # Provide the pattern with a dict, as this will be encoded
     resp = http.get(SBB_URL_COMPLETION, params = sbb_dict, ttl_seconds = 604800)
     if resp.status_code != 200:
@@ -333,16 +330,25 @@ def search_station(pattern):
     # Return the found stations
     return trainStations
 
+def station_value(raw):
+    if not raw:
+        return DEFAULT_STATION["value"]
+
+    # Existing Typeahead installations store a wrapper; new installs use text.
+    if raw.startswith("{"):
+        return str(json.decode(raw).get("value", DEFAULT_STATION["value"]))[0:100]
+    return raw.strip()[0:100]
+
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "station",
                 name = "Station",
-                desc = "Station from which the timetable shall be shown.",
+                desc = "Station name (for example Bern).",
                 icon = "train",
-                handler = search_station,
+                default = DEFAULT_STATION["value"],
             ),
             schema.Text(
                 id = "skiptime",

@@ -2,10 +2,10 @@
 Deep Mix - A Tidbyt app showing the currently playing song from Deep Mix Online Radio
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
+load("html.star", "html")
 load("http.star", "http")
 load("images/dm_logo.gif", DM_LOGO_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -14,7 +14,8 @@ DM_LOGO = DM_LOGO_ASSET.readall()
 # Deep Mix Logo
 
 # Cache TTL for API responses
-CACHE_TTL_SECONDS = 30  # Cache for 30 seconds (more frequent updates for live radio)
+DEEP_MIX_URL = "https://deepmix.net/"
+CACHE_TTL_SECONDS = 30
 
 def main(config):
     """
@@ -23,6 +24,8 @@ def main(config):
 
     # Get user-configured colors
     text_color = config.get("text_color", "#0ff1b2")
+    if type(text_color) != "string" or not re.match(r"^#[0-9a-fA-F]{6}$", text_color):
+        text_color = "#0ff1b2"
 
     # Fetch current playing track
     current_track = fetch_current_track()
@@ -120,63 +123,24 @@ def get_schema():
 
 def fetch_current_track():
     """
-    Fetch current track from Deep Mix Radio by scraping HTML
+    Fetch current track from Deep Mix Radio's first-party HTTPS page.
     """
-    url = "http://217.160.63.220:7620/played.html?sid=1"
-
-    # Cache the response for 30 seconds
-    cached = cache.get("current_track")
-    if cached != None:
-        return json.decode(cached)
-
-    resp = http.get(url)
-
-    if resp.status_code == 200:
-        html = resp.body()
-
-        # Find the row with "Current Song" marker
-        current_song_marker = "<b>Current Song</b>"
-        if current_song_marker in html:
-            # Find the start of the row containing the current song
-            marker_pos = html.find(current_song_marker)
-            row_start = html.rfind("<tr>", 0, marker_pos)
-
-            if row_start != -1:
-                # Extract the row
-                row_end = html.find("</tr>", row_start)
-                row = html[row_start:row_end]
-
-                # Extract the song title (second <td>)
-                # Find all <td> tags in the row
-                first_td_end = row.find("</td>")
-                if first_td_end != -1:
-                    # Find the second <td>
-                    second_td_start = row.find("<td>", first_td_end)
-                    second_td_end = row.find("</td>", second_td_start)
-
-                    if second_td_start != -1 and second_td_end != -1:
-                        # Extract the content between the tags
-                        song_text = row[second_td_start + 4:second_td_end]
-
-                        # Parse artist and title (format: "Artist - Title")
-                        if " - " in song_text:
-                            parts = song_text.split(" - ", 1)
-                            artist = parts[0].strip()
-                            title = parts[1].strip()
-                        else:
-                            # If no separator, use the whole text as title
-                            artist = "Unknown Artist"
-                            title = song_text.strip()
-
-                        track_data = {
-                            "artist": artist,
-                            "title": title,
-                        }
-                        cache.set("current_track", json.encode(track_data), ttl_seconds = CACHE_TTL_SECONDS)
-                        return track_data
-
-        print("Could not parse current song from HTML")
+    response = http.get(
+        DEEP_MIX_URL,
+        ttl_seconds = CACHE_TTL_SECONDS,
+        headers = {"User-Agent": "Niblet Deep Mix/1.0 (+https://heyniblet.com)"},
+    )
+    body = response.body()
+    if response.status_code != 200 or len(body) > 256 * 1024:
         return None
-    else:
-        print("Failed to fetch from server:", resp.status_code)
+
+    node = html(body).find("#now-playing-title")
+    song_text = node.text().strip() if node else ""
+    if not song_text or len(song_text) > 200:
         return None
+
+    parts = song_text.split(" - ", 1)
+    return {
+        "artist": parts[0].strip() if len(parts) == 2 else "Unknown Artist",
+        "title": parts[1].strip() if len(parts) == 2 else song_text,
+    }

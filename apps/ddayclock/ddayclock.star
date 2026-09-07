@@ -1,17 +1,17 @@
 """
 Applet: DDayClock
 Summary: Displays the current time of the Doomsday Clock
-Description: Gets the current Doomsday Clock data from https://www.doomsdayclock.net/ daily.
+Description: Gets the current Doomsday Clock data from the Bulletin of the Atomic Scientists.
 Author: LLarry
 """
 
-load("cache.star", c = "cache")
+load("html.star", "html")
 load("http.star", h = "http")
 load("render.star", r = "render")
 load("schema.star", s = "schema")
 
 #Constants
-DDAYCLOCK_URL = "https://www.doomsdayclock.net/"
+DDAYCLOCK_URL = "https://thebulletin.org/doomsday-clock/current-time/"
 
 MAX_SECONDS = 3600
 MAX_MINUTES = 60
@@ -20,23 +20,19 @@ DEFAULT_CLOCK_COLOR = "#fff"
 DEFAULT_TEXT_COLOR = "#fff"
 DEFAULT_TIME_COLOR = "#f00"
 
+def config_color(value, fallback):
+    return value if type(value) == "string" and len(value) in [4, 7] and value.startswith("#") and all([char in "0123456789abcdefABCDEF" for char in value[1:].codepoints()]) else fallback
+
 def main(config):
     #Initializes all values
     degrees = -1
-    clockColor = config.get("clockColor") or DEFAULT_CLOCK_COLOR
-    textColor = config.get("textColor") or DEFAULT_TEXT_COLOR
-    timeColor = config.get("timeColor") or DEFAULT_TIME_COLOR
-    number = c.get("number")
-    unit = c.get("unit")
-
-    #Determines if data must be acquired from the website
-    if number == None or unit == None:
-        time = get_data(DDAYCLOCK_URL)
-        number = time[0]
-        unit = time[1]
-    else:
-        #Converts number into int only if it isn't None.
-        number = int(number)
+    clockColor = config_color(config.get("clockColor"), DEFAULT_CLOCK_COLOR)
+    textColor = config_color(config.get("textColor"), DEFAULT_TEXT_COLOR)
+    timeColor = config_color(config.get("timeColor"), DEFAULT_TIME_COLOR)
+    clock_time = get_data(DDAYCLOCK_URL)
+    if clock_time == None:
+        return r.Root(child = r.WrappedText(content = "Clock unavailable", align = "center", color = textColor))
+    number, unit = clock_time
 
     #One second is 0.1 degrees of a circle
     #One minute is 6 degrees of a circle
@@ -115,19 +111,23 @@ def main(config):
             ),
         )
 
-#Gets the clock data from the website.
-#Note: It uses the non-javascript site.
 def get_data(url):
-    #I couldn't get the BSoup functions to properly process the html, so I used manual divides.
-    #This will need to be checked the next time the DDay clock is updated to ensure it works.
-    #However, the non-JS version of the website seems fairly consistent in its updates.
-    #This happens around January of every year.
-    time = h.get(url).body().split("<h1>")[1].split("</h1>")[0].split(" - ")[1]
-    number = int(time.split(" ")[0])
-    unit = time.split(" ")[1]
-    c.set("number", str(number), 86400)
-    c.set("unit", unit, 86400)
-    return (number, unit)
+    response = h.get(url, ttl_seconds = 43200)
+    if response.status_code != 200 or len(response.body()) > 1024 * 1024:
+        return None
+    headings = html(response.body()).find("h2")
+    for i in range(min(headings.len(), 50)):
+        parts = headings.eq(i).text().strip().split()
+        for j in range(0, len(parts) - 3):
+            if not parts[j].isdigit() or parts[j + 1].lower() not in ["second", "seconds", "minute", "minutes"] or parts[j + 2].lower() != "to" or parts[j + 3].lower() != "midnight":
+                continue
+            number = int(parts[j])
+            unit = parts[j + 1].lower()
+            if unit.startswith("second") and number <= MAX_SECONDS:
+                return (number, "seconds")
+            if unit.startswith("minute") and number <= MAX_MINUTES:
+                return (number, "minutes")
+    return None
 
 #Allows you to determine UI colors
 def get_schema():

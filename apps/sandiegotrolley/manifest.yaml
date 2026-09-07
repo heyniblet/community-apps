@@ -7,7 +7,6 @@ author: Alex Serriere
 fileName: san_diego_trolley.star
 packageName: sandiegotrolley
 recommendedInterval: 5
-broken: true
 category: transit
 tags: []
 published: '2024-04-25T14:09:04Z'

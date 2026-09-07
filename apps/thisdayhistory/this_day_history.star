@@ -259,12 +259,7 @@ def get_schema():
                     ),
                 ],
             ),
-            schema.Generated(
-                id = "generated",
-                source = OPTDISPLANG,
-                handler = includeOptions,
-            ),
-        ],
+        ] + includeOptions(ENGLISH),
     )
 
 def includeOptions(language):

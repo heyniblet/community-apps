@@ -48,7 +48,10 @@ DISPLAY_Y_SIZE = 32
 
 HTTP_STATUS_OK = 200
 
-API_CACHE_TTL = 60 * 15  # seconds
+API_CACHE_TTL = 60 * 5  # seconds
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_SOURCE_EVENTS = 20000
+MAX_DISPLAY_EVENTS = 512
 
 EARTHQUAKES_LAST_30_DAYS_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
 
@@ -125,37 +128,45 @@ def get_usgs_data(magnitude_filter = None, time_filter = None, type_filter = Non
     time_filter = time.parse_duration("{}s".format(time_filter))
 
     api_reply = http.get(EARTHQUAKES_LAST_30_DAYS_URL, ttl_seconds = API_CACHE_TTL)
-    if api_reply.status_code == HTTP_STATUS_OK:
-        geojson_raw = api_reply.body()
-    else:
-        geojson_raw = '{"features":[]}'
+    geojson_raw = api_reply.body()
+    geojson = json.decode(geojson_raw, None) if api_reply.status_code == HTTP_STATUS_OK and geojson_raw and len(geojson_raw) <= MAX_RESPONSE_BYTES else None
+    geojson_events = geojson.get("features") if type(geojson) == "dict" else None
+    if type(geojson_events) != "list":
+        geojson_events = []
 
     events = []
 
     current_time = time.now().in_location("UTC")
-    geojson_events = json.decode(geojson_raw)["features"]
-    for event in geojson_events:
-        if event["properties"]["mag"] != None:
-            new_event = [
-                (
-                    float(event["geometry"]["coordinates"][0]),
-                    float(event["geometry"]["coordinates"][1]),
-                ),
-                float(event["properties"]["mag"]),
-                time.from_timestamp(int(event["properties"]["time"] // 1000)),  # convert from ms to seconds
-                event["properties"]["type"].lower(),
-            ]
+    for event in geojson_events[:MAX_SOURCE_EVENTS]:
+        properties = event.get("properties") if type(event) == "dict" else None
+        geometry = event.get("geometry") if type(event) == "dict" else None
+        coordinates = geometry.get("coordinates") if type(geometry) == "dict" else None
+        magnitude = properties.get("mag") if type(properties) == "dict" else None
+        event_time = properties.get("time") if type(properties) == "dict" else None
+        event_type = properties.get("type") if type(properties) == "dict" else None
+        if type(coordinates) != "list" or len(coordinates) < 2 or type(magnitude) not in ["int", "float"] or type(event_time) not in ["int", "float"] or type(event_type) != "string":
+            continue
+        longitude = coordinates[0]
+        latitude = coordinates[1]
+        if type(longitude) not in ["int", "float"] or type(latitude) not in ["int", "float"] or longitude < -180 or longitude > 180 or latitude < -85 or latitude > 85 or magnitude < 0 or event_time < 0 or event_time > (current_time.unix + 86400) * 1000:
+            continue
+        new_event = [
+            (float(longitude), float(latitude)),
+            float(magnitude),
+            time.from_timestamp(int(event_time // 1000)),  # convert from ms to seconds
+            event_type.lower()[:80],
+        ]
 
-            if new_event[1] >= magnitude_filter and \
-               current_time - new_event[2] <= time_filter and \
-               (
-                   type_filter == None or
-                   (type_filter["other"] and new_event[3] not in type_filter.keys()) or
-                   (new_event[3] in type_filter.keys() and type_filter[new_event[3]])
-               ):
-                events.append(new_event)
+        if new_event[1] >= magnitude_filter and \
+           current_time - new_event[2] <= time_filter and \
+           (
+               type_filter == None or
+               (type_filter["other"] and new_event[3] not in type_filter.keys()) or
+               (new_event[3] in type_filter.keys() and type_filter[new_event[3]])
+           ):
+            events.append(new_event)
 
-    return events
+    return events[:MAX_DISPLAY_EVENTS]
 
 def duration_calc(time_filter, units = None):
     """Convert a time for filtering to seconds.
@@ -294,7 +305,7 @@ def pixel(x, y, color, alpha = 1.0):
     This is based on the work of Tidbyt Discuss user kay where they developed
     some amazing spirte based demos for the Tidbyt:
 
-    https://discuss.tidbyt.com/t/animating-with-sprites/978
+    discuss.tidbyt.com/t/animating-with-sprites/978
 
     Note: If the color provided is suspected of having an alpha already defined,
     the value of the alpha parameter to the function is ignored.
@@ -326,7 +337,7 @@ def blink_pixel(x, y, color_on, color_off = "#000000FF"):
     This is based on the work of Tidbyt Discuss user kay where they developed
     some amazing spirte based demos for the Tidbyt:
 
-    https://discuss.tidbyt.com/t/animating-with-sprites/978
+    discuss.tidbyt.com/t/animating-with-sprites/978
 
     Note: If the color provided is suspected of having an alpha already defined,
     the value of the alpha parameter to the function is ignored.
@@ -363,12 +374,18 @@ def main(config):
 
     # Define configuration, use defaults if a configuration parameter can't be
     # found.
-    magnitude_filter = int(config.str("mag_filter", DEFAULT_MAG_FILTER))
+    magnitude_value = config.str("mag_filter", DEFAULT_MAG_FILTER)
+    magnitude_filter = int(magnitude_value) if magnitude_value in ["0", "1", "2", "3", "4", "5", "6", "7"] else int(DEFAULT_MAG_FILTER)
     magnitude_sorting = config.bool("magnitude_sorting", DEFAULT_MAGNITUDE_SORTING)
-    time_filter_duration = int(config.get("time_filter_duration", DEFAULT_TIME_FILTER_DURATION))
+    duration_value = str(config.get("time_filter_duration", DEFAULT_TIME_FILTER_DURATION)).strip()
+    time_filter_duration = min(2592000, max(1, int(duration_value))) if duration_value and len(duration_value) <= 7 and duration_value.isdigit() else int(DEFAULT_TIME_FILTER_DURATION)
     time_filter_units = config.get("time_filter_units", DEFAULT_TIME_FILTER_UNITS)
+    if time_filter_units not in ["seconds", "minutes", "hours", "days"]:
+        time_filter_units = DEFAULT_TIME_FILTER_UNITS
     hide_when_empty = config.bool("hide_when_empty", DEFAULT_HIDE_WHEN_EMPTY)
     map_center_id = config.str("map_center_id", DEFAULT_MAP_CENTER_ID)
+    if map_center_id not in ["Prime Meridian", "Date Line", "Tidbyt Location"]:
+        map_center_id = DEFAULT_MAP_CENTER_ID
     user_location = config.str("location", DEFAULT_USER_LOCATION)
     type_filter = {
         "earthquake": config.bool("include_earthquake", DEFAULT_INCLUDE_EARTHQUAKE),
@@ -377,17 +394,18 @@ def main(config):
         "explosion": config.bool("include_explosion", DEFAULT_INCLUDE_EXPLOSION),
         "other": config.bool("include_other", DEFAULT_INCLUDE_OTHER),
     }
-    map_brightness = float(config.get("map_brightness", DEFAULT_MAP_BRIGHTNESS))
+    brightness_value = str(config.get("map_brightness", DEFAULT_MAP_BRIGHTNESS))
+    map_brightness = float(brightness_value) if brightness_value in ["0.00", "0.05", "0.10", "0.15", "0.20", "0.25", "0.30", "0.35", "0.40", "0.45", "0.50", "0.55", "0.60", "0.65", "0.70", "0.75", "0.80", "0.85", "0.90", "0.95", "1.00"] else float(DEFAULT_MAP_BRIGHTNESS)
     show_latest_magnitude = config.bool("show_latest_magnitude", DEFAULT_SHOW_LATEST_MAGNITUDE)
 
-    time_filter = duration_calc(time_filter_duration, time_filter_units)
+    time_filter = min(duration_calc(30, "days"), duration_calc(time_filter_duration, time_filter_units))
 
     if map_center_id == "Prime Meridian":
         map_center = 0
     elif map_center_id == "Date Line":
         map_center = -180
     elif map_center_id == "Tidbyt Location":
-        map_center = int(float(json.decode(user_location)["lng"]))
+        map_center = safe_location_longitude(user_location)
     else:
         map_center = 0
 
@@ -442,6 +460,19 @@ def main(config):
         )
     else:
         return []
+
+def safe_location_longitude(value):
+    location = json.decode(value, None) if type(value) == "string" and len(value) <= 4096 else None
+    longitude = location.get("lng") if type(location) == "dict" else None
+    if type(longitude) in ["int", "float"]:
+        return int(max(-180, min(180, longitude)))
+    text = str(longitude or "").strip()
+    unsigned = text[1:] if text.startswith("-") or text.startswith("+") else text
+    parts = unsigned.split(".")
+    valid = len(parts) <= 2 and any([part for part in parts]) and all([not part or part.isdigit() for part in parts])
+    if not valid:
+        return 0
+    return int(max(-180, min(180, float(text))))
 
 def get_schema():
     """Provide the schema for the Tidbyt app configuration.
@@ -580,10 +611,11 @@ def get_schema():
                 ],
                 default = DEFAULT_MAP_CENTER_ID,
             ),
-            schema.Generated(
-                id = "location_option",
-                source = "map_center_id",
-                handler = schema_location,
+            schema.Location(
+                id = "location",
+                name = "Map Center Location",
+                desc = "Used only when Map Center is set to Tidbyt Location.",
+                icon = "locationDot",
             ),
             schema.Toggle(
                 id = "show_latest_magnitude",
@@ -595,25 +627,12 @@ def get_schema():
         ],
     )
 
-def schema_location(map_center_id):
-    if map_center_id == "Tidbyt Location":
-        return [
-            schema.Location(
-                id = "location",
-                name = "Location",
-                desc = "Location to select the map central meridian.",
-                icon = "locationDot",
-            ),
-        ]
-    else:
-        return []
-
 #------------------------------------------------------------------------------
 # Resources
 #------------------------------------------------------------------------------
 
 # Coastline Map generated from GeoJSON data found at:
-# https://github.com/simonepri/geo-maps/blob/master/info/earth-coastlines.md
+# github.com/simonepri/geo-maps/blob/master/info/earth-coastlines.md
 WORLD_MAP_ARRAY = [
     [0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1],
     [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1],

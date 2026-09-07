@@ -5,16 +5,27 @@ Description: Displays league tables for various football leagues.
 Author: plumbob86
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
-
-leagueCode = "ELC"
 
 RED = "#FFFFFF"
 WHITE = "#FF0000"
 GREEN = "#00FF00"
 PLAYOFF = "#008000"
+LEAGUES = {
+    "PL": [20, 0, 0, 3],
+    "ELC": [24, 2, 3, 3],
+    "FL1": [18, 0, 0, 3],
+    "BL1": [18, 0, 0, 3],
+    "SA": [20, 0, 0, 3],
+    "DED": [18, 0, 0, 3],
+    "PPL": [18, 0, 0, 3],
+    "PD": [20, 0, 0, 3],
+    "BSA": [20, 0, 0, 4],
+}
+MAX_RESPONSE_BYTES = 512 * 1024
 
 def is_square():
     """Branch on canvas SHAPE, not size: a 2x wide panel reports 128x64 and a
@@ -23,55 +34,31 @@ def is_square():
     return h == w
 
 def main(config):
-    relCount = 0
-    clubCount = 0
-    playCount = 0
-    proCount = 0
-
     leagueCode = config.get("league", "PL")
+    if leagueCode not in LEAGUES:
+        leagueCode = "PL"
+    clubCount, proCount, playCount, relCount = LEAGUES[leagueCode]
 
-    if (leagueCode == "PL"):
-        relCount = 3
-        clubCount = 20
-    elif (leagueCode == "ELC"):
-        proCount = 2
-        playCount = 3
-        relCount = 3
-        clubCount = 24
-    elif (leagueCode == "FL1"):
-        relCount = 3
-        clubCount = 18
-    elif (leagueCode == "BL1"):
-        relCount = 3
-        clubCount = 18
-    elif (leagueCode == "SA"):
-        relCount = 3
-        clubCount = 20
-    elif (leagueCode == "DED"):
-        relCount = 3
-        clubCount = 18
-    elif (leagueCode == "PPL"):
-        relCount = 3
-        clubCount = 18
-    elif (leagueCode == "PD"):
-        relCount = 3
-        clubCount = 20
-    elif (leagueCode == "BSA"):
-        relCount = 4
-        clubCount = 20
+    raw_api_key = config.get("api_key")
+    api_key = raw_api_key.strip() if type(raw_api_key) == "string" else ""
+    if not api_key or len(api_key) > 512:
+        return render.Root(child = render.WrappedText("Add football-data.org API key"))
 
-    TABLE_URL = "http://api.football-data.org/v4/competitions/" + leagueCode + "/standings"
-    header = {"X-Auth-Token": "65e34372b55c43178a93468a09dbcd17"}
-    rep = http.get(TABLE_URL, ttl_seconds = 1800, headers = header)  # cache for 30 minutes
-    if rep.status_code != 200:
-        fail("EPL Data request failed with status %d", rep.status_code)
-    table = rep.json()["standings"][0]["table"]
-
-    # for development purposes: check if result was served from cache or not
-    if rep.headers.get("Tidbyt-Cache-Status") == "HIT":
-        print("Hit! Displaying cached data.")
-    else:
-        print("Miss! Calling API.")
+    TABLE_URL = "https://api.football-data.org/v4/competitions/" + leagueCode + "/standings"
+    rep = http.get(TABLE_URL, headers = {"X-Auth-Token": api_key})
+    body = rep.body()
+    payload = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    standings = payload.get("standings") if type(payload) == "dict" else None
+    raw_table = standings[0].get("table") if type(standings) == "list" and standings and type(standings[0]) == "dict" else None
+    table = []
+    for row in raw_table[:clubCount] if type(raw_table) == "list" else []:
+        team = row.get("team") if type(row) == "dict" else None
+        tla = team.get("tla") if type(team) == "dict" else None
+        points = row.get("points") if type(row) == "dict" else None
+        if type(tla) == "string" and 1 <= len(tla) and len(tla) <= 8 and type(points) in ("int", "float"):
+            table.append({"team": {"tla": tla}, "points": int(points)})
+    if not table:
+        return render.Root(child = render.WrappedText("Standings unavailable"))
 
     # square panels fit eight 8px rows per page instead of four
     if is_square():
@@ -205,6 +192,13 @@ def get_schema():
                 icon = "addressCard",
                 default = options[0].value,
                 options = options,
+            ),
+            schema.Text(
+                id = "api_key",
+                name = "football-data.org API Key",
+                desc = "Your football-data.org API key",
+                icon = "key",
+                secret = True,
             ),
         ],
     )

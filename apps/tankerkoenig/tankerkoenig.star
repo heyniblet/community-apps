@@ -62,7 +62,7 @@ def format_text(text):
     return text.replace("ß", "ss").replace("ö", "oe").replace("ä", "ae").replace("ü", "ue").replace("Ö", "Oe").replace("Ä", "Ae").replace("Ü", "Ue")
 
 def get_relevant_stations(stations):
-    filtered = [s for s in stations if ("price" in s and s["price"])]
+    filtered = [s for s in stations if type(s) == "dict" and s.get("price") and s.get("street") and s.get("houseNumber")]
     sorted_l = sorted(filtered, key = lambda x: x["price"])
     relevants = sorted_l[:min(3, len(sorted_l))]
     out = []
@@ -122,11 +122,12 @@ def main(config):
         resp = http.get(
             url,
             headers = {"accept": "application/json"},
-            ttl_seconds = 300,
         )
+        if resp.status_code != 200:
+            return render.Root(render.WrappedText("API request failed"))
         data = resp.json()
-        if not "stations" in data:
-            return render.Root(render.WrappedText(data["message"]))
+        if type(data) != "dict" or type(data.get("stations")) != "list":
+            return render.Root(render.WrappedText("No station data"))
 
     results = get_relevant_stations(data["stations"])
     return render.Root(

@@ -5,20 +5,31 @@ Description: Shows random advice from AdviceSlip.com.
 Author: mrrobot245
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
+ADVICE_URL = "https://api.adviceslip.com/advice"
+SCROLL_SPEEDS = ["200", "150", "100", "60", "30"]
+MAX_RESPONSE_BYTES = 16 * 1024
+MAX_ADVICE_LENGTH = 500
+
 def main(config):
-    SCROLL_SPEED = config.str("scroll_speed", "60")
-    print("Calling Advice API.")
-    rep = http.get("https://api.adviceslip.com/advice", ttl_seconds = 120)
-    if rep.status_code != 200:
-        fail("Advice request failed with status:", rep.status_code)
-    rep = rep.json()
+    scroll_speed = config.str("scroll_speed", "100")
+    if scroll_speed not in SCROLL_SPEEDS:
+        scroll_speed = "100"
+
+    rep = http.get(ADVICE_URL, ttl_seconds = 300)
+    body = rep.body()
+    data = json.decode(body, None) if rep.status_code == 200 and len(body) <= MAX_RESPONSE_BYTES else {}
+    slip = data.get("slip") if type(data) == "dict" else None
+    advice = slip.get("advice") if type(slip) == "dict" else None
+    if type(advice) != "string" or not advice.strip():
+        advice = "Advice is unavailable right now."
 
     return render.Root(
-        delay = int(SCROLL_SPEED),
+        delay = int(scroll_speed),
         child = render.Column(
             children = [
                 render.Marquee(
@@ -32,7 +43,7 @@ def main(config):
                             children = [
                                 render.Padding(
                                     render.WrappedText(
-                                        content = rep["slip"]["advice"],
+                                        content = advice[:MAX_ADVICE_LENGTH],
                                         width = 60,
                                         color = "#fff",
                                     ),

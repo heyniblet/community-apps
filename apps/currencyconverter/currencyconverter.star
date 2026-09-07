@@ -5,8 +5,6 @@ Description: Displays current currency exchange rates.
 Author: Robert Ison
 """
 
-load("cache.star", "cache")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/aed_flag.webp", AED_FLAG = "file")
@@ -159,7 +157,6 @@ load("images/zwl_flag.webp", ZWL_FLAG = "file")
 load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 # Exchangerate-API.com Info
 
@@ -758,15 +755,15 @@ currencies = {
 def get_currency(currency_code):
     return currencies[currency_code]
 
-def get_currency_information(currency_url):
+def get_currency_information(currency_url, api_key):
     res = http.get(
         url = currency_url,
+        headers = {"Authorization": "Bearer " + api_key},
     )
 
-    if res.status_code == 200:
+    if res.status_code == 200 and len(res.body()) <= 512 * 1024:
         return res.json()
-    else:
-        return None
+    return None
 
 def get_appropriate_humanize_display(number):
     """ Gets the appropriate make with the right number of decimals
@@ -801,32 +798,29 @@ def main(config):
     Returns:
         Display to Tidbyt
     """
-    local_currency = config.get("local") or "usd"
-    foreign_currency = config.get("foreign") or "cad"
+    local_currency = (config.get("local") or "CAD").lower()
+    foreign_currency = (config.get("foreign") or "BIF").lower()
 
     key = config.get("api_key")
-    exchange_rate_url = "https://v6.exchangerate-api.com/v6/%s/latest/%s" % (key, local_currency.lower())
+    if not key or len(key) > 256 or local_currency not in currencies or foreign_currency not in currencies:
+        return render.Root(child = render.WrappedText("Set a valid API key and currencies", width = 64, align = "center", color = "#ff0000"))
 
-    exchange_data_encoded_json = cache.get(exchange_rate_url)
-    if exchange_data_encoded_json == None:
-        exchange_data_decoded_json = get_currency_information(exchange_rate_url)
+    exchange_rate_url = "https://v6.exchangerate-api.com/v6/latest/%s" % local_currency
+    exchange_data = get_currency_information(exchange_rate_url, key)
 
-        if exchange_data_decoded_json:
-            # calculate 5 minutes past the stated next update date to make sure it it'll be updated next time we call
-            cache_time = int(exchange_data_decoded_json["time_next_update_unix"]) - int(time.now().in_location("UTC").unix) + 300
-
-            cache.set(exchange_rate_url, json.encode(exchange_data_decoded_json), ttl_seconds = cache_time)
-    else:
-        exchange_data_decoded_json = json.decode(exchange_data_encoded_json)
-
-    if not exchange_data_decoded_json or "conversion_rates" not in exchange_data_decoded_json:
+    if not exchange_data or exchange_data.get("result") != "success" or type(exchange_data.get("conversion_rates")) != "dict" or foreign_currency.upper() not in exchange_data["conversion_rates"]:
         return render.Root(
             child = render.Box(
                 child = render.WrappedText("Error: Check API Key", width = 64, align = "center", color = "#ff0000"),
             ),
         )
 
-    foreign_currency_cost_in_local = float(exchange_data_decoded_json["conversion_rates"][foreign_currency.upper()])
+    rate = exchange_data["conversion_rates"][foreign_currency.upper()]
+    if type(rate) not in ["int", "float"]:
+        return render.Root(child = render.WrappedText("Exchange rate unavailable", width = 64, align = "center", color = "#ff0000"))
+    foreign_currency_cost_in_local = float(rate)
+    if foreign_currency_cost_in_local <= 0:
+        return render.Root(child = render.WrappedText("Exchange rate unavailable", width = 64, align = "center", color = "#ff0000"))
     local_currency_cost_in_foreign = float(math.pow(foreign_currency_cost_in_local, -1))
 
     return render.Root(

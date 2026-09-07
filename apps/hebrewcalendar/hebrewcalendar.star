@@ -784,12 +784,11 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Location(
                 id = "location",
                 name = "Location",
-                desc = "Start typing a city name to see matching options.",
+                desc = "Location used for Hebrew dates and Shabbat times.",
                 icon = "placeOfWorship",
-                handler = search_city,
             ),
             schema.Dropdown(
                 id = "havdalah_method",

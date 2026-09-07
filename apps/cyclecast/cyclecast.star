@@ -6,7 +6,6 @@ Author: Robert Ison
 """
 
 load("animation.star", "animation")
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/cloud_icon.png", CLOUD_ICON_ASSET = "file")
@@ -31,8 +30,6 @@ load("images/windsock_5.png", WINDSOCK_5_ASSET = "file")
 load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
-load("sunrise.star", "sunrise")
-load("time.star", "time")
 
 CLOUD_ICON = CLOUD_ICON_ASSET.readall()
 DIRECTIONAL_ARROW = DIRECTIONAL_ARROW_ASSET.readall()
@@ -41,10 +38,33 @@ RAIN_ICON = RAIN_ICON_ASSET.readall()
 SUN_ICON = SUN_ICON_ASSET.readall()
 WINDROSE_ICON = WINDROSE_ICON_ASSET.readall()
 
-SAMPLE_DATA = """{"latitude":28.375,"longitude":81.25,"generationtime_ms":0.091552734375,"utc_offset_seconds":-14400,"timezone":"America/New_York","timezone_abbreviation":"GMT-4","elevation":167.0,"hourly_units":{"time":"iso8601","temperature_2m":"°F","wind_speed_10m":"mp/h","rain":"mm","wind_gusts_10m":"mp/h","uv_index":"","showers":"mm","apparent_temperature":"°F","precipitation_probability":"%","relative_humidity_2m":"%","cloud_cover":"%"},"hourly":{"time":["2025-04-14T00:00","2025-04-14T01:00","2025-04-14T02:00","2025-04-14T03:00","2025-04-14T04:00","2025-04-14T05:00","2025-04-14T06:00","2025-04-14T07:00","2025-04-14T08:00","2025-04-14T09:00","2025-04-14T10:00","2025-04-14T11:00","2025-04-14T12:00","2025-04-14T13:00","2025-04-14T14:00","2025-04-14T15:00","2025-04-14T16:00","2025-04-14T17:00","2025-04-14T18:00","2025-04-14T19:00","2025-04-14T20:00","2025-04-14T21:00","2025-04-14T22:00","2025-04-14T23:00"],"temperature_2m":[84.8,87.9,90.7,93.1,94.6,95.1,94.7,93.4,91.5,87.2,83.9,82.0,79.0,77.8,76.9,76.2,75.6,75.0,74.4,74.2,73.8,74.4,78.6,83.2],"wind_speed_10m":[3.8,5.9,6.0,6.2,6.0,6.4,6.1,5.8,5.4,3.8,2.2,2.4,3.5,3.8,3.3,3.0,2.5,2.2,2.1,1.8,1.3,0.9,0.4,0.3],"rain":[0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00],"wind_gusts_10m":[9.2,12.8,13.2,13.6,13.2,13.6,13.6,12.8,12.1,10.7,6.9,3.8,6.0,6.9,6.7,5.8,5.1,4.0,3.8,3.6,2.7,1.8,1.6,2.0],"uv_index":[4.55,6.15,7.30,7.75,7.45,6.40,4.85,3.00,1.35,0.25,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.10,1.00,2.70],"showers":[0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00],"apparent_temperature":[88.4,92.0,95.6,97.3,97.9,97.4,95.4,93.7,92.0,89.2,86.9,85.2,81.9,80.5,80.0,79.7,79.2,78.8,78.3,78.3,78.4,79.5,84.5,88.3],"precipitation_probability":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"relative_humidity_2m":[47,41,37,32,29,28,29,31,33,41,47,51,57,59,62,64,65,67,68,70,72,72,66,53],"cloud_cover":[0,0,0,0,5,2,9,31,20,0,9,54,51,38,0,50,44,56,65,84,81,71,54,52]},"daily_units":{"time":"iso8601","sunrise":"iso8601","sunset":"iso8601"},"daily":{"time":["2025-04-14"],"sunrise":["2025-04-13T20:10"],"sunset":["2025-04-14T08:59"]}}"""
 DEFAULT_LOCATION = """{"lat": "28.53933",	"lng": "-81.38325",	"description": "Orlando, FL, USA",	"locality": "Orlando",	"place_id": "???",	"timezone": "America/New_York"}"""
-API_URL = "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&daily=sunrise,sunset&hourly=wind_direction_10m,temperature_2m,wind_speed_10m,rain,wind_gusts_10m,uv_index,showers,apparent_temperature,precipitation_probability,relative_humidity_2m,cloud_cover&timezone=%s&forecast_days=1&wind_speed_unit=mph&temperature_unit=fahrenheit"
-CACHE_NAME = "%s_%s_CycleCast_Cache_%s"
+API_URL = "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=wind_direction_10m,temperature_2m,wind_speed_10m,rain,wind_gusts_10m,uv_index,showers,apparent_temperature,precipitation_probability,relative_humidity_2m,cloud_cover,is_day&timezone=auto&wind_speed_unit=mph&temperature_unit=fahrenheit"
+WEATHER_BOUNDS = {
+    "temperature_2m": [-200, 200],
+    "apparent_temperature": [-200, 200],
+    "wind_speed_10m": [0, 500],
+    "wind_gusts_10m": [0, 500],
+    "wind_direction_10m": [0, 360],
+    "rain": [0, 1000],
+    "showers": [0, 1000],
+    "uv_index": [0, 100],
+    "precipitation_probability": [0, 100],
+    "relative_humidity_2m": [0, 100],
+    "cloud_cover": [0, 100],
+    "is_day": [0, 1],
+}
+CONDITION_UNITS = {
+    "temperature_2m": "°F",
+    "apparent_temperature": "°F",
+    "wind_speed_10m": "mp/h",
+    "wind_gusts_10m": "mp/h",
+    "rain": "mm",
+    "showers": "mm",
+    "precipitation_probability": "%",
+    "relative_humidity_2m": "%",
+    "cloud_cover": "%",
+}
 
 #Weather Icons
 
@@ -86,70 +106,29 @@ scroll_speed_options = [
 def round(num, precision):
     return math.round(num * math.pow(10, precision)) / math.pow(10, precision)
 
-def seconds_remaining_in_day(timezone):
-    # Get the current time
-    current_time = time.now().in_location(timezone)
+def get_weather_data(latitude, longitude):
+    local_api_url = API_URL % (latitude, longitude)
+    response = http.get(local_api_url, ttl_seconds = 900)
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return None
+    data = json.decode(response.body(), None)
+    current = data.get("current") if type(data) == "dict" else None
+    current_time = current.get("time") if type(current) == "dict" else None
+    if type(current_time) != "string" or len(current_time) != 16:
+        return None
+    for name, bounds in WEATHER_BOUNDS.items():
+        value = current.get(name)
+        if type(value) not in ["int", "float"] or value < bounds[0] or value > bounds[1]:
+            return None
+    return data
 
-    # Extract the hour, minute, and second components of the current time
-    hour = current_time.hour
-    minute = current_time.minute
-    second = current_time.second
-
-    # Calculate the seconds elapsed today
-    elapsed_seconds = hour * 3600 + minute * 60 + second
-
-    # Total seconds in a day (24 hours)
-    total_seconds_in_day = 86400
-
-    # Calculate the remaining seconds in the day
-    remaining_seconds = total_seconds_in_day - elapsed_seconds
-
-    return remaining_seconds
-
-def get_weather_data(latitude, longitude, timezone):
-    local_cache_name = CACHE_NAME % (latitude, longitude, timezone)
-    local_api_url = API_URL % (latitude, longitude, timezone)
-
-    local_weather_data = cache.get(local_cache_name)
-
-    # We need to make sure we don't keep this dataset past the end of the day, but we also want to clear it a little more often to
-    # get updated data. So we'll set a max cache in seconds
-    max_cache_in_seconds = 10800  #3 Hours
-
-    seconds_xml_valid_for = seconds_remaining_in_day(timezone)
-
-    if seconds_xml_valid_for > max_cache_in_seconds:
-        seconds_xml_valid_for = max_cache_in_seconds
-
-    if local_weather_data == None:
-        # print("New Data")
-        response = http.get(local_api_url, ttl_seconds = seconds_xml_valid_for)
-
-        if response.status_code != 200:
-            fail("request to %s failed with status code: %d - %s" % (local_api_url, response.status_code, response.body()))
-        else:
-            local_weather_data = response.json()
-            cache.set(local_cache_name, json.encode(local_weather_data), ttl_seconds = seconds_xml_valid_for)
-    else:
-        # print("From Cache")
-        local_weather_data = json.decode(local_weather_data)
-
-    return local_weather_data
-
-def get_two_digit_string(number):
-    if (number >= 10):
-        return number
-    else:
-        return "0%s" % number
-
-def get_current_condition(data, element, item_name, add_units = True):
+def get_current_condition(data, item_name, add_units = True):
+    value = data["current"][item_name]
     if add_units:
-        units = data["hourly_units"][item_name]
+        units = CONDITION_UNITS.get(item_name, "")
         display_tempate = "%s%s" if units == "mm" or units == "%" or units == "°F" else "%s %s"
-
-        return display_tempate % (data["hourly"][item_name][element], units)
-    else:
-        return data["hourly"][item_name][element]
+        return display_tempate % (value, units)
+    return value
 
 def to_hex(n):
     """Converts an integer (0-255) to a two-character hex string."""
@@ -390,8 +369,27 @@ def display_instructions(config):
             ],
         ),
         show_full_animation = True,
-        delay = int(config.get("scroll", 45)),
+        delay = int(config.get("scroll", "45")) if config.get("scroll", "45") in ["30", "45", "60"] else 45,
     )
+
+def render_error(message):
+    return render.Root(child = render.WrappedText(content = message, width = 64, align = "center", color = "#ff0"))
+
+def parse_coordinate(value, minimum, maximum):
+    text = str(value)
+    unsigned = text[1:] if text.startswith("-") else text
+    if not unsigned or len(text) > 20 or unsigned.count(".") > 1 or not unsigned.replace(".", "").isdigit():
+        return None
+    number = float(text)
+    return number if minimum <= number and number <= maximum else None
+
+def parse_location(raw):
+    location = json.decode(raw, None) if type(raw) == "string" else raw
+    if type(location) != "dict":
+        return None
+    latitude = parse_coordinate(location.get("lat"), -90, 90)
+    longitude = parse_coordinate(location.get("lng"), -180, 180)
+    return (latitude, longitude) if latitude != None and longitude != None else None
 
 def get_animated_windsock(wind, gusts):
     children = []
@@ -418,69 +416,60 @@ def main(config):
         return display_instructions(config)
 
     # Get location needed for local weather
-    location = json.decode(config.get("location", DEFAULT_LOCATION))
+    location = parse_location(config.get("location", DEFAULT_LOCATION))
+    if location == None:
+        return render_error("Configure a valid location")
+    exact_latitude, exact_longitude = location
 
     # Round lat and lng to 1 decimal to make data available to more people (within about 11km x 11km area) and to not give away our users position exactly
-    latitude = round(float(location["lat"]), 1)
-    longitude = round(float(location["lng"]), 1)
-    timezone = location["timezone"]
-    current_time = time.now().in_location(timezone)
+    latitude = round(exact_latitude, 1)
+    longitude = round(exact_longitude, 1)
+    local_data = get_weather_data(latitude, longitude)
+    if local_data == None:
+        return render_error("Weather unavailable")
 
-    # use the real lat and long to get a more accurate sunrise/sunet time. This info isn't shared with anyone but the user
-    sunrise_time = sunrise.sunrise(float(location["lat"]), float(location["lng"]), current_time).in_location(location["timezone"])
-    sunset_time = sunrise.sunset(float(location["lat"]), float(location["lng"]), current_time).in_location(location["timezone"])
-
-    #Dumb Down the current Time to work with the simpler time format of the API
-    simple_current_time = time.parse_time("%s-%s-%sT%s:%s" % (current_time.year, get_two_digit_string(current_time.month), get_two_digit_string(current_time.day), get_two_digit_string(current_time.hour), get_two_digit_string(current_time.minute)), format = "2006-01-02T15:04")
-    local_data = get_weather_data(latitude, longitude, timezone)
-
-    # Let's look for the closest entry in 'time' to pull out current conditions
-    hour_periods = local_data["hourly"]
-    closest_element_to_now = 0
-    smallest_difference = 24  #Just need to seed this with a high number (only 24 hours in a day)
-
-    # in the stored data, let's find the closest time period to now
-    for i in range(0, len(hour_periods["time"])):
-        time_difference = simple_current_time - time.parse_time(hour_periods["time"][i], format = "2006-01-02T15:04")
-        if abs(time_difference.hours) < smallest_difference:
-            smallest_difference = abs(time_difference.hours)
-            closest_element_to_now = i
+    local_date = local_data["current"]["time"][:10].split("-")
+    if len(local_date) != 3 or not all([part.isdigit() for part in local_date]):
+        return render_error("Invalid weather data")
+    current_year, current_month, current_day = [int(part) for part in local_date]
+    if current_year < 2000 or current_year > 2100 or current_month < 1 or current_month > 12 or current_day < 1 or current_day > 31:
+        return render_error("Invalid weather data")
 
     # based on the time period, pull out the current conditions
-    current_cloud_cover = get_current_condition(local_data, closest_element_to_now, "cloud_cover")
-    current_humidity = get_current_condition(local_data, closest_element_to_now, "relative_humidity_2m")
-    current_humidity_value = get_current_condition(local_data, closest_element_to_now, "relative_humidity_2m", False)
-    current_probability_precipitation = get_current_condition(local_data, closest_element_to_now, "precipitation_probability")
-    current_temperature = get_current_condition(local_data, closest_element_to_now, "temperature_2m")
-    current_temperature_value = get_current_condition(local_data, closest_element_to_now, "temperature_2m", False)
-    current_apparent_temperature = get_current_condition(local_data, closest_element_to_now, "apparent_temperature")
-    current_showers = get_current_condition(local_data, closest_element_to_now, "showers")
-    current_uv_index = get_current_condition(local_data, closest_element_to_now, "uv_index", False)
-    current_wind_gusts = get_current_condition(local_data, closest_element_to_now, "wind_gusts_10m")
-    current_wind_gusts_value = get_current_condition(local_data, closest_element_to_now, "wind_gusts_10m", False)
-    current_wind = get_current_condition(local_data, closest_element_to_now, "wind_speed_10m")
-    current_wind_value = get_current_condition(local_data, closest_element_to_now, "wind_speed_10m", False)
+    current_cloud_cover = get_current_condition(local_data, "cloud_cover")
+    current_humidity = get_current_condition(local_data, "relative_humidity_2m")
+    current_humidity_value = get_current_condition(local_data, "relative_humidity_2m", False)
+    current_probability_precipitation = get_current_condition(local_data, "precipitation_probability")
+    current_temperature = get_current_condition(local_data, "temperature_2m")
+    current_temperature_value = get_current_condition(local_data, "temperature_2m", False)
+    current_apparent_temperature = get_current_condition(local_data, "apparent_temperature")
+    current_showers = get_current_condition(local_data, "showers")
+    current_uv_index = get_current_condition(local_data, "uv_index", False)
+    current_wind_gusts = get_current_condition(local_data, "wind_gusts_10m")
+    current_wind_gusts_value = get_current_condition(local_data, "wind_gusts_10m", False)
+    current_wind = get_current_condition(local_data, "wind_speed_10m")
+    current_wind_value = get_current_condition(local_data, "wind_speed_10m", False)
 
     # current_rain = get_current_condition(local_data, closest_element_to_now, "rain")
-    current_wind_direction = get_current_condition(local_data, closest_element_to_now, "wind_direction_10m", False)
+    current_wind_direction = get_current_condition(local_data, "wind_direction_10m", False)
 
     message = "It is %s but feels like %s with cloud cover of %s and humidity of %s. The probability of precipitation is %s, expect %s of rain. The UV index is %s (%s) with winds from the %s at %s gusting to %s." % (current_temperature, current_apparent_temperature, current_cloud_cover, current_humidity, current_probability_precipitation, current_showers, current_uv_index, get_uv_index_category(current_uv_index), get_cardinal_position_from_degrees(current_wind_direction), current_wind, current_wind_gusts)
 
     display_items = []
     show_info_bar = config.bool("show_info_bar", False)
 
-    if current_time > sunrise_time and current_time < sunset_time:
+    if get_current_condition(local_data, "is_day", False) == 1:
         # print("Daytime")
         display_items.append(render.Box(width = 64, height = 26 if show_info_bar else 32, color = "#004764"))
         display_items.append(add_padding_to_child_element(render.Image(src = SUN_ICON), 48))
     else:
         # print("NightTime")
-        display_items.append(add_padding_to_child_element(render.Image(src = MOON_ICONS[str(moon_phase(current_time.year, current_time.month, current_time.day, False))]), 43, -2))
+        display_items.append(add_padding_to_child_element(render.Image(src = MOON_ICONS[str(moon_phase(current_year, current_month, current_day, False))]), 43, -2))
 
     #Display Rain if Raining
-    if get_current_condition(local_data, closest_element_to_now, "rain", False) > 0:
+    if get_current_condition(local_data, "rain", False) > 0:
         display_items.append(add_padding_to_child_element(render.Image(src = RAIN_ICON), 40, 6))
-    elif get_current_condition(local_data, closest_element_to_now, "cloud_cover", False) > 15:
+    elif get_current_condition(local_data, "cloud_cover", False) > 15:
         display_items.append(add_padding_to_child_element(render.Image(src = CLOUD_ICON), 40, 6))
 
     # Display The Windsock
@@ -496,7 +485,7 @@ def main(config):
         display_items.append(add_padding_to_child_element(render.Image(src = FLAG_BASE), 0, 24))
 
     # Wind Direction
-    if (get_current_condition(local_data, closest_element_to_now, "wind_speed_10m", False) > 0):
+    if (get_current_condition(local_data, "wind_speed_10m", False) > 0):
         display_items.append(add_padding_to_child_element(render.Image(src = WINDROSE_ICON), 16, 6 + height_offset))
         display_items.append(add_padding_to_child_element(get_wind_rose_display(current_wind_direction), 16, 6 + height_offset))
 
@@ -532,7 +521,7 @@ def main(config):
             children = display_items,
         ),
         show_full_animation = True,
-        delay = int(config.get("scroll", 45)),
+        delay = int(config.get("scroll", "45")) if config.get("scroll", "45") in ["30", "45", "60"] else 45,
     )
 
 def get_schema():

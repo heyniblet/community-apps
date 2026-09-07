@@ -6,6 +6,7 @@ Author: Nicole Brooks
 """
 
 load("background.webp", BACKGROUND = "file")
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("random.star", "random")
 load("render.star", "canvas", "render")
@@ -15,6 +16,7 @@ ALL_POKEMON = 1000
 CLASSIC_POKEMON = 386
 POKEAPI_URL = "https://pokeapi.co/api/v2/pokemon/{}"
 IMGIX_URL = "https://pokesprites.imgix.net/{}.png?bri=-100"
+SPRITE_URL = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{}.png"
 CACHE_TTL_SECONDS = 3600 * 24 * 7  # 7 days in seconds.
 
 LANGUAGE_OPTIONS = [
@@ -29,8 +31,6 @@ LANGUAGE_OPTIONS = [
 ]
 
 def main(config):
-    print("Let's play...WHO'S. THAT. POKEMON?!")
-
     scale = 2 if canvas.is2x() else 1
     allPokemon = howManyPokemon(config)
     chosenId = random.number(1, allPokemon)
@@ -40,12 +40,10 @@ def main(config):
     if pokemon == None:
         return []
 
-    sprite_url = pokemon["sprites"]["front_default"]
-
     # Variables that will be used by the render.
     language = config.get("language", "en")
     name = getLocalizedName(pokemon, language)
-    revealedImage = getImage(sprite_url)
+    revealedImage = getImage(SPRITE_URL.format(chosenId))
     silhouette = getImage(IMGIX_URL.format(chosenId))
 
     # If something went wrong with the API, skip the app completely.
@@ -53,8 +51,6 @@ def main(config):
         return []
 
     frames = compileFrames(name, silhouette, revealedImage, speed, scale)
-    print("The game is afoot. The secret Pokemon is: " + name)
-
     return render.Root(
         delay = 40 // scale,
         show_full_animation = True,
@@ -75,37 +71,40 @@ def main(config):
 def getPokemon(id):
     url = POKEAPI_URL.format(id)
     res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        print("ERROR: " + str(res.status_code))
+    body = res.body()
+    data = json.decode(body, {}) if res.status_code == 200 and body and len(body) <= 256 * 1024 else {}
+    if type(data) != "dict" or type(data.get("name")) != "string" or type(data.get("species")) != "dict":
         return None
-
-    return res.json()
+    return data
 
 # Gets the species data from a species URL.
 def getSpecies(url):
-    res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        print("ERROR (species): " + str(res.status_code))
+    if type(url) != "string" or not url.startswith("https://pokeapi.co/api/v2/pokemon-species/"):
         return None
-
-    return res.json()
+    res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = res.body()
+    data = json.decode(body, {}) if res.status_code == 200 and body and len(body) <= 512 * 1024 else {}
+    if type(data) != "dict":
+        return None
+    return data
 
 # Returns the Pokemon name in the requested language.
 # Falls back to the English name from the pokemon endpoint when the species
 # lookup fails or the requested language is missing.
 def getLocalizedName(pokemon, language):
-    englishName = formatName(pokemon["name"])
+    englishName = formatName(pokemon.get("name", "Pokemon"))
     if language == "en":
         return englishName
 
-    speciesUrl = pokemon["species"]["url"]
+    speciesUrl = pokemon.get("species", {}).get("url", "")
     species = getSpecies(speciesUrl)
     if species == None:
         return englishName
 
-    for entry in species.get("names", []):
-        if entry["language"]["name"] == language:
-            return entry["name"]
+    names = species.get("names", [])
+    for entry in names[:100] if type(names) == "list" else []:
+        if type(entry) == "dict" and type(entry.get("language")) == "dict" and entry["language"].get("name") == language and type(entry.get("name")) == "string":
+            return entry["name"][:80]
 
     return englishName
 
@@ -126,12 +125,14 @@ def formatName(name):
 # Gets requested image
 # Returns image encoded and ready for use.
 def getImage(url):
-    res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
-    if res.status_code != 200:
-        print("Failed to pull pokemon image: " + str(res.status_code))
+    allowed = ["https://raw.githubusercontent.com/PokeAPI/sprites/", "https://pokesprites.imgix.net/"]
+    if type(url) != "string" or not any([url.startswith(origin) for origin in allowed]):
         return None
-
-    return res.body()
+    res = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > 2 * 1024 * 1024 or not res.headers.get("Content-Type", "").lower().startswith("image/"):
+        return None
+    return body
 
 # Returns the number of pokemon to pull from.
 def howManyPokemon(config):

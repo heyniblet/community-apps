@@ -27,20 +27,32 @@ GREEN = "00FF00"
 SAMPLE_JOB = {"job": {"averagePrintTime": None, "estimatedPrintTime": 22088.326056899437, "filament": {"tool0": {"length": 10523.5380859375, "volume": 25.312075423236383}}, "file": {"date": "1.689012611e + 0o9", "display": "benchy.gcode", "name": "benchy.gcode", "origin": "local", "path": "myfiles/gcode/benchy.gcode", "size": "1.5659901e + 0o7"}, "lastPrintTime": None, "user": "admin"}, "progress": {"filepos": "3.824944e + 0o6", "printTime": 6523.0, "printTimeLeft": 16016.0, "printTimeLeftOrigin": "genius", "completion": 24.42508416879519}, "state": "Printing"}
 SAMPLE_PRINTER = {"sd": {"ready": False}, "state": {"error": "", "flags": {"printing": True, "ready": False, "sdReady": False, "resuming": False, "cancelling": False, "closedOrError": False, "error": False, "finishing": False, "operational": True, "paused": False, "pausing": False}, "text": "Printing"}, "temperature": {"W": {"actual": 0.0, "offset": 0.0, "target": None}, "bed": {"actual": 60.02, "offset": 0.0, "target": 60.0}, "tool0": {"actual": 199.81, "offset": 0.0, "target": 200.0}}}
 
-def request(endpoint, serverIP, serverPort, apiKey):
-    url = "http://%s:%s%s" % (serverIP, serverPort, endpoint)
+def request(endpoint, serverURL, apiKey):
+    url = serverURL + endpoint
     res = http.get(url, headers = {"X-API-Key": apiKey}, ttl_seconds = REFRESH_TIME)
     if res.status_code != 200:
-        print("GET %s failed: %d %s" % (url, res.status_code, res.body()))
         return None, res.status_code
+    body = res.body()
+    if not body or len(body) > 2097152:
+        return None, 502
     return res.json(), res.status_code
 
-def requestSnapshot(snapshotURL):
+def requestSnapshot(snapshotURL, serverURL):
+    if snapshotURL.startswith("/"):
+        snapshotURL = serverURL + snapshotURL
+    if not snapshotURL.startswith(serverURL + "/"):
+        return None
     res = http.get(snapshotURL)
     if res.status_code != 200:
-        print("GET %s failed: %d" % (snapshotURL, res.status_code))
         return None
-    return res.body()
+    body = res.body()
+    return body if body and len(body) <= 2097152 else None
+
+def normalize_server_url(value):
+    value = value.strip().rstrip("/")
+    if not value.startswith("https://") or len(value) > 512 or "@" in value or "?" in value or "#" in value:
+        return None
+    return value
 
 def render_error(message):
     return render.Root(
@@ -183,30 +195,29 @@ def main(config):
     name = None
     printTimeLeft = None
     completion = None
-    serverIP = config.str("serverIP")
-    serverPort = config.str("serverPort", "5000")
-    apiKey = config.str("apiKey")
-    showSnapshot = config.bool("showSnapshot")
+    serverURL = normalize_server_url(config.str("serverIP", ""))
+    apiKey = config.str("apiKey", "")
+    showSnapshot = config.bool("showSnapshot", False)
 
-    if not serverIP or not apiKey:
+    if not serverURL or not apiKey:
         # use sample data
         job = SAMPLE_JOB
         printer = SAMPLE_PRINTER
     else:
-        job, job_status = request("/api/job", serverIP, serverPort, apiKey)
+        job, job_status = request("/api/job", serverURL, apiKey)
         if job == None:
             print("job unavailable (%s)" % job_status)
             if job_status == 403:
                 return render_error("Permissions error")
-            return []
+            return render_error("Server unavailable")
 
         # 409 is OctoPrint's normal response when the printer is disconnected
-        printer, printer_status = request("/api/printer", serverIP, serverPort, apiKey)
+        printer, printer_status = request("/api/printer", serverURL, apiKey)
         if printer == None:
             print("printer unavailable (%s), skipping render" % printer_status)
             if printer_status == 403:
                 return render_error("Permissions error")
-            return []
+            return render_error("Server unavailable")
 
     progress = job.get("progress") or {}
     file_info = job_file(job)
@@ -221,27 +232,28 @@ def main(config):
 
     bed = None
     tool = None
-    state = printer["state"]["text"]
+    printer_state = printer.get("state", {}) if type(printer) == "dict" else {}
+    state = printer_state.get("text", "Unknown") if type(printer_state) == "dict" else "Unknown"
     stateColor = WHITE
     temps = printer.get("temperature") or {}
     if temps.get("bed") and temps["bed"].get("actual") != None:
         bed = int(temps["bed"]["actual"])
     if temps.get("tool0") and temps["tool0"].get("actual") != None:
         tool = int(temps["tool0"]["actual"])
-    flags = printer["state"]["flags"]
-    if flags["closedOrError"] or flags["error"] or flags["cancelling"]:
+    flags = printer_state.get("flags", {}) if type(printer_state) == "dict" else {}
+    if flags.get("closedOrError") or flags.get("error") or flags.get("cancelling"):
         stateColor = RED
-    if flags["printing"] or flags["finishing"]:
+    if flags.get("printing") or flags.get("finishing"):
         stateColor = GREEN
 
     snapshotURL = None
     snapshot = None
-    if serverIP and showSnapshot:
-        settings, _ = request("/api/settings", serverIP, serverPort, apiKey)
+    if serverURL and showSnapshot:
+        settings, _ = request("/api/settings", serverURL, apiKey)
         if settings:
             snapshotURL = (settings.get("webcam") or {}).get("snapshotUrl")
     if snapshotURL:
-        snapshot = requestSnapshot(snapshotURL)
+        snapshot = requestSnapshot(snapshotURL, serverURL)
 
     overlay_children = []
     if tool != None:
@@ -368,14 +380,14 @@ def get_schema():
         fields = [
             schema.Text(
                 id = "serverIP",
-                name = "Server IP",
-                desc = "Make sure to use the public IP",
+                name = "OctoPrint HTTPS URL",
+                desc = "Public HTTPS URL on port 443, for example https://octoprint.example.com",
                 icon = "gear",
             ),
             schema.Text(
                 id = "serverPort",
-                name = "Server Port",
-                desc = "Make sure to port forward your octoprint port",
+                name = "Legacy Server Port",
+                desc = "Retained for existing configurations; new setups use HTTPS port 443.",
                 icon = "gear",
             ),
             schema.Text(

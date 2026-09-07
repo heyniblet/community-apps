@@ -70,16 +70,25 @@ DEFAULT_FONT_HEIGHT = FONT_HEIGHTS.get(DEFAULT_FONT, 5)
 DEFAULT_CHAR_WIDTH = APPROX_CHAR_WIDTHS.get(DEFAULT_FONT, 4)
 DEFAULT_IMAGE_SIZE = "32"
 DEFAULT_DELAY = "1500"
+MAX_DATA_BYTES = 256 * 1024
+MAX_IMAGE_BYTES = 64 * 1024
 
 def date_to_int(date_str):
     """Converts YYYY-MM-DD string to YYYYMMDD integer."""
     parts = date_str.split("-")
-    if len(parts) != 3:
-        fail("Invalid date format: %s" % date_str)
+    if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit() or not parts[2].isdigit():
+        return None
     y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
     if m < 1 or m > 12 or d < 1 or d > 31:
-        fail("Invalid date components: %s" % date_str)
+        return None
     return y * 10000 + m * 100 + d
+
+def bounded_int(value, default, minimum, maximum):
+    value = str(value or "")
+    if not value.isdigit():
+        return default
+    value = int(value)
+    return value if minimum <= value and value <= maximum else default
 
 def format_date_mm_dd_yy(date_str):
     """Converts YYYY-MM-DD string to MM DD YY string."""
@@ -122,8 +131,8 @@ def main(config):
     location_json_str = config.get("timezone")
     timezone_id = "America/Dallas"  # Default timezone
     if location_json_str:
-        location_data = json.decode(location_json_str)
-        if location_data and "timezone" in location_data and location_data["timezone"]:
+        location_data = json.decode(location_json_str, None)
+        if type(location_data) == "dict" and location_data.get("timezone"):
             timezone_id = location_data["timezone"]
 
     now = time.now(location = timezone_id)
@@ -141,8 +150,10 @@ def main(config):
     current_date_str = current_year + "-" + month_str + "-" + day_str
     current_date_int = date_to_int(current_date_str)
 
-    # --- Font selection (REVERTED: Hardcoded default, ignores config) ---
-    selected_font = DEFAULT_FONT
+    # --- Font selection ---
+    selected_font = config.get("font", DEFAULT_FONT)
+    if selected_font not in AVAILABLE_FONTS:
+        selected_font = DEFAULT_FONT
     font_height = FONT_HEIGHTS.get(selected_font, DEFAULT_FONT_HEIGHT)
     char_width = APPROX_CHAR_WIDTHS.get(selected_font, DEFAULT_CHAR_WIDTH)
 
@@ -151,10 +162,11 @@ def main(config):
     selected_size = int(selected_size_str)
 
     # --- Data Fetching ---
-    rep = http.get(url = JSON_URL, ttl_seconds = 86400)  # Cache for 24 hours
-    if rep.status_code != 200:
-        fail("Failed fetch '%s'. Code: %d" % (JSON_URL, rep.status_code))
-    all_data = json.decode(rep.body())
+    rep = http.get(url = JSON_URL, ttl_seconds = 604800)
+    body = rep.body()
+    all_data = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_DATA_BYTES else None
+    if type(all_data) != "dict":
+        return render.Root(child = render.WrappedText("Retrograde data unavailable", width = 64, align = "center"))
 
     # --- Main Processing ---
     frames = []
@@ -173,18 +185,18 @@ def main(config):
         # Extract periods for search years
         for year in search_years:
             year_data = all_data.get(year, {})
+            if type(year_data) != "dict":
+                continue
             planet_data = year_data.get(planet["name"])
-            if planet_data != None:
-                planet_periods.extend(planet_data)
+            if type(planet_data) == "list":
+                planet_periods.extend(planet_data[:64])
 
         # Clean and sort periods
         period_tuples = []
         for p in planet_periods:
-            if len(p) == 2 and type(p[0]) == "string" and type(p[1]) == "string":
+            if type(p) == "list" and len(p) == 2 and type(p[0]) == "string" and type(p[1]) == "string" and date_to_int(p[0]) != None and date_to_int(p[1]) != None:
                 start_int = date_to_int(p[0])
                 period_tuples.append((start_int, p[0], p[1]))
-            else:
-                print("Skipping malformed period data:", p)
 
         # Bubble Sort
         n = len(period_tuples)
@@ -264,19 +276,13 @@ def main(config):
         image_filename = "%s_%sx%s.base64" % (planet["name"].lower(), selected_size_str, selected_size_str)
         image_url = IMAGE_BASE_URL + image_filename
         image_widget = render.Box(width = selected_size, height = selected_size, color = "#FFBF00")  # Orange placeholder on error
-        img_rep = http.get(url = image_url, ttl_seconds = 86400)
+        img_rep = http.get(url = image_url, ttl_seconds = 2592000)
         if img_rep.status_code == 200:
             fetched_base64_data = img_rep.body()
-            if fetched_base64_data:
+            if fetched_base64_data and len(fetched_base64_data) <= MAX_IMAGE_BYTES:
                 image_data = base64.decode(fetched_base64_data)
                 if image_data:
                     image_widget = render.Image(src = image_data)
-                else:
-                    print("Failed base64 decode for %s size %s" % (planet["name"], selected_size_str))
-            else:
-                print("Empty image body for %s size %s" % (planet["name"], selected_size_str))
-        else:
-            print("Failed image fetch for %s size %s (%s). Status: %d" % (planet["name"], selected_size_str, image_url, img_rep.status_code))
 
         # --- Calculate Padding ---
         img_x = 64 - selected_size
@@ -322,7 +328,7 @@ def main(config):
     # Return Animation
     return render.Root(
         show_full_animation = True,
-        delay = int(config.get("scroll", DEFAULT_DELAY)),
+        delay = bounded_int(config.get("scroll", DEFAULT_DELAY), int(DEFAULT_DELAY), 100, 10000),
         child = render.Animation(children = frames),
     )
 

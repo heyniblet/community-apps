@@ -1,7 +1,7 @@
 """
 Applet: Near Earth Objs
 Summary: Show next near earth object
-Description: Displays the name, speed, distance, and arrival of the next near Earth object from NeoWs.
+Description: Displays the name, speed, distance, and arrival of the next near Earth object.
 Author: noahcolvin
 """
 
@@ -12,15 +12,14 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 IMAGE = IMAGE_ASSET.readall()
+URL = "https://ssd-api.jpl.nasa.gov/cad.api?date-min=now&date-max=%2B7&dist-max=0.2&sort=date&limit=50&fullname=true"
+AU_KM = 149597870.7
+KM_TO_MILES = 0.621371
 
-URL = "https://www.neowsapp.com/rest/v1/feed?detailed=false&start_date={}"
-CACHE_KEY = "neos"
-
-# taken from https://pixabay.com/illustrations/planetarium-comet-falling-star-5636947/
+# Image derived from Pixabay asset 5636947.
 
 def main(config):
     metric = config.bool("metric") or False
-
     closest = get_soonest_neo()
 
     if closest == None:
@@ -30,15 +29,8 @@ def main(config):
                 cross_align = "center",
                 expanded = True,
                 children = [
-                    render.Image(
-                        src = IMAGE,
-                        width = 15,
-                        height = 10,
-                    ),
-                    render.WrappedText(
-                        content = "No objects found... pfew!",
-                        font = "5x8",
-                    ),
+                    render.Image(src = IMAGE, width = 15, height = 10),
+                    render.WrappedText(content = "No objects found... phew!", font = "5x8"),
                 ],
             ),
         )
@@ -49,10 +41,7 @@ def main(config):
             main_align = "space_evenly",
             children = [
                 render.Marquee(
-                    child = render.Text(
-                        content = closest["name"],
-                        font = "tb-8",
-                    ),
+                    child = render.Text(content = closest["name"], font = "tb-8"),
                     width = 64,
                     scroll_direction = "horizontal",
                 ),
@@ -61,35 +50,18 @@ def main(config):
                     cross_align = "center",
                     expanded = True,
                     children = [
-                        render.Image(
-                            src = IMAGE,
-                            width = 15,
-                            height = 10,
-                        ),
-                        render.Text(
-                            content = str(neo_relative_time(closest)),
-                            font = "tb-8",
-                        ),
+                        render.Image(src = IMAGE, width = 15, height = 10),
+                        render.Text(content = str(neo_relative_time(closest)), font = "tb-8"),
                     ],
                 ),
                 render.Marquee(
                     child = render.Row(
                         main_align = "start",
                         cross_align = "center",
-                        expanded = False,
                         children = [
-                            render.Text(
-                                content = neo_distance(closest, metric),
-                                font = "tb-8",
-                            ),
-                            render.Text(
-                                content = " @ ",
-                                font = "tb-8",
-                            ),
-                            render.Text(
-                                content = neo_speed(closest, metric),
-                                font = "tb-8",
-                            ),
+                            render.Text(content = neo_distance(closest, metric), font = "tb-8"),
+                            render.Text(content = " @ ", font = "tb-8"),
+                            render.Text(content = neo_speed(closest, metric), font = "tb-8"),
                         ],
                     ),
                     width = 64,
@@ -114,105 +86,67 @@ def get_schema():
     )
 
 def get_soonest_neo():
-    data = get_data()
-
-    if data["element_count"] < 1:
-        print("No near earth objects")
-        return None
-
-    dates = data["near_earth_objects"]
-    next = find_soonest_starting(dates, time.now())
-
-    return next
-
-def get_data():
-    url = URL.format(format_date_padded(time.now()))
-    print("fetching {}".format(url))
-    resp = http.get(url, ttl_seconds = 43200)
-
+    resp = http.get(URL, ttl_seconds = 3600)
     if resp.status_code != 200:
-        print("request failed with status {}".format(resp.status_code))
         return None
-    print("success")
-    data = resp.json()
+    payload = resp.json()
+    if type(payload) != "dict" or type(payload.get("signature")) != "dict":
+        return None
+    if payload["signature"].get("version") != "1.5":
+        return None
+    fields = payload.get("fields")
+    rows = payload.get("data")
+    if type(fields) != "list" or type(rows) != "list" or len(rows) == 0 or type(rows[0]) != "list":
+        return None
 
-    return data
-
-def find_soonest_starting(neos, date):
-    soonest = None
-
-    one_day = time.parse_duration("24h")
-    for day in range(8):
-        date = date + one_day * day
-        formatted_date = format_date_padded(date)
-        if formatted_date in neos:
-            soonest = find_next_from_now(neos[formatted_date])
-        if soonest != None:
-            break
-
-    return soonest
-
-def find_next_from_now(neos):
+    positions = {field: index for index, field in enumerate(fields)}
+    required = ["des", "cd", "dist", "v_rel"]
+    if len([field for field in required if field not in positions]) > 0:
+        return None
     now = time.now().unix
-
-    soonest_neo = None
-    for neo in neos:
-        if neo_unix_date(neo) < now:
-            continue  #skip passed times
-
-        if soonest_neo == None:  #assume first is closest
-            soonest_neo = neo
+    for row in rows:
+        if type(row) != "list" or len(row) != len(fields):
             continue
-
-        if neo_unix_date(neo) < neo_unix_date(soonest_neo):
-            soonest_neo = neo
-        break
-
-    return soonest_neo
+        name = row[positions["fullname"]] if "fullname" in positions else row[positions["des"]]
+        values = [name, row[positions["cd"]], row[positions["dist"]], row[positions["v_rel"]]]
+        if len([value for value in values if type(value) != "string" or value.strip() == ""]) > 0:
+            continue
+        approach = time.parse_time(row[positions["cd"]], "2006-Jan-02 15:04", "UTC").unix
+        if approach < now:
+            continue
+        return {
+            "name": name.strip(),
+            "approach": approach,
+            "distance_au": float(row[positions["dist"]]),
+            "speed_km_s": float(row[positions["v_rel"]]),
+        }
+    return None
 
 def neo_speed(neo, metric):
-    speed = format_number(int(float(neo["close_approach_data"][0]["relative_velocity"]["kilometers_per_hour" if metric else "miles_per_hour"])))
-    return "{} {}".format(speed, "km/h" if metric else "mph")
+    speed = neo["speed_km_s"] * 3600
+    if not metric:
+        speed = speed * KM_TO_MILES
+    return "{} {}".format(format_number(int(speed)), "km/h" if metric else "mph")
 
 def neo_distance(neo, metric):
-    distance = format_number(int(float(neo["close_approach_data"][0]["miss_distance"]["kilometers" if metric else "miles"])))
-    return "{} {}".format(distance, "km" if metric else "miles")
+    distance = neo["distance_au"] * AU_KM
+    if not metric:
+        distance = distance * KM_TO_MILES
+    return "{} {}".format(format_number(int(distance)), "km" if metric else "miles")
 
 def neo_relative_time(neo):
-    now = time.from_timestamp(time.now().unix)  # kills fractions of a second
-    neo_time = time.from_timestamp(neo_unix_date(neo))
-
-    diff = neo_time - now
-
-    return diff
-
-def neo_unix_date(neo):
-    return convert_unix_to_seconds(neo["close_approach_data"][0]["epoch_date_close_approach"])
-
-def convert_unix_to_seconds(time):
-    return int(time / 1000)
-
-def format_date_padded(date):
-    return "{}-{}-{}".format(date.year, pad_if_needed(date.month), pad_if_needed(date.day))
-
-def pad_if_needed(number):
-    if len(str(number)) == 1:
-        return "0{}".format(number)
-    return number
+    return time.from_timestamp(neo["approach"]) - time.from_timestamp(time.now().unix)
 
 def format_number(number):
-    num = str(number)
-    if len(num) < 4:
-        return num
-
+    digits = str(number)
+    if len(digits) < 4:
+        return digits
     count = 0
     result = ""
-    for n in reversed(num.elems()):
-        result = n + result
-        count = count + 1
-
+    for digit in reversed(digits.elems()):
+        result = digit + result
+        count += 1
         if count == 3:
             result = "," + result
             count = 0
-
     return result.strip(",")

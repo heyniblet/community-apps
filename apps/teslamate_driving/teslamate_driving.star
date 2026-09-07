@@ -22,35 +22,8 @@ def fetch_ha_data(
         route_time_entity,
         traffic_delay_entity,
         trip_total_entity,
-        trip_progress_entity,
-        cache_duration):
+        trip_progress_entity):
     """Fetch Tesla data from Home Assistant REST API using template endpoint for efficiency"""
-
-    def pretty_json(value, indent = "  ", level = 0):
-        value_type = type(value)
-        if value_type == "dict":
-            keys = sorted(value.keys())
-            if len(keys) == 0:
-                return "{}"
-            rendered = []
-            for key in keys:
-                rendered.append(
-                    "%s%s: %s" % (
-                        indent * (level + 1),
-                        json.encode(key),
-                        pretty_json(value[key], indent, level + 1),
-                    ),
-                )
-            return "{\n%s\n%s}" % ("\n".join(rendered), indent * level)
-        if value_type == "list":
-            if len(value) == 0:
-                return "[]"
-            rendered = [
-                "%s%s" % (indent * (level + 1), pretty_json(item, indent, level + 1))
-                for item in value
-            ]
-            return "[\n%s\n%s]" % ("\n".join(rendered), indent * level)
-        return json.encode(value)
 
     invalid_strings = {
         "unknown": True,
@@ -78,6 +51,9 @@ def fetch_ha_data(
             20.0,
             62.5,
         )
+
+    if not ha_url.startswith("https://"):
+        return ("Tesla", "Unknown", "Unknown", 0.0, 0.0, 0.0, 0.0, 0.0)
 
     headers = {
         "Authorization": "Bearer %s" % ha_token,
@@ -115,13 +91,14 @@ def fetch_ha_data(
     template_url = base_url + "/api/template"
     payload = {"template": template}
 
-    resp = http.post(template_url, headers = headers, json_body = payload, ttl_seconds = cache_duration)
+    resp = http.post(template_url, headers = headers, json_body = payload)
 
     if resp.status_code == 200:
         response_body = resp.body()
-        if response_body:
+        if response_body and len(response_body) <= 8192:
             data = json.decode(response_body)
-            print(pretty_json(data))
+            if type(data) != "dict":
+                return ("Tesla", "Unknown", "Unknown", 0.0, 0.0, 0.0, 0.0, 0.0)
             normalized = {
                 "name": normalize(data.get("name"), "Tesla"),
                 "tesla_state": normalize(data.get("tesla_state"), "Unknown"),
@@ -166,7 +143,6 @@ def main(config):
     car_color = config.str("car_color", "#FFFFFF")
     dest_color = config.str("dest_color", "#FFFFFF")
     time_color = config.str("time_color", "#FFFFFF")
-    cache_duration = 0  # seconds
 
     # Fetch all data
     (
@@ -189,7 +165,6 @@ def main(config):
         traffic_delay_entity,
         trip_total_entity,
         trip_progress_entity,
-        cache_duration,
     )
 
     # Skip render if not driving
@@ -365,7 +340,7 @@ def get_schema():
             schema.Text(
                 id = "ha_url",
                 name = "Home Assistant URL",
-                desc = "e.g. https://homeassistant.local:8123",
+                desc = "Public HTTPS URL of Home Assistant (port 443).",
                 icon = "server",
             ),
             schema.Text(

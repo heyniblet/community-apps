@@ -12,6 +12,7 @@ Example gif generated through the following command:
 
 ######################################################################################### Loads/Imports #########################################################################################
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/icon_left.png", ICON_LEFT_ASSET = "file")
 load("images/icon_right.png", ICON_RIGHT_ASSET = "file")
@@ -32,69 +33,118 @@ default_username = ""
 ######################################################################################### Helper Functions ########################################################################################
 
 def float_to_string_without_trailing_decimal(f):
+    if type(f) not in ["int", "float"]:
+        return "0"
     if f % 1 == 0:
         return str(int(f))
     else:
         return str(f)
 
+def encode_display_name(value):
+    if type(value) != "string" or not value or len(value) > 32:
+        return None
+    encoded = ""
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ ."
+    for char in value.codepoints():
+        if char not in allowed:
+            return None
+        encoded += "%20" if char == " " else char
+    return encoded
+
+def get_mode_stats(payload, mode):
+    global_stats = payload.get("global_stats", {}) if type(payload) == "dict" else {}
+    direct = global_stats.get(mode, {}) if type(global_stats) == "dict" else {}
+    if mode in global_stats and type(direct) == "dict":
+        return {
+            "wins": direct.get("placetop1", direct.get("wins", 0)),
+            "kd": direct.get("kd", 0),
+            "winrate": direct.get("winrate", direct.get("winRate", 0)),
+        }
+
+    flat = payload.get("stats", payload) if type(payload) == "dict" else {}
+    if type(flat) != "dict":
+        return {"wins": 0, "kd": 0, "winrate": 0}
+
+    marker = {
+        "solo": "solo",
+        "duo": "duo",
+        "trio": "trio",
+        "squad": "squad",
+    }[mode]
+    result = {"wins": 0, "kd": 0, "winrate": 0}
+    kills = 0
+    matches = 0
+    for key in list(flat.keys())[:5000]:
+        value = flat[key]
+        lowered = str(key).lower()
+        if marker not in lowered or type(value) not in ["int", "float"]:
+            continue
+        if "placetop1" in lowered or lowered.endswith("_wins"):
+            result["wins"] += value
+        elif "kills" in lowered:
+            kills += value
+        elif "matchesplayed" in lowered or "matches_played" in lowered:
+            matches += value
+        elif lowered.endswith("_kd"):
+            result["kd"] = value
+        elif "winrate" in lowered or "win_rate" in lowered:
+            result["winrate"] = value
+    if result["kd"] == 0 and matches > result["wins"]:
+        result["kd"] = kills / (matches - result["wins"])
+    if result["winrate"] == 0 and matches > 0:
+        result["winrate"] = result["wins"] * 100 / matches
+    return result
+
 ######################################################################################### Main Function #########################################################################################
 
 def main(config):
     decrypted_key = config.get("fortnite_api_key")
-    if not decrypted_key:
+    if type(decrypted_key) != "string" or not decrypted_key or len(decrypted_key) > 2048 or "\r" in decrypted_key or "\n" in decrypted_key:
         return render.Root(
             child = render.WrappedText("API Key not set", color = "#ff0000"),
         )
 
     headers = {
-        "Authorization": decrypted_key,
+        "x-api-key": decrypted_key,
     }
 
     username = config.str("username", default_username)
     show_kd = config.bool("show_kd")
     win_rate = config.bool("show_win_rate")
 
-    if username == None:  # Eror message prompting user to input a username into the app.
+    encoded_username = encode_display_name(username)
+    if not encoded_username:
         message = "No username found... Input a username in the app to check your wins here!"
     else:
-        primary_url = "https://fortniteapi.io/v1/lookup?username=" + username
-        accountID_request = http.get(primary_url, headers = headers, ttl_seconds = 86400)
+        primary_url = "https://prod.api-fortnite.com/api/v1/account/displayName/" + encoded_username
+        accountID_request = http.get(primary_url, headers = headers)
 
-        if accountID_request.status_code != 200:  # Can't find the passed in username.
+        if accountID_request.status_code != 200 or len(accountID_request.body()) > 256 * 1024:
             message = "Couldn't find your Epic account information... Make sure to use your Epic account username and not your display name!"
-            print("Fortnite player lookup request failed because the username can't be found..")
-        else:  # Username can be found, proceed.
-            accountID = accountID_request.json()["account_id"]
-            secondary_url = "https://fortniteapi.io/v1/stats?account=" + accountID
-            playerStats_request = http.get(secondary_url, headers = headers, ttl_seconds = 1200)
-
-            if playerStats_request.status_code != 200:  #Something went wrong and we can't get the account associated with the ID.
+        else:
+            account_payload = json.decode(accountID_request.body(), {})
+            accountID = account_payload.get("id") or account_payload.get("accountId") if type(account_payload) == "dict" else None
+            if type(accountID) != "string" or not accountID or len(accountID) > 64 or not all([char.isalnum() or char in "-_" for char in accountID.codepoints()]):
                 message = "We couldn't find a Fortnite account associated with the given Epic username."
-                print("Fortnite player stats request failed because something went wrong...")
-
-            if playerStats_request.json().get("code", None) == "PRIVATE_ACCOUNT":
-                message = "Sorry, your account is private, so we can't view your stats! Make your account public to see stats."
-                print("Fortnite player stats request failed because the user's account is private.")
-
             else:
-                playerStats_request = playerStats_request.json()
-                squad_wins = "Squads: " + float_to_string_without_trailing_decimal(playerStats_request["global_stats"]["squad"]["placetop1"])
-                trio_wins = "Trios: " + float_to_string_without_trailing_decimal(playerStats_request["global_stats"]["trio"]["placetop1"])
-                duo_wins = "Duos: " + float_to_string_without_trailing_decimal(playerStats_request["global_stats"]["duo"]["placetop1"])
-                solo_wins = "Solos: " + float_to_string_without_trailing_decimal(playerStats_request["global_stats"]["solo"]["placetop1"])
-
-                if show_kd:
-                    squad_wins = squad_wins + " (K/D: " + str(playerStats_request["global_stats"]["squad"]["kd"]) + ")"
-                    trio_wins = trio_wins + " (K/D: " + str(playerStats_request["global_stats"]["trio"]["kd"]) + ")"
-                    duo_wins = duo_wins + " (K/D: " + str(playerStats_request["global_stats"]["duo"]["kd"]) + ")"
-                    solo_wins = solo_wins + " (K/D: " + str(playerStats_request["global_stats"]["solo"]["kd"]) + ")"
-                if win_rate:
-                    squad_wins = squad_wins + " (W/L: " + str(playerStats_request["global_stats"]["squad"]["winrate"]) + ")"
-                    trio_wins = trio_wins + " (W/L: " + str(playerStats_request["global_stats"]["trio"]["winrate"]) + ")"
-                    duo_wins = duo_wins + " (W/L: " + str(playerStats_request["global_stats"]["duo"]["winrate"]) + ")"
-                    solo_wins = solo_wins + " (W/L: " + str(playerStats_request["global_stats"]["solo"]["winrate"]) + ")"
-
-                message = solo_wins + "    " + duo_wins + "    " + trio_wins + "    " + squad_wins
+                secondary_url = "https://prod.api-fortnite.com/api/v2/stats/" + accountID
+                playerStats_request = http.get(secondary_url, headers = headers)
+                if playerStats_request.status_code == 403:
+                    message = "This Fortnite account has Public Game Stats disabled."
+                elif playerStats_request.status_code != 200 or len(playerStats_request.body()) > 2 * 1024 * 1024:
+                    message = "Fortnite stats are unavailable right now."
+                else:
+                    player_stats = json.decode(playerStats_request.body(), {})
+                    values = []
+                    for mode in ["solo", "duo", "trio", "squad"]:
+                        stats = get_mode_stats(player_stats, mode)
+                        label = mode.capitalize() + "s: " + float_to_string_without_trailing_decimal(stats["wins"])
+                        if show_kd:
+                            label += " (K/D: " + float_to_string_without_trailing_decimal(stats["kd"]) + ")"
+                        if win_rate:
+                            label += " (Win: " + float_to_string_without_trailing_decimal(stats["winrate"]) + "%)"
+                        values.append(label)
+                    message = "    ".join(values)
 
     return render.Root(
         show_full_animation = True,
@@ -148,7 +198,7 @@ def get_schema():
             schema.Text(
                 id = "fortnite_api_key",
                 name = "Fortnite API Key",
-                desc = "Your FortniteAPI.io API key. See https://fortniteapi.io/ for details.",
+                desc = "Your api-fortnite.com API key. See https://api-fortnite.com/ for details.",
                 icon = "key",
                 secret = True,
             ),

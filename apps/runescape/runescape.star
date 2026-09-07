@@ -17,7 +17,10 @@ DOWN_CARROT_ICON = DOWN_CARROT_ICON_ASSET.readall()
 LINE_ICON = LINE_ICON_ASSET.readall()
 UP_CARROT_ICON = UP_CARROT_ICON_ASSET.readall()
 
-CACHE_TTL_SECONDS = 36604800  # 7 days in seconds.
+CACHE_TTL_SECONDS = 3600
+MAX_JSON_BYTES = 64 * 1024
+MAX_IMAGE_BYTES = 256 * 1024
+IMAGE_PREFIX = "https://secure.runescape.com/"
 RUNESCAPEAPI_ITEMLIST_URL = "https://secure.runescape.com/m=itemdb_oldschool/api/catalogue/items.json?category=1&alpha={0}&page={1}"
 PAGE_LENGTH_BY_LETTER = {
     "a": 30,
@@ -48,18 +51,25 @@ PAGE_LENGTH_BY_LETTER = {
 }
 
 def main():
-    random_letter = "abcdefghijklmnoprstuvwxyz"[pick_letter()]
+    random_letter = pick_letter()
     item_list = get_item_list(random_letter)
+    if type(item_list) != "dict" or type(item_list.get("items")) != "list" or len(item_list["items"]) == 0:
+        return render.Root(child = render.WrappedText("Exchange unavailable", width = 64, align = "center"))
     number_of_items = len(item_list["items"])
     random_item_index = random.number(0, number_of_items - 1)
-    item_name = item_list["items"][random_item_index]["name"]
-    item_trend = item_list["items"][random_item_index]["today"]["trend"]
-    item_price = str(item_list["items"][random_item_index]["current"]["price"]) + " gp"
-    sprite_url = item_list["items"][random_item_index]["icon"]
-    sprite = get_cachable_data(sprite_url)
+    item = item_list["items"][random_item_index]
+    if type(item) != "dict":
+        return render.Root(child = render.WrappedText("Exchange unavailable", width = 64, align = "center"))
+    item_name = str(item.get("name", "Unknown item"))[:80]
+    today = item.get("today", {})
+    current = item.get("current", {})
+    item_trend = today.get("trend", "neutral") if type(today) == "dict" else "neutral"
+    item_price = str(current.get("price", "?"))[:20] + " gp" if type(current) == "dict" else "? gp"
+    sprite_url = item.get("icon", "")
+    sprite = get_cachable_data(sprite_url, ttl_seconds = 2592000, max_bytes = MAX_IMAGE_BYTES) if type(sprite_url) == "string" and sprite_url.startswith(IMAGE_PREFIX) else None
     if (item_trend == "positive"):
         selected_image = UP_CARROT_ICON
-    elif (item_trend == "neutral"):
+    elif (item_trend == "negative"):
         selected_image = DOWN_CARROT_ICON
     else:
         selected_image = LINE_ICON
@@ -69,7 +79,7 @@ def main():
                 render.Row(
                     children = [
                         render.Box(width = 32),
-                        render.Box(render.Image(sprite)),
+                        render.Box(render.Image(sprite)) if sprite else render.Box(width = 32),
                     ],
                 ),
                 render.Column(
@@ -98,23 +108,23 @@ def main():
     )
 
 def pick_letter():
-    random_page_index = random.number(0, 344)
-    mySum = 0
-    for index, pageCount in enumerate(PAGE_LENGTH_BY_LETTER.values()):
-        if random_page_index < mySum:
-            return index
-        else:
-            mySum += pageCount
-    return 0
+    page_total = 0
+    for page_count in PAGE_LENGTH_BY_LETTER.values():
+        page_total += page_count
+    random_page_index = random.number(0, page_total - 1)
+    pages_seen = 0
+    for letter, page_count in PAGE_LENGTH_BY_LETTER.items():
+        if random_page_index < pages_seen + page_count:
+            return letter
+        pages_seen += page_count
+    return "a"
 
 def get_item_list(letter):
-    url = RUNESCAPEAPI_ITEMLIST_URL.format(letter, random.number(0, PAGE_LENGTH_BY_LETTER[letter]))
-    data = get_cachable_data(url)
-    return json.decode(data)
+    url = RUNESCAPEAPI_ITEMLIST_URL.format(letter, random.number(1, PAGE_LENGTH_BY_LETTER[letter]))
+    data = get_cachable_data(url, max_bytes = MAX_JSON_BYTES)
+    return json.decode(data, None) if data else None
 
-def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
+def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS, max_bytes = MAX_JSON_BYTES):
     res = http.get(url = url, ttl_seconds = ttl_seconds)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
+    body = res.body()
+    return body if res.status_code == 200 and body and len(body) <= max_bytes else None

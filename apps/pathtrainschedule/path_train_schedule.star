@@ -3,10 +3,8 @@
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 FONT = "CG-pixel-4x5-mono"
-TIMEZONE = "America/New_York"
 GREEN = "#30BF4C"
 RED = "#F5413B"
 BLUE = "#2F87EB"
@@ -18,7 +16,23 @@ TO_NJ = "TO_NJ"
 STATION_NAME_KEY = "station_name_key"
 TRAIN_TIME_KEY = "train_time_key"
 
-DEFAULT_STATION = "JOURNAL_SQUARE"
+PATH_REALTIME_URL = "https://www.panynj.gov/bin/portauthority/ridepath.json"
+PATH_STATIONS = [
+    ("33rd Street", "33S"),
+    ("23rd Street", "23S"),
+    ("14th Street", "14S"),
+    ("9th Street", "09S"),
+    ("Christopher Street", "CHR"),
+    ("World Trade Center", "WTC"),
+    ("Hoboken", "HOB"),
+    ("Newport", "NEW"),
+    ("Exchange Place", "EXP"),
+    ("Grove Street", "GRV"),
+    ("Journal Square", "JSQ"),
+    ("Harrison", "HAR"),
+    ("Newark", "NWK"),
+]
+DEFAULT_STATION = "JSQ"
 TRUNCATE_LINE_NAMES = {
     "33rd Street via Hoboken": "33rd St.",
     "33rd Street": "33rd St.",
@@ -45,10 +59,10 @@ def main(config):
     )
 
 # FUNCTIONS FOR MAIN APP
-def getUrlForStation(station_name):
-    return "https://path.api.razza.dev/v1/stations/{station}/realtime".format(station = station_name)
+def getUrlForStation():
+    return PATH_REALTIME_URL
 
-def getResponseFromApi(station_name):
+def getResponseFromApi():
     """ gets response from api
 
     Args:
@@ -57,41 +71,40 @@ def getResponseFromApi(station_name):
     Returns:
         struct: the response from the api
     """
-    url = getUrlForStation(station_name)
-    resp = http.get(url)
+    url = getUrlForStation()
+    resp = http.get(url, ttl_seconds = 15)
     if resp.status_code != 200:
         fail("PATH request failed with status {}".format(resp.status_code))
     return resp
 
-def getArrivalInMinutes(arrival_time):
-    arr_time = time.parse_time(arrival_time).in_location(TIMEZONE)
-    now = time.now().in_location(TIMEZONE)
-    mins = int((arr_time - now).minutes)
-    return mins
-
-def jsonToTrainData(json):
-    """ formats json data to dict of train data
-
-    Args:
-        json: json to format
-
-    Returns:
-        list: a list of trains as formatted dict
-    """
+def jsonToTrainData(response, station_name):
+    """Formats Port Authority arrivals for one station."""
     trains_data = []
-    for train in json:
-        data = {
-            "name": TRUNCATE_LINE_NAMES.get(train["lineName"]),
-            "status": train["status"].replace("_", " "),
-            "minutes": getArrivalInMinutes(train["projectedArrival"]),
-            "direction": train["direction"],
-        }
-        trains_data.append(data)
+    for result in response.get("results", []):
+        if result.get("consideredStation") != station_name:
+            continue
+
+        for destination in result.get("destinations", []):
+            label = destination.get("label", "").upper()
+            if label == "TONY":
+                direction = TO_NY
+            elif label == "TONJ":
+                direction = TO_NJ
+            else:
+                continue
+
+            for train in destination.get("messages", []):
+                seconds = int(train.get("secondsToArrival", "0"))
+                minutes = (seconds + 59) // 60 if seconds > 0 else 0
+                headsign = train.get("headSign", train.get("target", "PATH"))
+                trains_data.append({
+                    "name": TRUNCATE_LINE_NAMES.get(headsign, headsign),
+                    "status": "ON TIME",
+                    "minutes": minutes,
+                    "direction": direction,
+                })
 
     return trains_data
-
-def getTrainsFromResponse(rep):
-    return rep.json()["upcomingTrains"]
 
 def getAllInboundAndOutbound(trains):
     """ gets all available trains in direction, or null
@@ -156,11 +169,10 @@ def getTrainDataFromApi(station_name):
     Returns:
         dict: train data dict
     """
-    resp = getResponseFromApi(station_name)
+    resp = getResponseFromApi()
 
     # cache.set(TRAIN_TIME_KEY, str(rep), ttl_seconds = 60)
-    trains = getTrainsFromResponse(resp)
-    train_data = jsonToTrainData(trains)
+    train_data = jsonToTrainData(resp.json(), station_name)
     upcoming_trains = getAllInboundAndOutbound(train_data)
     return upcoming_trains
 
@@ -266,34 +278,9 @@ def renderDivider():
 
 # FUNCTIONS FOR SCHEMA
 
-def getAllStationsJson():
-    """ gets all stations as json
-
-    Returns:
-        struct: the response from the api
-    """
-    url = "https://path.api.razza.dev/v1/stations"
-    rep = http.get(url)
-    if rep.status_code != 200:
-        fail("PATH request failed with status {}".format(rep.status_code))
-    return rep.json()["stations"]
-
 def getAllStations():
-    """ maps stations to options
-
-    Returns:
-        list: list of options for schema
-    """
-    stations = []
-    json_stations = getAllStationsJson()
-    for station in json_stations:
-        stations.append(
-            schema.Option(
-                display = station["name"],
-                value = station["station"],
-            ),
-        )
-    return stations
+    """Maps the fixed PATH station set to schema options."""
+    return [schema.Option(display = name, value = station) for name, station in PATH_STATIONS]
 
 # OPTIONS FOR USER
 def get_schema():

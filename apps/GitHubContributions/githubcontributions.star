@@ -2,7 +2,7 @@
 Applet: GitHub Contributions
 Summary: Your GitHub contribution graph
 Description: 7xN heatmap of your recent GitHub contributions. 
-Setup: Get PAT at github.com/settings/tokens (repo scope)
+Setup: Create an expiring fine-grained token with read-only public repository access.
 Author: Robert Ison
 """
 
@@ -243,13 +243,7 @@ def get_schema():
             schema.Text(
                 id = "token",
                 name = "Personal Access Token",
-                desc = """Instructions to get a Personal Access Token:
-1. Go to `github.com` → Profile Picture → Settings → Developer settings → Personal access tokens → Fine-grained tokens → **Generate new token**.
-2. Use these settings:
-    - **Name**: `Tronbyt Contributions`
-    - **Expiration**: 90 days
-    - **Permissions**: Grant read-only access for `Metadata`, `Email Address`, and `Profile`.
-3. Copy the token (`ghp_...`) and paste it here. You won't see it again!""",
+                desc = "Create a fine-grained GitHub token with an expiration and read-only access to public repositories. Do not grant write permissions.",
                 icon = "key",
                 secret = True,
             ),

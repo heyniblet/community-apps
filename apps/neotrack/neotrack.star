@@ -6,7 +6,6 @@ Author: brettohland
 """
 
 load("http.star", "http")
-load("humanize.star", "humanize")
 load("images/asteroid.gif", ASTEROID_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -14,63 +13,43 @@ load("time.star", "time")
 
 ASTEROID = ASTEROID_ASSET.readall()
 
-CACHE_KEY = "neo_response"
+CAD_URL = "https://ssd-api.jpl.nasa.gov/cad.api"
+SBDB_URL = "https://ssd-api.jpl.nasa.gov/sbdb.api"
+LUNAR_DISTANCE_AU = 0.00256955529
+HEADERS = {"User-Agent": "Niblet/1.0 support@heyniblet.com"}
 
 def main(config):
-    # NASA's API requires that the date be in a specific format
-    today = humanize.time_format("yyyy-MM-dd", time.now())
-
-    print("Fetching data")
-    data = fetch_and_cache_neos(today, config)
-
-    if not data:
+    if config.get("api_key") != None:
+        print("The legacy NASA API key is retained but no longer sent.")
+    closest_neo = get_closest_neo()
+    if closest_neo == None:
         return render.Root(
             child = render.Box(
-                child = render.Text("NASA API Error", color = "#FF0000"),
+                child = render.WrappedText("NASA data unavailable", color = "#FF0000", font = "tom-thumb"),
             ),
         )
 
-    neos = data["near_earth_objects"][today]
-
-    # Sort by the closest approach data's astronomicl units measurement. We want the closest number.
-    closest_neo = sorted(neos, key = lambda x: x["close_approach_data"][0]["miss_distance"]["astronomical"])[0]
-
-    # Generate the display name
-    name = "Asteroid" + closest_neo["name"]
-
-    # Get the estimated max diameter value (for dramatic effect)
-    diameter_km = closest_neo["estimated_diameter"]["kilometers"]["estimated_diameter_max"]
-
-    # Figure out if KM or M are going to fit in a 5 character length
-    km_string = str(diameter_km)[:3]  # First 3 characters because "KM" is two characters.
-
-    # Only use the metre value if the diameter is smaller than 0.1 KM
-    if km_string == "0.0":
-        diameter_m = closest_neo["estimated_diameter"]["meters"]["estimated_diameter_max"]
-        m_string = str(diameter_m)[:4]
-        m_string = strip_trailing_zeros(m_string)
-        diameter = m_string + "M"
+    name = "Asteroid " + closest_neo["name"]
+    if closest_neo["diameter_km"] != None:
+        diameter_km = closest_neo["diameter_km"]
+        if diameter_km < 0.1:
+            diameter = strip_trailing_zeros(str(diameter_km * 1000)[:4]) + "M"
+        else:
+            diameter = strip_trailing_zeros(str(diameter_km)[:4]) + "KM"
     else:
-        km_string = strip_trailing_zeros(km_string)
-        diameter = km_string + "KM"
+        diameter = "H" + closest_neo["magnitude"][:4]
 
-    # Hazardous colour border
-    potentially_hazardous = closest_neo["is_potentially_hazardous_asteroid"]
-    if potentially_hazardous:
+    potentially_hazardous = get_hazard_status(closest_neo["designation"])
+    if potentially_hazardous == True:
         border_color = "#F60"
-    else:
+    elif potentially_hazardous == False:
         border_color = "#0F0"
+    else:
+        border_color = "#888"
 
-    # Velocity display
-    relative_velocity = closest_neo["close_approach_data"][0]["relative_velocity"]["kilometers_per_second"]
-    velocity_string = str(relative_velocity)[:3] + "K/s"
-
-    # Miss distance
-    miss_distance = closest_neo["close_approach_data"][0]["miss_distance"]["lunar"]
-    miss_distance_string = strip_trailing_zeros(miss_distance[:4]) + "LU"
-
-    # Orbiting Body
-    orbiting_body = closest_neo["close_approach_data"][0]["orbiting_body"]
+    velocity_string = strip_trailing_zeros(str(closest_neo["velocity_km_s"])[:4]) + "K/s"
+    lunar_distance = closest_neo["distance_au"] / LUNAR_DISTANCE_AU
+    miss_distance_string = strip_trailing_zeros(str(lunar_distance)[:4]) + "LU"
 
     return render.Root(
         child = render.Row(
@@ -83,7 +62,7 @@ def main(config):
                             make_data_scroll(None, name),
                             make_data_scroll("V:", velocity_string),
                             make_data_scroll("D:", miss_distance_string),
-                            make_data_scroll("O:", orbiting_body),
+                            make_data_scroll("O:", "Earth"),
                         ],
                     ),
                 ),
@@ -105,19 +84,68 @@ def get_schema():
         ],
     )
 
-# Fetch data from NASA's API, cache the result.
-def fetch_and_cache_neos(today_string, config):
-    base_url = "https://api.nasa.gov/neo/rest/v1/feed"
-    today = today_string
-    api_key = config.get("api_key") or "DEMO_KEY"  # NASA's demo key has a 50 req/hr limit.
-    final_url = base_url + "?start_date=" + today + "&end_date=" + today + "&api_key=" + api_key
-    response = http.get(final_url, ttl_seconds = 86400)
+def get_closest_neo():
+    response = http.get(
+        CAD_URL,
+        params = {
+            "date-min": "now",
+            "date-max": "+2",
+            "diameter": "true",
+            "dist-max": "0.2",
+            "fullname": "true",
+            "limit": "50",
+            "sort": "dist",
+        },
+        headers = HEADERS,
+        ttl_seconds = 3600,
+    )
     if response.status_code != 200:
-        print("Call to NASA API failed")
         return None
-    data = response.json()
+    payload = response.json()
+    if type(payload) != "dict" or type(payload.get("signature")) != "dict" or payload["signature"].get("version") != "1.5":
+        return None
+    fields = payload.get("fields")
+    rows = payload.get("data")
+    if type(fields) != "list" or type(rows) != "list":
+        return None
+    positions = {field: index for index, field in enumerate(fields)}
+    required = ["des", "cd", "dist", "v_rel", "h", "diameter"]
+    if len([field for field in required if field not in positions]) > 0:
+        return None
 
-    return data
+    now = time.now().unix
+    for row in rows:
+        if type(row) != "list" or len(row) != len(fields):
+            continue
+        values = [row[positions[field]] for field in ["des", "cd", "dist", "v_rel", "h"]]
+        if len([value for value in values if type(value) != "string" or value.strip() == ""]) > 0:
+            continue
+        approach = time.parse_time(row[positions["cd"]], "2006-Jan-02 15:04", "UTC").unix
+        if approach < now:
+            continue
+        name = row[positions["fullname"]] if "fullname" in positions else row[positions["des"]]
+        diameter = row[positions["diameter"]]
+        return {
+            "designation": row[positions["des"]],
+            "diameter_km": float(diameter) if type(diameter) == "string" and diameter != "" else None,
+            "distance_au": float(row[positions["dist"]]),
+            "magnitude": row[positions["h"]],
+            "name": name.strip(),
+            "velocity_km_s": float(row[positions["v_rel"]]),
+        }
+    return None
+
+def get_hazard_status(designation):
+    response = http.get(SBDB_URL, params = {"sstr": designation}, headers = HEADERS, ttl_seconds = 86400)
+    if response.status_code != 200:
+        return None
+    payload = response.json()
+    if type(payload) != "dict" or type(payload.get("signature")) != "dict" or payload["signature"].get("version") != "1.3":
+        return None
+    obj = payload.get("object")
+    if type(obj) != "dict" or type(obj.get("pha")) != "bool":
+        return None
+    return obj["pha"]
 
 # Creates the data display component with the prefix (fixed) and the data (scrolling)
 def make_data_scroll(prefix, data_string):

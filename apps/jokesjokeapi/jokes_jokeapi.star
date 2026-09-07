@@ -9,6 +9,7 @@ Author: rs7q5
 # Created 20220130 RIS
 # Last Modified 20230516 RIS
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("re.star", "re")
 load("render.star", "render")
@@ -24,20 +25,24 @@ def main(config):
 
     # check for cached data
     rep = http.get(url = full_URL, ttl_seconds = 43200)  #grabs data twice a day
-    if rep.status_code != 200:
+    body = rep.body()
+    data = json.decode(body, {}) if rep.status_code == 200 and body and len(body) <= 64 * 1024 else {}
+    if type(data) != "dict" or data.get("error") == True:
         joke = ["Error, could not get jokes!!!!"]
     else:
         # get the joke strings
-        if rep.json()["type"] == "twopart":
-            joke = [re.sub('"\"|"\n"', "", rep.json()["setup"])]
-            joke.append(re.sub('"\"|"\n"', "", rep.json()["delivery"]))
+        if data.get("type") == "twopart" and type(data.get("setup")) == "string" and type(data.get("delivery")) == "string":
+            joke = [re.sub('"\"|"\n"', "", data["setup"][:500])]
+            joke.append(re.sub('"\"|"\n"', "", data["delivery"][:500]))
+        elif type(data.get("joke")) == "string":
+            joke = [re.sub('"\"|"\n"', "", data["joke"][:800])]
         else:
-            joke = [re.sub('"\"|"\n"', "", rep.json()["joke"])]
+            joke = ["Error, could not get jokes!!!!"]
 
     joke_txt = format_text(joke, font)  # render the text
 
     return render.Root(
-        delay = int(config.get("speed", 200)),
+        delay = int(config.get("speed")) if str(config.get("speed")) in ["75", "100", "200"] else 100,
         show_full_animation = True,
         child = render.Column(
             children = [

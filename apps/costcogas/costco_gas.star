@@ -8,9 +8,7 @@ Author: Dan Adam
 # Thanks: Portions of the code were adapted from the sf_next_muni applet written by Martin Strauss
 # Attribution: Gas Icon from "https://www.iconfinder.com/icons/111078/gas_icon", Costco Icon from "https://play-lh.googleusercontent.com/gqOziTbVWioRJtHh7OvfOq07NCTcAHKWBYPQKJOZqNcczpOz5hdrnQNY7i2OatJxmuY=w240-h480-rw"
 
-load("encoding/json.star", "json")
 load("http.star", "http")
-load("humanize.star", "humanize")
 load("images/costco.png", COSTCO_ICON_ASSET = "file")
 load("images/gas.png", GAS_ICON_ASSET = "file")
 load("re.star", "re")
@@ -18,53 +16,13 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-DEFAULT_LOCATION = """
-{
-    "lat": "37.7844",
-    "lng": "-122.4080",
-    "description": "San Francisco, CA, USA",
-	"locality": "San Francisco",
-	"timezone": "America/Los_Angeles"
-}
-"""
-
 DEFAULT_CONFIG = {
     "warehouse": "1216",
-    "timezone": "America/Los_Angeles",
     "price_colour": "white",
     "icon_display": "costco-icon",
     "time_format": "24-hours",
     "show_hours": False,
 }
-
-DUMMY_WAREHOUSE = [
-    {
-        "locationName": "Dummy Warehouse",
-        "identifier": "0",
-        "gasPrices": {
-            "regular": "0.009",
-            "premium": "0.009",
-            "diesel": "0.009",
-        },
-        "gasStationHours": [
-            {
-                "title": "Mon-Fri. ",
-                "code": "open",
-                "time": "10:00am - 8:00pm",
-            },
-            {
-                "title": "Sat. ",
-                "code": "open",
-                "time": "6:00am - 7:00pm",
-            },
-            {
-                "title": "Sun. ",
-                "code": "open",
-                "time": "9:00am - 6:00pm",
-            },
-        ],
-    },
-]
 
 ICONS = {
     "gas-icon": GAS_ICON_ASSET.readall(),
@@ -102,15 +60,11 @@ TIME_FORMAT_MAP = {
 }
 
 API_HEADERS = {
-    "Accept": "*/*",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",  # Only product directive is needed, others can be stripped
-    "Accept-Encoding": "identity",
-    "Connection": "keep-alive",
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (compatible; Niblet/1.0)",
 }
 
-# Note - These API GET calls are flaky at best. You can only make 1-2 calls per day before the server stops responding
-API_WAREHOUSE_SEARCH = "https://www.costco.com/AjaxWarehouseBrowseLookupView?numOfWarehouses=20&countryCode=US&hasGas=true&populateWarehouseDetails=false{}"
-API_WAREHOUSE_DETAILS = "https://www.costco.com/AjaxWarehouseBrowseLookupView?numOfWarehouses=1&countryCode=US&hasGas=true&populateWarehouseDetails=true&warehouseNumber={}"
+API_GAS_PRICES = "https://www.costco.com/AjaxGetGasPricesService?warehouseid={}"
 
 def get_schema():
     icons = [
@@ -153,12 +107,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Text(
                 id = "warehouse_by_loc",
-                name = "Warehouse",
-                desc = "A list of warehouses by location",
+                name = "Warehouse Number",
+                desc = "The warehouse number shown in Costco's warehouse locator",
                 icon = "locationDot",
-                handler = get_warehouses,
+                default = DEFAULT_CONFIG["warehouse"],
             ),
             schema.Toggle(
                 id = "show_hours",
@@ -194,46 +148,29 @@ def get_schema():
         ],
     )
 
-def get_cached_data(url, ttl):
-    http_data = http.get(url, headers = API_HEADERS, ttl_seconds = ttl)
-    if http_data.status_code != 200:
-        fail("HTTP request failed with status {} for URL {}".format(http_data.status_code, url))
-    response_data = [x for x in http_data.json() if type(x) == "dict"]
-
-    return response_data
-
-def get_warehouses(location):
-    loc = json.decode(location)
-    warehouses = get_cached_data(API_WAREHOUSE_SEARCH.format("&latitude=" + humanize.float("#.#", float(loc["lat"])) + "&longitude=" + humanize.float("#.#", float(loc["lng"]))), 86400)
-
-    return [
-        schema.Option(
-            display = warehouse["locationName"] + " #" + warehouse["identifier"],
-            value = warehouse["identifier"],
-        )
-        for warehouse in warehouses
-    ]
+def get_warehouse_number(config):
+    value = config.get("warehouse_by_loc", DEFAULT_CONFIG["warehouse"])
+    if value.startswith("{"):
+        legacy_values = re.findall(r"\"value\"\s*:\s*\"([0-9]+)\"", value)
+        value = legacy_values[0] if legacy_values else DEFAULT_CONFIG["warehouse"]
+    return value if re.search(r"^[0-9]{1,6}$", value) else DEFAULT_CONFIG["warehouse"]
 
 def get_gas_prices(config):
-    warehouse = DEFAULT_CONFIG["warehouse"]
-    warehouse_cfg = config.get("warehouse_by_loc")
-    if warehouse_cfg:
-        warehouse = json.decode(warehouse_cfg)["value"]
-
-    warehouse_data = get_cached_data(API_WAREHOUSE_DETAILS.format(warehouse), 3600)
-
-    if type(warehouse_data) != "list" or len(warehouse_data) == 0:
-        warehouse_data = DUMMY_WAREHOUSE
-
-    gas_prices = {}
-
-    gas_prices["warehouse_name"] = warehouse_data[0].get("locationName", "ERROR") + " #" + warehouse_data[0].get("identifier", "ERROR")
-    gas_prices["regular"] = warehouse_data[0]["gasPrices"].get("regular", "")
-    gas_prices["premium"] = warehouse_data[0]["gasPrices"].get("premium", "")
-    gas_prices["diesel"] = warehouse_data[0]["gasPrices"].get("diesel", "")
-    gas_prices["gasStationHours"] = warehouse_data[0].get("gasStationHours", [])
-
-    return gas_prices
+    warehouse = get_warehouse_number(config)
+    response = http.get(API_GAS_PRICES.format(warehouse), headers = API_HEADERS, ttl_seconds = 900)
+    if response.status_code != 200 or len(response.body()) > 65536:
+        return None
+    payload = response.json()
+    prices = payload.get(warehouse, {}) if type(payload) == "dict" else {}
+    if type(prices) != "dict":
+        return None
+    return {
+        "warehouse_name": "Costco #" + warehouse,
+        "regular": prices.get("regular", ""),
+        "premium": prices.get("premium", ""),
+        "diesel": prices.get("diesel", ""),
+        "gasStationHours": [],
+    }
 
 def get_gas_hours(raw_gas_hours, config):
     gas_render = []
@@ -354,6 +291,8 @@ def get_display(gas_prices, config):
 
 def main(config):
     gas_prices = get_gas_prices(config)
+    if gas_prices == None:
+        return render.Root(child = render.Text("Prices unavailable"))
     labels, prices = get_display(gas_prices, config)
 
     return render.Root(

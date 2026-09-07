@@ -8,6 +8,7 @@ Author: EslamMoh
 load("animation.star", "animation")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("humanize.star", "humanize")
 load("images/moon_icon.png", MOON_ICON_ASSET = "file")
 load("images/sun_icon.png", SUN_ICON_ASSET = "file")
 load("render.star", "render")
@@ -18,7 +19,7 @@ MOON_ICON = MOON_ICON_ASSET.readall()
 SUN_ICON = SUN_ICON_ASSET.readall()
 
 # Adhan prayer API URL
-PRAYER_TIME_BASE_URL = "http://api.aladhan.com/v1/timings/"
+PRAYER_TIME_BASE_URL = "https://api.aladhan.com/v1/timings/"
 
 # Load Moon icon from base64 encoded data
 
@@ -48,24 +49,59 @@ PRAYER_ICON = {
 
 # Cache prayer times request for one day.
 TTL_CACHE = 86400
+MAX_RESPONSE_BYTES = 65536
+METHODS = ["0", "1", "2", "3", "4", "5", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"]
 
 # Fetch location configs
 def get_location(config):
     location = config.get("location", DEFAULT_LOCATION)
-    return json.decode(location)
+    location = location if type(location) == "dict" else json.decode(location, None)
+    if type(location) != "dict" or type(location.get("timezone")) != "string":
+        return None
+    lat = parse_coordinate(location.get("lat"), -90, 90)
+    lng = parse_coordinate(location.get("lng"), -180, 180)
+    if lat == None or lng == None:
+        return None
+    return {"timezone": location["timezone"], "lat": lat, "lng": lng}
+
+def parse_coordinate(value, minimum, maximum):
+    value = str(value).strip()
+    if not value or len(value) > 24:
+        return None
+    digits = 0
+    decimal_points = 0
+    for index in range(len(value)):
+        character = value[index]
+        if character.isdigit():
+            digits += 1
+        elif character == "." and decimal_points == 0:
+            decimal_points += 1
+        elif character in ("-", "+") and index == 0:
+            pass
+        else:
+            return None
+    if digits == 0:
+        return None
+    number = float(value)
+    return str(number) if number >= minimum and number <= maximum else None
 
 # Fetch method of calculation for prayer time config
 def get_method(config):
-    return config.get("method", DEFAULT_METHOD)
+    method = config.get("method", DEFAULT_METHOD)
+    return method if method in METHODS else DEFAULT_METHOD
 
 def main(config):
     location = get_location(config)
+    if not location:
+        return render_message("Choose a valid location")
     method = get_method(config)
     now = time.now().in_location(location["timezone"])
     date = now.format("2-01-2006")
 
     # Fetch today prayer times
     prayers = get_prayers(date, location, method)
+    if not prayers:
+        return render_message("Prayer times unavailable")
 
     # Calculate the next prayer based on the current time
     next_prayer = next_prayer_time(prayers, now, location, method)
@@ -345,54 +381,79 @@ def format_time(prayer, now, timezone):
 def next_prayer_time(prayers, now, location, method):
     pt = formatted_prayer_times(prayers, now, location["timezone"])
 
-    if (now > pt["fajr"]) and (now < pt["sunrise"]):
-        return {"prayer": "sunrise", "time": time_till_next_prayer(now, pt["sunrise"])}
-
-    elif (now > pt["sunrise"]) and (now < pt["duhr"]):
-        return {"prayer": "duhr", "time": time_till_next_prayer(now, pt["duhr"])}
-
-    elif (now > pt["duhr"]) and (now < pt["asr"]):
-        return {"prayer": "asr", "time": time_till_next_prayer(now, pt["asr"])}
-
-    elif (now > pt["asr"]) and (now < pt["maghrib"]):
-        return {"prayer": "maghrib", "time": time_till_next_prayer(now, pt["maghrib"])}
-
-    elif (now > pt["maghrib"]) and (now < pt["isha"]):
-        return {"prayer": "isha", "time": time_till_next_prayer(now, pt["isha"])}
-
-    elif (pt["isha"] < now) and (now <= (format_time("23:59", now, location["timezone"]))):  # Get the next prayer time in case the current time is between Isha time and midnight
-        # Get Fajr prayer time for tomorrow date
-        tomorrow_fajr = get_tomorrow_fajr(now, location, method)
-
-        return {"prayer": "fajr", "time": time_till_next_prayer(now, tomorrow_fajr)}
-
-    elif (now < pt["fajr"]):  # Get the next prayer time in case current time is between Midnight and Fajr time.
+    if now < pt["fajr"]:
         return {"prayer": "fajr", "time": time_till_next_prayer(now, pt["fajr"])}
 
+    elif now < pt["sunrise"]:
+        return {"prayer": "sunrise", "time": time_till_next_prayer(now, pt["sunrise"])}
+
+    elif now < pt["duhr"]:
+        return {"prayer": "duhr", "time": time_till_next_prayer(now, pt["duhr"])}
+
+    elif now < pt["asr"]:
+        return {"prayer": "asr", "time": time_till_next_prayer(now, pt["asr"])}
+
+    elif now < pt["maghrib"]:
+        return {"prayer": "maghrib", "time": time_till_next_prayer(now, pt["maghrib"])}
+
+    elif now < pt["isha"]:
+        return {"prayer": "isha", "time": time_till_next_prayer(now, pt["isha"])}
+
     else:
-        fail("Failed to calculate the remaining time till the next prayer")
+        tomorrow_fajr = get_tomorrow_fajr(now, location, method)
+        if tomorrow_fajr == None:
+            tomorrow_fajr = pt["fajr"] + 24 * time.hour
+
+        return {"prayer": "fajr", "time": time_till_next_prayer(now, tomorrow_fajr)}
 
 # Get Fajr prayer time for tomorrow date.
 def get_tomorrow_fajr(now, location, method):
     tomorrow = now + 24 * time.hour
     tomorrow_date = tomorrow.format("2-01-2006")
     tomorrow_prayers = get_prayers(tomorrow_date, location, method)
-    return format_time(tomorrow_prayers["Fajr"], tomorrow, location["timezone"])
+    return format_time(tomorrow_prayers["Fajr"], tomorrow, location["timezone"]) if tomorrow_prayers else None
 
 # Send API request to get prayer times according to location and date.
 def get_prayers(date, location, method):
-    url = PRAYER_TIME_BASE_URL + date + "?latitude=%s" % (location["lat"]) + "&longitude=%s" % (location["lng"]) + "&method=%s" % (method)
+    url = PRAYER_TIME_BASE_URL + date + "?latitude=%s" % humanize.url_encode(location["lat"]) + "&longitude=%s" % humanize.url_encode(location["lng"]) + "&method=%s" % humanize.url_encode(method)
     rep = http.get(url, ttl_seconds = TTL_CACHE)
+    body = rep.body()
 
-    if rep.status_code != 200:
-        fail("Prayer Time request failed with status %d", rep.status_code)
+    if rep.status_code != 200 or len(body) > MAX_RESPONSE_BYTES or not body.startswith("{") or not body.endswith("}"):
+        return None
 
     if rep.headers.get("Tidbyt-Cache-Status") == "HIT":
         print("Hit! Displaying cached data.")
     else:
         print("Miss! Calling Prayer Times API.")
 
-    return rep.json()["data"]["timings"]
+    response = json.decode(body, None)
+    data = response.get("data", {}) if type(response) == "dict" else {}
+    timings = data.get("timings", {}) if type(data) == "dict" else {}
+    if type(timings) != "dict":
+        return None
+    normalized = {}
+    for prayer in ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+        value = timings.get(prayer)
+        value = value[:5] if type(value) == "string" else ""
+        parts = value.split(":")
+        if len(parts) != 2 or len(parts[0]) != 2 or len(parts[1]) != 2 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[0]) > 23 or int(parts[1]) > 59:
+            return None
+        normalized[prayer] = value
+    return normalized
+
+def render_message(message):
+    return render.Root(
+        child = render.Column(
+            expanded = True,
+            main_align = "center",
+            cross_align = "center",
+            children = [
+                render.Text("PRAYER TIMES", font = "tb-8"),
+                render.WrappedText(message, align = "center"),
+            ],
+        ),
+    )
 
 # Render time icon, next prayer times data and separation line.
 def render_meta_data(icon, next_prayer):

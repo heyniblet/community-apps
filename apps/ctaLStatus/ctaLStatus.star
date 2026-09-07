@@ -73,6 +73,8 @@ def main(config):
     speed = config.get("scrollSpeed", DEFAULT_SPEED)
 
     ctaData = get_cta_data(line, isActive, isAccessibility, isPlanned, isRecent)
+    if ctaData.get("error"):
+        return render.Root(child = render.WrappedText(ctaData["error"], width = 64, align = "center"))
 
     return render.Root(
         delay = int(speed),
@@ -256,45 +258,41 @@ def get_cta_data(line, isActive, isAccessibility, isPlanned, isRecent):
 
     if data == None:
         # No data found in cache for the key, retrieve data from CTA status and alerts API
-        print("Key {} not found in cache, retrieving data from CTA Status and Alerts API...".format(key))
-
         # Call APIs to get data
         ctaStatus = get_data_from_cta_status_api(line)
         ctaAlerts = get_data_from_cta_alerts_api(line, isActive, isAccessibility, isPlanned, recentDays)
+        if not ctaStatus or ctaAlerts == None:
+            return {"error": "CTA status unavailable"}
 
         # Create a dictionary of items needed for the display
         ctaInfo = {
-            "route": ctaStatus["Route"],
-            "serviceId": ctaStatus["ServiceId"],
-            "routeColorCode": ctaStatus["RouteColorCode"],
-            "routeStatus": ctaStatus["RouteStatus"],
-            "routeStatusColor": ctaStatus["RouteStatusColor"],
+            "route": str(ctaStatus.get("Route", "CTA"))[:100],
+            "serviceId": str(ctaStatus.get("ServiceId", ""))[:20],
+            "routeColorCode": str(ctaStatus.get("RouteColorCode", "404040"))[:6],
+            "routeStatus": str(ctaStatus.get("RouteStatus", "Unknown"))[:100],
+            "routeStatusColor": str(ctaStatus.get("RouteStatusColor", "404040"))[:6],
             "alerts": ctaAlerts,
         }
 
         # Cache the data
         cache.set(key, json.encode(ctaInfo), CACHE_TTL)
     else:
-        print("Key {} found in cache.".format(key))
         ctaInfo = json.decode(data)
 
     return ctaInfo
 
 def get_data_from_cta_status_api(line):
-    print("Calling CTA Status API at ", CTA_STATUS_API_URL)
-
     response = http.get(CTA_STATUS_API_URL, params = {
         "routeid": line,
         "outputType": "JSON",
     })
-    if response.status_code != 200:
-        fail("Could not retrieve alerts from CTA API. Request failed with status {}".format(response.status_code))
+    if response.status_code != 200 or len(response.body()) > 512 * 1024:
+        return None
 
-    return response.json()["CTARoutes"]["RouteInfo"]
+    data = response.json().get("CTARoutes", {})
+    return data.get("RouteInfo") if type(data) == "dict" and type(data.get("RouteInfo")) == "dict" else None
 
 def get_data_from_cta_alerts_api(line, isActive, isAccessibility, isPlanned, recentDays):
-    print("Calling CTA Alerts API at ", CTA_ALERTS_API_URL)
-
     response = http.get(CTA_ALERTS_API_URL, params = {
         "routeid": line,
         "activeonly": str(isActive),
@@ -304,21 +302,28 @@ def get_data_from_cta_alerts_api(line, isActive, isAccessibility, isPlanned, rec
         "outputType": "JSON",
     })
 
-    if response.status_code != 200:
-        fail("Could not retrieve alerts from CTA API. Request failed with status {}".format(response.status_code))
+    if response.status_code != 200 or len(response.body()) > 1024 * 1024:
+        return None
 
-    if response.json()["CTAAlerts"]["ErrorCode"] == "50":
+    payload = response.json().get("CTAAlerts", {})
+    if type(payload) != "dict":
+        return None
+    if payload.get("ErrorCode") == "50":
         jsonData = DEFAULT_ALERT
     else:
-        jsonData = response.json()["CTAAlerts"]
+        jsonData = payload
 
     # return an array of just the alert headlines and short descriptions
     alerts = []
-    for eachAlert in jsonData["Alert"]:
+    if type(jsonData.get("Alert")) != "list":
+        return None
+    for eachAlert in jsonData["Alert"][:10]:
+        if type(eachAlert) != "dict":
+            continue
         alertData = {
-            "headline": eachAlert["Headline"].replace("’", "'").replace("/", " / "),
-            "shortDescription": eachAlert["ShortDescription"].replace("’", "'").replace("/", " / "),
+            "headline": str(eachAlert.get("Headline", "Alert unavailable"))[:300].replace("’", "'").replace("/", " / "),
+            "shortDescription": str(eachAlert.get("ShortDescription", "Alert unavailable"))[:500].replace("’", "'").replace("/", " / "),
         }
         alerts.append(alertData)
 
-    return alerts
+    return alerts or DEFAULT_ALERT["Alert"]

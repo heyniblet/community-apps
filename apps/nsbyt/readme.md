@@ -1,3 +1,3 @@
 # NS Timetable app, by Tim Hanssen
 
-Allows the user to search for a NS Train station and displays the next upcoming trains.
+Enter an NS station code to display the next upcoming trains. The NS API subscription key is supplied by the hosting platform and is never stored in this repository.

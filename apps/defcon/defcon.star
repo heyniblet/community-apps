@@ -11,7 +11,7 @@ load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
 DEF_CON_URL = "https://www.defconlevel.com/current-level"
-CACHE_TTL_SECONDS = 3 * 24 * 60 * 60
+CACHE_TTL_SECONDS = 5 * 60
 SCALE = 2 if canvas.is2x() else 1
 FONT = "terminus-32-light" if canvas.is2x() else "6x13"
 DEF_CON_COLORS = ["#fff", "#ff0000", "#ffff00", "#00ff00", "#0000ff"]
@@ -27,17 +27,14 @@ display_options = [
 
 VALID_LEVELS = ["1", "2", "3", "4", "5"]
 
-def fail_debug(step, message):
-    fail("DEFCON app error [" + step + "]: " + message)
-
 def normalize_level_text(text):
     if text == None:
-        fail_debug("parse", "badge text was empty")
+        return None
 
     text = str(text).strip()
 
     if text == "":
-        fail_debug("parse", "badge text was blank")
+        return None
 
     if text.startswith("DEFCON "):
         text = text[len("DEFCON "):]
@@ -45,7 +42,7 @@ def normalize_level_text(text):
     text = text.strip()
 
     if text not in VALID_LEVELS:
-        fail_debug("parse", "unexpected badge text: " + text)
+        return None
 
     return int(text)
 
@@ -60,20 +57,20 @@ def get_defcon_level():
     )
 
     if res.status_code != 200:
-        fail_debug("http", "GET " + DEF_CON_URL + " returned status " + str(res.status_code))
+        return None
 
     body = res.body()
-    if body == None:
-        fail_debug("http", "response body was None")
+    if body == None or len(body) > 512 * 1024:
+        return None
 
     body = str(body)
     if body.strip() == "":
-        fail_debug("http", "response body was empty")
+        return None
 
     page = html(body)
     badge = page.find("span.badge-number")
     if not badge:
-        fail_debug("html", "selector span.badge-number not found")
+        return None
 
     badge_text = badge.text()
     return normalize_level_text(badge_text)
@@ -85,7 +82,7 @@ def get_selected_position(config):
         return get_defcon_level()
 
     if str(position) not in VALID_LEVELS:
-        fail_debug("config", "invalid selected level: " + str(position))
+        return 5
 
     return int(position)
 
@@ -95,6 +92,18 @@ def main(config):
         return display_instructions()
 
     position = get_selected_position(config)
+    if position == None:
+        return render.Root(
+            child = render.Column(
+                expanded = True,
+                main_align = "center",
+                cross_align = "center",
+                children = [
+                    render.Text("DEFCON", color = "#fff", font = "6x13"),
+                    render.Text("No data", color = "#888"),
+                ],
+            ),
+        )
 
     width, height = canvas.size()
     defcon_height = height // 2 - 1
@@ -147,7 +156,7 @@ def render_box(i, width, height, color):
 
 def get_defcon_display(position):
     if str(position) not in VALID_LEVELS:
-        fail_debug("render", "invalid render position: " + str(position))
+        position = "5"
 
     children = []
     position = int(position)

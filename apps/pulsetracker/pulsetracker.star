@@ -6,18 +6,18 @@ Author: kmphua
 Thanks: playak
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
 
 # CONFIG
-TTL = 60
-DEFAULTTOKEN = "WPLS"
+TTL = 300
+MAX_RESPONSE_BYTES = 256 * 1024
 NO_DATA = "---"
 
 # INIT
-DEBUG = 1
 COINCOLORS = {}  # define matching font colors for top coins
 COINCOLORS["WPLS"] = "#0AF"
 COINCOLORS["PLSX"] = "#F00"
@@ -55,15 +55,25 @@ COINCOLORS["UFO"] = "#0FF"
 # MAIN
 def main(config):
     token = config.get("token", "0x6753560538ECa67617A9Ce605178F788bE7E524E")  # Default PLS
+    if not valid_pair_id(token):
+        return render.Root(renderbox({"ticker": NO_DATA, "price": NO_DATA, "change": None}))
     API = "https://api.dexscreener.com/latest/dex/pairs/pulsechain/" + token
     price_data = get_json_from_cache_or_http(API, TTL)
     price = NO_DATA
     ticker = NO_DATA
     change = NO_DATA
-    if price_data != None:
-        price = "$" + price_data["pairs"][0]["priceUsd"]
-        ticker = price_data["pairs"][0]["baseToken"]["symbol"]
-        change = price_data["pairs"][0]["priceChange"]["h24"]
+    pairs = price_data.get("pairs", []) if type(price_data) == "dict" else []
+    pair = pairs[0] if type(pairs) == "list" and len(pairs) > 0 and type(pairs[0]) == "dict" else {}
+    base_token = pair.get("baseToken", {})
+    price_change = pair.get("priceChange", {})
+    price_usd = pair.get("priceUsd")
+    symbol = base_token.get("symbol") if type(base_token) == "dict" else None
+    if type(price_usd) == "string" and len(price_usd) <= 24:
+        price = "$" + price_usd
+    if type(symbol) == "string" and len(symbol) <= 12:
+        ticker = symbol
+    if type(price_change) == "dict" and type(price_change.get("h24")) in ["int", "float"]:
+        change = price_change["h24"]
     coininfo = {"ticker": ticker, "price": price, "change": change}
     coinlines = renderbox(coininfo)
     return render.Root(
@@ -74,44 +84,17 @@ def main(config):
 
 def get_json_from_cache_or_http(url, timeout):
     res = http.get(url, ttl_seconds = timeout)
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+    return json.decode(body, None)
 
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.json()
-
-def format_float_string(float_value):
-    # Round price to nearest whole number (used to decide how many decimal places to leave)
-    float_value_integer = str(int(math.round(float(float_value))))
-
-    # Trim and format price
-    if len(float_value_integer) <= 1:
-        float_value = str(int(math.round(float_value * 1000)))
-        if len(float_value) < 4:
-            float_value = "0" + float_value
-        if len(float_value) < 4:
-            float_value = "0" + float_value
-        if len(float_value) < 4:
-            float_value = "0" + float_value
-        if len(float_value) < 4:
-            float_value = "0" + float_value
-        float_value = (float_value[0:-3] + "." + float_value[-3:])
-    elif len(float_value_integer) == 2:
-        float_value = str(int(math.round(float_value * 1000)))
-        float_value = (float_value[0:-3] + "." + float_value[-3:])
-    elif len(float_value_integer) == 3:
-        float_value = str(int(math.round(float_value * 100)))
-        float_value = (float_value[0:-2] + "." + float_value[-2:])
-    elif len(float_value_integer) == 4:
-        float_value = str(int(math.round(float_value * 10)))
-        float_value = (float_value[0:-1] + "." + float_value[-1:])
-    elif len(float_value_integer) == 5:
-        float_value = str(int(math.round(float_value)))
-    elif len(float_value_integer) >= 6:
-        float_value = str(int(math.round(float_value)))
-    return float_value
+def valid_pair_id(value):
+    return type(value) == "string" and len(value) == 42 and value.startswith("0x") and not any([c not in "0123456789abcdefABCDEF" for c in value[2:].codepoints()])
 
 def renderpercentage(p):
+    if type(p) not in ["int", "float"]:
+        return render.Text(NO_DATA, color = "#888")
     color = "#888"
     if p > 0.1:
         color = "#07C18E"
@@ -126,22 +109,7 @@ def renderpercentage(p):
     p = math.round(p * fact) / fact
     return render.Text(str(p) + "%", color = color)
 
-def renderprice(p):
-    if p >= 1000:
-        p = int(p)
-    else:
-        p = toprecision(p, 4)
-    pstr = str(p)
-    if len(pstr) > 9:  # sometimes a really long and ugly price format gets through. truncate it. if BTC gets above 1B USD, I don't care about this tool anymore :)
-        pstr = pstr[0:8]
-    return render.Text(pstr)
-
-def rendertext(msg, color = "#FFF"):
-    return render.Text(msg, color)
-
 def renderbox(coin, color = "#FFF"):
-    if DEBUG:
-        print(coin)
     if "price" in coin:  # coin["price"] is set. must be coin data
         children = [
             render.Text(coin["ticker"], color = coincolor(coin["ticker"]), font = "6x13"),
@@ -162,13 +130,6 @@ def renderbox(coin, color = "#FFF"):
         color = "#000",  # black background, to clean the rest of the screen
     )
     return toreturn
-
-def toprecision(number, precision):  # get any number and show only the n most significant digits
-    if number == 0:
-        return 0
-    exponent = math.floor(math.log(math.fabs(number) + 1, 10))
-    significand = math.round((number / math.pow(10, exponent)) * math.pow(10, precision)) / math.pow(10, precision)
-    return significand * math.pow(10, exponent)
 
 def coincolor(ticker):
     toreturn = "#AAA"
@@ -256,7 +217,7 @@ def get_schema():
         ),
         schema.Option(
             display = "BBC",
-            value = "0x956f097E055Fa16Aad35c339E17ACcbF42782DE6",
+            value = "0xb543812ddEbC017976f867Da710ddb30cCA22929",
         ),
         schema.Option(
             display = "CST",
@@ -268,7 +229,7 @@ def get_schema():
         ),
         schema.Option(
             display = "SOLIDX",
-            value = "0x8Da17Db850315A34532108f0f5458fc0401525f6",
+            value = "0x89cffFB84016FBf4da34B400e847A61be1a7Fe34",
         ),
         schema.Option(
             display = "BEAR",
@@ -276,19 +237,19 @@ def get_schema():
         ),
         schema.Option(
             display = "MOST",
-            value = "0xe33a5AE21F93aceC5CfC0b7b0FDBB65A0f0Be5cC",
+            value = "0x908B5490414518981ce5c473Ff120A6b338feF67",
         ),
         schema.Option(
             display = "ATROPA",
-            value = "0xCc78A0acDF847A2C1714D2A925bB4477df5d48a6",
+            value = "0x5EF7AaC0DE4F2012CB36730Da140025B113FAdA4",
         ),
         schema.Option(
             display = "SPARTA",
-            value = "0x52347C33Cf6Ca8D2cfb864AEc5aA0184C8fd4c9b",
+            value = "0xf3E1E07A463d27100404B7A4bdF7E3De5DD748be",
         ),
         schema.Option(
             display = "PUMP",
-            value = "0xec4252e62C6dE3D655cA9Ce3AfC12E553ebBA274",
+            value = "0x96Fefb743B1D180363404747bf09BD32657D8B78",
         ),
         schema.Option(
             display = "DOUBT",
@@ -296,15 +257,15 @@ def get_schema():
         ),
         schema.Option(
             display = "BEST",
-            value = "0x84601f4e914E00Dc40296Ac11CdD27926BE319f2",
+            value = "0x94670dB3BA08cbf045bc843B45e9125a33d777e9",
         ),
         schema.Option(
             display = "TRUMP",
-            value = "0x8cC6d99114Edd628249fAbc8a4d64F9A759a77Bf",
+            value = "0x2e2A603a35bff3c3e6a21A289Dfd5144d921d3a0",
         ),
         schema.Option(
             display = "UFO",
-            value = "0x456548A9B56eFBbD89Ca0309edd17a9E20b04018",
+            value = "0x9aBD84EAE174c6cf7FBf67cBb550930845866e05",
         ),
     ]
     return schema.Schema(

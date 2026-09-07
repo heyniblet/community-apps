@@ -4,15 +4,14 @@
 # Description: Live FBI Most Wanted ticker with classic FBI blue & gold colors.
 #              Reward amount drives color brightness — higher reward = brighter gold.
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
 
 FBI_API = "https://api.fbi.gov/wanted/v1/list"
-CACHE_KEY = "fbiwanted_v2"
 CACHE_TTL = 3600
+MAX_RESPONSE_BYTES = 1024 * 1024
 
 # FBI Blue palette
 NAVY = "#003087"  # deep FBI navy — header bg
@@ -61,11 +60,6 @@ def format_reward(reward_max):
     return ""
 
 def get_wanted(category):
-    cache_key = CACHE_KEY + "_" + category
-    cached = cache.get(cache_key)
-    if cached:
-        return json.decode(cached)
-
     url = FBI_API
     if category != "all":
         url = FBI_API + "?field_offices=" + category
@@ -77,19 +71,26 @@ def get_wanted(category):
     if resp.status_code != 200:
         return [{"name": "FBI API unavailable", "charges": "", "reward_max": 0, "reward_str": "", "armed": False, "caution": ""}]
 
-    data = json.decode(resp.body())
-    items = data.get("items", [])
+    body = resp.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    items = data.get("items", []) if type(data) == "dict" else []
+    if type(items) != "list":
+        return [{"name": "Invalid FBI response", "charges": "", "reward_max": 0, "reward_str": "", "armed": False, "caution": ""}]
 
     wanted = []
-    for item in items:
+    for item in items[:20]:
+        if type(item) != "dict":
+            continue
         name = item.get("title", "Unknown") or "Unknown"
+        name = str(name)[:120]
         subjects = item.get("subjects", []) or []
-        charges = subjects[0] if subjects else ""
+        charges = str(subjects[0])[:120] if type(subjects) == "list" and subjects else ""
         reward_max = item.get("reward_max", 0) or 0
+        reward_max = reward_max if type(reward_max) in ["int", "float"] and reward_max >= 0 else 0
         reward_str = format_reward(reward_max)
-        warning = item.get("warning_message", "") or ""
+        warning = str(item.get("warning_message", "") or "")[:500]
         armed = "ARMED" in warning.upper() or "DANGEROUS" in warning.upper()
-        caution = strip_html(item.get("caution", "") or "")
+        caution = strip_html(str(item.get("caution", "") or "")[:2000])
 
         wanted.append({
             "name": name,
@@ -103,7 +104,6 @@ def get_wanted(category):
     if not wanted:
         return [{"name": "No results found", "charges": "", "reward_max": 0, "reward_str": "", "armed": False, "caution": ""}]
 
-    cache.set(cache_key, json.encode(wanted), ttl_seconds = CACHE_TTL)
     return wanted
 
 def person_screen(person):
@@ -182,8 +182,10 @@ def person_screen(person):
     )
 
 def main(config):
-    max_items = int(config.get("max_items") or "5")
+    max_items_value = str(config.get("max_items") or "5")
+    max_items = int(max_items_value) if max_items_value in ["3", "5", "8"] else 5
     category = config.get("category") or "all"
+    category = category if category in ["all", "newyork", "losangeles", "chicago", "washingtondc", "miami"] else "all"
     wanted = get_wanted(category)[:max_items]
     screens = [person_screen(p) for p in wanted]
 

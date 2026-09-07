@@ -5,11 +5,13 @@ Description: Displays Wikipedia's featured image of the day.
 Author: sch0lars
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("time.star", "time")
 
 CACHE_DURATION = 14400
+USER_AGENT = "Niblet/1.0 (https://heyniblet.com; support@heyniblet.com)"
 
 def main():
     TODAY = time.now().format("2006/01/02")
@@ -21,7 +23,7 @@ def main():
     json_dict_today = call_api(TODAY)
 
     if "error" in json_dict_today:
-        error_message = json_dict_today["error"]
+        error_message = "Featured image is currently unavailable"
     else:
         # Check that the API response contains the image information
         if has_image_information(json_dict_today):
@@ -39,11 +41,11 @@ def main():
                     error_message = "Featured image is currently unavailable"
 
     # If there's an error message, display it
-    if error_message:
+    if error_message or not image:
         return render.Root(
             child = render.Box(
                 child = render.WrappedText(
-                    content = error_message,
+                    content = error_message or "Featured image is currently unavailable",
                     width = 64,
                     align = "center",
                     color = "#f66",
@@ -68,16 +70,19 @@ def call_api(date):
     :param date: a string representation of a date in YYYY/MM/DD format
     :returns: a JSON dictionary containing information from the API response
     """
-    api_url = "https://api.wikimedia.org/feed/v1/wikipedia/en/featured/%s" % date
+    api_url = "https://en.wikipedia.org/api/rest_v1/feed/featured/%s" % date
 
     # Call the API and cache the results for 4 hours
-    resp = http.get(api_url, ttl_seconds = CACHE_DURATION, headers = {"User-Agent": "TidbytApp/1.0"})
+    resp = http.get(api_url, ttl_seconds = CACHE_DURATION, headers = {"User-Agent": USER_AGENT})
 
     # Ensure we get a 200 status response
     if resp.status_code != 200:
         return {"error": "Wikipedia API request failed with status %d" % resp.status_code}
 
-    return resp.json()
+    body = resp.body()
+    if len(body) > 1024 * 1024:
+        return {"error": "Featured feed is too large"}
+    return json.decode(body, {})
 
 def has_image_information(json_dict):
     """
@@ -86,7 +91,7 @@ def has_image_information(json_dict):
     :param json_dict: a JSON dictionary containing information from the API response
     :returns: a Boolean value denoting whether required keys are present within the JSON dictionary
     """
-    return "image" in json_dict.keys() and "thumbnail" in json_dict["image"].keys()
+    return type(json_dict) == "dict" and type(json_dict.get("image")) == "dict" and type(json_dict["image"].get("thumbnail")) == "dict" and type(json_dict["image"]["thumbnail"].get("source")) == "string"
 
 def retrieve_image(json_dict):
     """
@@ -97,9 +102,13 @@ def retrieve_image(json_dict):
     """
 
     # Get the image URL from the response
-    image_url = json_dict["image"]["thumbnail"]["source"]
+    image_url = json_dict["image"]["thumbnail"]["source"].replace("/960px-", "/330px-")
+    if not (image_url.startswith("https://upload.wikimedia.org/") or image_url.startswith("https://thumb.wikimedia.org/")):
+        return ""
 
     # Retrieve the actual image data from the source URL and cache the results for 4 hours
-    image = http.get(image_url, ttl_seconds = CACHE_DURATION).body()
-
-    return image
+    response = http.get(image_url, ttl_seconds = CACHE_DURATION, headers = {"User-Agent": USER_AGENT})
+    if response.status_code != 200:
+        return ""
+    body = response.body()
+    return body if len(body) <= 2 * 1024 * 1024 else ""

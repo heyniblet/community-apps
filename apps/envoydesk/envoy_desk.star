@@ -9,23 +9,16 @@ load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 
-OAUTH_AUTH_URL = "https://app.envoy.com/a/auth/v0/authorize"
-OAUTH_TOKEN_URL = "https://app.envoy.com/a/auth/v0/token"
-OAUTH_CLIENT_ID = "e46a9a78-363b-11ee-9d88-4fb3c69edd7f"
-OAUTH_SCOPES = [
-    "locations.read",
-    "reservations.read",
-    "spaces.read",
-    "employees.read",
-]
-OAUTH2_CLIENT_SECRET = secret.decrypt("AV6+xWcEJh2+FimQ3RnzWZv10rlGletKaq0OLM8RcKK4yp7GX+Q5d5NyZqddwFTvHVprjYYC5VSF6kcGQX2a8pbbGtYUeUP9Ctbv2T+vaai/9TPkQ0/7gYYS3/fMp3+ovuRyrEUHWraFmOcYd+xWHS2U4hd3bZNhDOiD1fk3aOCE16g7mK8utGFCkemRTtuU5+1bTKy+T313EiIgEn/trBonRfR9CEGdojDqYjWGVNshYcAdF0cQYiZ1tshw+9Ov93cDl2XQekk8jk35VOWmoG/r38baHCfeSTQV2K4pDjjYH+B9Zi8=")
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_RESERVATIONS = 500
 
 def getDeskInfo(config):
-    envoy_token = config.get("envoy_token") or ""
-    desk_id = config.get("desk_id") or ""
-    floor_ids = config.get("floor_ids") or ""
+    envoy_token = safe_token(config.get("envoy_token"))
+    desk_id = safe_id(config.get("desk_id"), False)
+    floor_ids = safe_id(config.get("floor_ids"), True)
+    if not envoy_token or not desk_id or not floor_ids:
+        return None
 
     url = "https://api.envoy.com/v1/reservations"
     params = {
@@ -39,22 +32,26 @@ def getDeskInfo(config):
 
     res = http.get(url, params = params, headers = headers)
 
-    if res.status_code != 200:
-        fail("GET %s failed with status %d: %s", url, res.status_code, res.body())
-
-    reservations = res.json()["data"]
+    body = res.body()
+    payload = json.decode(body, None) if res.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    reservations = payload.get("data") if type(payload) == "dict" else None
+    if type(reservations) != "list":
+        return None
 
     desk_reservation = None
-    for reservation in reservations:
-        if reservation["space"]["id"] == desk_id:
+    for reservation in reservations[:MAX_RESERVATIONS]:
+        space = reservation.get("space") if type(reservation) == "dict" else None
+        if type(space) == "dict" and str(space.get("id") or "") == desk_id:
             desk_reservation = reservation
             break
 
     if desk_reservation != None:
+        reserved_by = desk_reservation.get("reservedBy")
+        reserved_space = desk_reservation.get("space")
         return {
             "is_available": False,
-            "full_name": desk_reservation["reservedBy"]["name"],
-            "desk_name": desk_reservation["space"]["name"],
+            "full_name": safe_text(reserved_by.get("name") if type(reserved_by) == "dict" else None, "Reserved"),
+            "desk_name": safe_text(reserved_space.get("name") if type(reserved_space) == "dict" else None, desk_id),
         }
 
     url = "https://api.envoy.com/v1/spaces/%s" % (desk_id)
@@ -65,24 +62,35 @@ def getDeskInfo(config):
 
     res = http.get(url, headers = headers)
 
-    if res.status_code != 200:
-        fail("GET %s failed with status %d: %s", url, res.status_code, res.body())
-
-    desk = res.json()["data"]
-
-    print(desk)
+    body = res.body()
+    payload = json.decode(body, None) if res.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
+    desk = payload.get("data") if type(payload) == "dict" else None
+    if type(desk) != "dict":
+        return None
 
     return {
-        "is_available": desk["isAvailable"],
-        "desk_name": desk["name"],
-        "assigned": desk["assignedTo"] != "" and desk["assignedTo"] != None,
+        "is_available": desk.get("isAvailable") == True,
+        "desk_name": safe_text(desk.get("name"), desk_id),
+        "assigned": bool(desk.get("assignedTo")),
     }
 
-def main(config):
-    envoy_token = config.get("envoy_token") or "noToken"
-    desk_id = config.get("desk_id") or ""
+def safe_token(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 4096 and "\r" not in value and "\n" not in value else ""
 
-    if envoy_token == "noToken":
+def safe_id(value, commas):
+    value = str(value or "").strip()
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:." + ("," if commas else "")
+    return value if value and len(value) <= 512 and all([char in allowed for char in value.elems()]) else ""
+
+def safe_text(value, fallback):
+    return str(value or fallback)[:120]
+
+def main(config):
+    envoy_token = safe_token(config.get("envoy_token"))
+    desk_id = safe_id(config.get("desk_id"), False)
+
+    if not envoy_token:
         return render.Root(
             child = render.Marquee(
                 child = render.Text("Please authenticate to Envoy."),
@@ -98,6 +106,8 @@ def main(config):
         )
 
     desk_info = getDeskInfo(config)
+    if desk_info == None:
+        return render.Root(child = render.Marquee(child = render.Text("Envoy data unavailable."), width = 64))
 
     if "full_name" in desk_info:
         return render.Root(
@@ -207,47 +217,16 @@ def main(config):
             ),
         )
 
-def oauth_handler(params):
-    # deserialize oauth2 parameters, see example above.
-    params = json.decode(params)
-
-    # exchange parameters and client secret for an access token
-    res = http.post(
-        url = OAUTH_TOKEN_URL,
-        headers = {
-            "Accept": "application/json",
-        },
-        form_body = dict(
-            grant_type = "authorization_code",
-            code = params["code"],
-            client_id = OAUTH_CLIENT_ID,
-            client_secret = OAUTH2_CLIENT_SECRET,
-        ),
-        form_encoding = "application/x-www-form-urlencoded",
-    )
-    if res.status_code != 200:
-        fail("token request failed with status code: %d - %s" %
-             (res.status_code, res.body()))
-
-    token_params = res.json()
-
-    access_token = token_params["access_token"]
-
-    return access_token
-
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
+            schema.Text(
                 id = "envoy_token",
-                name = "Envoy",
-                desc = "Connect your Envoy account.",
+                name = "Envoy API Token",
+                desc = "Bearer token from an Envoy OAuth integration with reservations.read and spaces.read scopes.",
                 icon = "code",
-                handler = oauth_handler,
-                client_id = OAUTH_CLIENT_ID,
-                authorization_endpoint = OAUTH_AUTH_URL,
-                scopes = OAUTH_SCOPES,
+                secret = True,
             ),
             schema.Text(
                 id = "desk_id",

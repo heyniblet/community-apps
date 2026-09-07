@@ -34,7 +34,7 @@ def main():
     header_text = render.Padding(child = render.WrappedText("Defector Media"), pad = (4, 0, 0, 0))
     row = render.Row(
         children = [logo, header_text],
-        cross_align = "center,",
+        cross_align = "center",
     )
 
     marq = render.Padding(

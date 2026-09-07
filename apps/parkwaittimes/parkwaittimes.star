@@ -11,6 +11,7 @@ load("images/icon_disney.png", ICON_DISNEY_ASSET = "file")
 load("images/icon_sea_world.png", ICON_SEA_WORLD_ASSET = "file")
 load("images/icon_six_flags.png", ICON_SIX_FLAGS_ASSET = "file")
 load("images/icon_universal.png", ICON_UNIVERSAL_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -24,7 +25,9 @@ COLOR_GREEN = "#4CFF00"
 COLOR_YELLOW = "#FFD800"
 COLOR_RED = "#FF0000"
 COLOR_GRAY = "#A0A0A0"
-CACHE_TIME_SECONDS = 300  # cache for 5 minutes per https://queue-times.com/en-US/pages/api
+PARKS_CACHE_SECONDS = 86400
+WAIT_CACHE_SECONDS = 300  # data updates every 5 minutes per queue-times.com/pages/api
+MAX_RESPONSE_BYTES = 512 * 1024
 PARKS_URL = "https://queue-times.com/parks.json"
 
 DEFAULT_PARK = "5"
@@ -47,18 +50,23 @@ def main(config):
     show_actual_wait_times = config.bool("show_actual_wait_times", DEFAULT_SHOW_ACTUAL_WAIT_TIMES)
     show_closed_rides = config.bool("show_closed_rides", DEFAULT_SHOW_CLOSED_RIDES)
     little_or_no_wait_max_minutes = int(config.get("little_or_no_wait_max_minutes", DEFAULT_LITTLE_OR_NO_WAIT_MAX_MINUTES))
-    moderate_wait_max_minutes = int(config.get("moderate_wait_max_minutes", DEFAULT_MODERATE_WAIT_MAX_MINUTES))
+    moderate_wait_max_minutes = int(config.get("moderate_wait_max_minutes", config.get("moderate_wait_options", DEFAULT_MODERATE_WAIT_MAX_MINUTES)))
     selected_font = config.get("font", DEFAULT_FONT)
     pixels_between_rides = int(config.get("pixels_between_rides", DEFAULT_PIXELS_BETWEEN_RIDES))
+    park_id = config.get("park", DEFAULT_PARK)
+    if not re.match(r"^\d{1,6}$", park_id):
+        fail("invalid Queue-Times park ID")
 
-    park_list = get_http_data(PARKS_URL)
-    park_details = get_http_data("https://queue-times.com/parks/" + config.get("park", DEFAULT_PARK) + "/queue_times.json")
+    park_list = get_http_data(PARKS_URL, PARKS_CACHE_SECONDS)
+    park_details = get_http_data("https://queue-times.com/parks/" + park_id + "/queue_times.json", WAIT_CACHE_SECONDS)
+    if type(park_list) != "list" or type(park_details) != "dict" or type(park_details.get("lands")) != "list" or type(park_details.get("rides")) != "list":
+        fail("Queue-Times returned invalid data")
     park_name = "park name"
     operator_name = "operator name"
 
     for x in range(len(park_list)):
         for y in range(len(park_list[x]["parks"])):
-            if str(int(park_list[x]["parks"][y]["id"])) == config.get("park", DEFAULT_PARK):
+            if str(int(park_list[x]["parks"][y]["id"])) == park_id:
                 park_name = park_list[x]["parks"][y]["name"]
                 operator_name = park_list[x]["name"]
 
@@ -169,7 +177,7 @@ def get_operator_logo(operator_name):
     else:
         return render.Box(height = 1, width = 1)
 
-def get_http_data(url):
+def get_http_data(url, ttl_seconds):
     """Attempts to retrieve JSON data from a remote URL
 
     Args:
@@ -178,9 +186,10 @@ def get_http_data(url):
     Returns:
         JSON data from the specified url
     """
-    res = http.get(url, ttl_seconds = CACHE_TIME_SECONDS)
-    if res.status_code != 200:
-        fail("GET %s failed with status %d: %s", url, res.status_code, res.body())
+    res = http.get(url, ttl_seconds = ttl_seconds)
+    body = res.body()
+    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        fail("Queue-Times request failed with status %d" % res.status_code)
     return res.json()
 
 def get_schema():
@@ -189,7 +198,9 @@ def get_schema():
     Returns:
         Application configuration options
     """
-    park_json = get_http_data(PARKS_URL)
+    park_json = get_http_data(PARKS_URL, PARKS_CACHE_SECONDS)
+    if type(park_json) != "list":
+        fail("Queue-Times returned an invalid park list")
     parks = []
     parks.append(schema.Option(display = "None", value = "0"))
 
@@ -239,7 +250,7 @@ def get_schema():
                 options = little_or_no_wait_options,
             ),
             schema.Dropdown(
-                id = "moderate_wait_options",
+                id = "moderate_wait_max_minutes",
                 name = "Moderate Wait Max Minutes",
                 desc = "The max minutes a wait is considered moderate",
                 icon = "clock",

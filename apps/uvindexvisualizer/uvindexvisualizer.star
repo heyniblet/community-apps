@@ -1,8 +1,8 @@
 """Multi-view UV exposure screen for Tidbyt."""
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -29,7 +29,7 @@ DEFAULT_LOCATION = {
     "locality": "Kahala",
     "timezone": "Pacific/Honolulu",
 }
-API_URL = "https://currentuvindex.com/api/v1/uvi?latitude=%s&longitude=%s"
+API_URL = "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&current=uv_index&hourly=uv_index&past_days=1&forecast_days=7&timezone=UTC"
 TIME_FORMAT = "2006-01-02T15:04:05Z"
 DEFAULT_REFRESH_MINUTES = 30
 ONE_DAY = time.parse_duration("24h")
@@ -119,17 +119,46 @@ def parse_refresh_seconds(raw):
     return m * 60
 
 def fetch_uv(lat, lng, ttl_seconds):
-    key = "uv:%s:%s" % (lat, lng)
-    cached = cache.get(key)
-    if cached:
-        return json.decode(cached)
+    lat = coordinate(lat, DEFAULT_LOCATION["lat"], -90, 90)
+    lng = coordinate(lng, DEFAULT_LOCATION["lng"], -180, 180)
     url = API_URL % (lat, lng)
     resp = http.get(url, ttl_seconds = ttl_seconds)
-    if resp.status_code != 200:
+    body = resp.body()
+    raw = json.decode(body, {}) if resp.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
+    if type(raw) != "dict":
         return None
-    d = resp.json()
-    cache.set(key, json.encode(d), ttl_seconds = ttl_seconds)
-    return d
+    current = raw.get("current", {})
+    hourly = raw.get("hourly", {})
+    times = hourly.get("time", []) if type(hourly) == "dict" else []
+    values = hourly.get("uv_index", []) if type(hourly) == "dict" else []
+    if type(current) != "dict" or current.get("uv_index") == None or type(times) != "list" or type(values) != "list":
+        return None
+    now_time = normalized_time(current.get("time"))
+    if not now_time:
+        return None
+    points = []
+    for i in range(min(len(times), len(values), 240)):
+        point_time = normalized_time(times[i])
+        if point_time and values[i] != None:
+            points.append({"time": point_time, "uvi": values[i]})
+    return {
+        "ok": True,
+        "now": {"time": now_time, "uvi": current["uv_index"]},
+        "history": [point for point in points if point["time"] < now_time],
+        "forecast": [point for point in points if point["time"] >= now_time],
+    }
+
+def coordinate(value, fallback, minimum, maximum):
+    text = str(value)
+    if not re.match("^-?[0-9]{1,3}([.][0-9]+)?$", text):
+        return fallback
+    number = float(text)
+    return text if minimum <= number and number <= maximum else fallback
+
+def normalized_time(value):
+    if type(value) != "string":
+        return None
+    return value + ":00Z" if len(value) == 16 else value
 
 def all_points(data):
     pts = []

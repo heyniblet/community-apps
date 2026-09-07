@@ -45,7 +45,7 @@ DIVIDER_COLOR = "#666666"  # Grey
 
 # Helper function to parse the arrival time string
 def parse_arrival_time(eta_str):
-    if not eta_str or eta_str == "--":
+    if type(eta_str) != "string" or not eta_str or eta_str == "--":
         return "None"
 
     # Handle "Due" case first
@@ -101,9 +101,11 @@ def main(config):
     route_id = config.get("route_id", "12")
     stop_id = config.get("stop_id")
 
-    if not stop_id:
+    if route_id not in ROUTES:
+        route_id = "12"
+    if type(stop_id) != "string" or not stop_id.isdigit() or len(stop_id) > 10:
         return render.Root(
-            child = render.Text("Please configure Stop ID"),
+            child = render.Text("Configure numeric Stop ID"),
         )
 
     # --- Get Predictions (Both Directions) ---
@@ -116,7 +118,7 @@ def main(config):
         "stopID": stop_id,
         "directionID": "1",
     }
-    preds_resp_in = http.get(PREDICTIONS_URL, params = preds_params_in)
+    preds_resp_in = http.get(PREDICTIONS_URL, params = preds_params_in, ttl_seconds = 30)
 
     if preds_resp_in.status_code == 200:
         preds_data_in = preds_resp_in.json()
@@ -142,7 +144,7 @@ def main(config):
         "stopID": stop_id,
         "directionID": "0",
     }
-    preds_resp_out = http.get(PREDICTIONS_URL, params = preds_params_out)
+    preds_resp_out = http.get(PREDICTIONS_URL, params = preds_params_out, ttl_seconds = 30)
 
     if preds_resp_out.status_code == 200:
         preds_data_out = preds_resp_out.json()

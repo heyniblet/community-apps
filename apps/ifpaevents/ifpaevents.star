@@ -28,22 +28,29 @@ def main(config):
     location = json.decode(location_cfg)
     max_distance = config.str("max_distance", DEFAULT_MAX_DISTANCE)
 
-    apiKey = config.get("ifpa_api_key")
-
-    upcoming_events_url = "https://api.ifpapinball.com/v2/calendar/search?latitude=%s&longitude=%s&distance=%s&distance_type=Miles&api_key=%s" % (location["lat"], location["lng"], max_distance, apiKey)
-    upcoming_events_data = http.get(upcoming_events_url, ttl_seconds = CACHE_TIME_IN_SECONDS)
+    api_key = config.str("ifpa_api_key")
     upcoming_events_breakout = []
     upcoming_events = []
 
-    if upcoming_events_data.status_code != 200:
-        print("IFPA request failed with status %d" % upcoming_events_data.status_code)
-    else:
-        print("Cache hit!" if (upcoming_events_data.headers.get("Tidbyt-Cache-Status") == "HIT") else "Cache miss!")
+    calendar = []
+    if api_key and max_distance and len(max_distance) <= 4 and not any([c not in "0123456789" for c in max_distance.elems()]):
+        response = http.get(
+            "https://api.ifpapinball.com/v2/calendar/search",
+            params = {
+                "latitude": str(location.get("lat", "")),
+                "longitude": str(location.get("lng", "")),
+                "distance": max_distance,
+                "distance_type": "Miles",
+                "api_key": api_key,
+            },
+        )
+        if response.status_code == 200:
+            calendar = response.json().get("calendar", [])[:3]
 
-    #if (len(upcoming_events_data.json()["calendar"]) > 0):
-    if (upcoming_events_data.json().get("calendar")):
-        for i in range(3):
-            upcoming_events_breakout.append(upcoming_events_data.json()["calendar"][i]["tournament_name"] + " in " + upcoming_events_data.json()["calendar"][i]["city"] + " on " + upcoming_events_data.json()["calendar"][i]["start_date"])
+    if calendar:
+        for event_data in calendar:
+            if event_data.get("tournament_name") and event_data.get("city") and event_data.get("start_date"):
+                upcoming_events_breakout.append(event_data["tournament_name"] + " in " + event_data["city"] + " on " + event_data["start_date"])
 
         for event in upcoming_events_breakout:
             upcoming_events.append(
@@ -64,7 +71,7 @@ def main(config):
             render.Row(
                 children = [
                     render.Marquee(
-                        child = render.Text("TILT! The API Key Is Missing!", font = "tom-thumb"),
+                        child = render.Text("No upcoming events", font = "tom-thumb"),
                         width = 64,
                         offset_start = 32,
                         offset_end = 32,

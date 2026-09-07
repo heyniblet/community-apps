@@ -6,7 +6,7 @@ desc: Shows the latest published headline on DailyWire.com.
 author: bmdelaune
 fileName: dw_headline.star
 packageName: dwheadline
-recommendedInterval: 5
+recommendedInterval: 10
 category: news
 tags:
   - news

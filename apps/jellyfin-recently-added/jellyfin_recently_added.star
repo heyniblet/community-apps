@@ -16,8 +16,6 @@ load("schema.star", "schema")
 
 JELLYFIN_ICON = JELLYFIN_ICON_ASSET.readall()
 
-REFRESH_TIME = 86400  # once a day
-
 SAMPLE_DATA = {
     "Items": [
         {
@@ -41,30 +39,47 @@ SAMPLE_IMAGES = [
     SAMPLE3_ASSET.readall(),
 ]
 
-def requestStatus(serverIP, serverPort, collectionName, apiKey, userId):
+def server_url(serverIP, serverPort):
+    serverIP = (serverIP or "").strip().rstrip("/")
+    serverPort = (serverPort or "").strip()
+    if not serverIP or "@" in serverIP or "?" in serverIP or "#" in serverIP or " " in serverIP or "\t" in serverIP or "\n" in serverIP:
+        return None
+    if serverIP.startswith("https://"):
+        return serverIP
+    if "/" in serverIP or not serverPort.isdigit() or int(serverPort) < 1 or int(serverPort) > 65535:
+        return None
+    return "https://%s:%s" % (serverIP, serverPort)
+
+def safe_id(value):
+    return type(value) == "string" and len(value) > 0 and len(value) <= 128 and all([char.isalnum() or char in "-_" for char in value.elems()])
+
+def requestStatus(base_url, collectionName, apiKey, userId):
     res = http.get(
-        "http://%s:%s/HomeScreen/Section/RecentlyAdded%s?api_key=%s&UserId=%s" % (serverIP, serverPort, collectionName, apiKey, userId),
+        base_url + "/HomeScreen/Section/RecentlyAdded%s" % collectionName,
         headers = {
             "Accept": "application/json",
+            "X-Emby-Token": apiKey,
         },
-        ttl_seconds = REFRESH_TIME,
+        params = {"UserId": userId},
     )
     if res.status_code != 200:
-        fail("request failed with status %d", res.status_code)
-    res = res.json()
-    return res
+        return None
+    data = res.json()
+    return data if type(data) == "dict" and type(data.get("Items")) == "list" else None
 
-def requestThumb(serverIP, serverPort, apiKey, id):
+def requestThumb(base_url, apiKey, id):
+    if not safe_id(id):
+        return None
     res = http.get(
-        "http://%s:%s/Items/%s/Images/Primary?fillHeight=27&fillWidth=21&quality=96&api_key=%s" % (serverIP, serverPort, id, apiKey),
+        base_url + "/Items/%s/Images/Primary" % id,
         headers = {
             "Accept": "image/jpeg",
+            "X-Emby-Token": apiKey,
         },
-        ttl_seconds = REFRESH_TIME,
+        params = {"fillHeight": "27", "fillWidth": "21", "quality": "96"},
     )
-    if res.status_code != 200:
-        fail("request failed with status %d", res.status_code)
-    return res.body()
+    body = res.body()
+    return body if res.status_code == 200 and len(body) <= 4194304 else None
 
 def main(config):
     usingSampleData = False
@@ -76,9 +91,12 @@ def main(config):
     titleText = config.get("titleText", "Recently added")
     showTitleCard = config.bool("showTitleCard", True)
     title = ""
+    base_url = server_url(serverIP, serverPort)
 
-    if not serverIP or not serverPort or not apiKey or not userId:
+    if not serverIP:
         usingSampleData = True
+    elif not base_url or not apiKey or not safe_id(userId) or collectionName not in ("Movies", "Shows"):
+        return message("Use public HTTPS and valid Jellyfin settings")
 
     if usingSampleData:
         newData = {"Items": []}
@@ -88,26 +106,33 @@ def main(config):
             newData["Items"][i]["Id"] = SAMPLE_IMAGES[i]
         data = newData
     else:
-        serverPort = int(serverPort)
-        data = requestStatus(serverIP, serverPort, collectionName, apiKey, userId)
+        data = requestStatus(base_url, collectionName, apiKey, userId)
+        if data == None:
+            return message("Jellyfin is unavailable")
 
     recentlyAdded = []
 
     n = 3
-    l = len(data["Items"])
+    items = data.get("Items", [])
+    l = len(items)
     if l < 3:
         n = l
 
     #only show last 3
     for i in range(0, n):
-        entry = data["Items"][i]
+        entry = items[i]
+        if type(entry) != "dict" or (not usingSampleData and not safe_id(entry.get("Id"))):
+            continue
         id = entry["Id"]
-        title = entry["Name"]
+        title = entry.get("Name", "Unknown")
+        title = title[:120] if type(title) == "string" else "Unknown"
 
         if not usingSampleData:
-            thumbnail = requestThumb(serverIP, serverPort, apiKey, id)
+            thumbnail = requestThumb(base_url, apiKey, id)
         else:
             thumbnail = entry["Id"]
+        if not thumbnail:
+            continue
 
         recentlyAdded.append(
             render.Column(
@@ -121,11 +146,13 @@ def main(config):
                 ],
             ),
         )
-        if i < l - 1:
+        if i < n - 1:
             recentlyAdded.append(
                 render.Box(height = 32, width = 1, color = "#a160c4"),
             )
 
+    if not recentlyAdded:
+        return message("Nothing recently added")
     if showTitleCard:
         return render.Root(
             render.Stack(
@@ -209,6 +236,9 @@ def main(config):
             ),
         )
 
+def message(text):
+    return render.Root(child = render.WrappedText(text, align = "center"))
+
 def get_schema():
     collectionNameOptions = [
         schema.Option(
@@ -226,14 +256,14 @@ def get_schema():
         fields = [
             schema.Text(
                 id = "serverIP",
-                name = "Server IP",
-                desc = "IP of Jellyfin Server",
+                name = "Jellyfin Server URL",
+                desc = "Public HTTPS Jellyfin or reverse-proxy URL",
                 icon = "gear",
             ),
             schema.Text(
                 id = "serverPort",
                 name = "Server Port",
-                desc = "Ex: 8096",
+                desc = "Optional when the server field is a full HTTPS URL",
                 icon = "gear",
             ),
             schema.Text(

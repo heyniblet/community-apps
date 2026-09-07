@@ -15,7 +15,6 @@ load("schema.star", "schema")
 
 TILT_LOGO = TILT_LOGO_ASSET.readall()
 
-CACHE_TTL_SECONDS = 300
 DEFAULT_SHEET_LINK = ""
 DEFAULT_GOOGLE_API = ""
 DEFAULT_FG = 1.010
@@ -24,7 +23,10 @@ REGULAR_FONT = "tom-thumb"
 def main(config):
     api = config.str("googleAPI", DEFAULT_GOOGLE_API)
     link = config.str("link", DEFAULT_SHEET_LINK)
-    b_fg = float(config.str("fg", DEFAULT_FG))
+    fg = config.str("fg", str(DEFAULT_FG))
+    if not re.match("^\\d+(\\.\\d+)?$", fg):
+        return render_error("Invalid final gravity")
+    b_fg = float(fg)
 
     if (link == "" or api == ""):
         # user did not specify necessary configuration, use default values to demo app
@@ -55,9 +57,17 @@ def main(config):
         json_f_g = [["BLACK", "Demo Brew"]]
     else:
         # user entered configuration, try to retrieve the live data
-        id = re.findall("[\\w\\-]{40,50}", link)[0]
+        parts = link.split("/d/")
+        id = parts[1].split("/")[0] if len(parts) == 2 else ""
+        if len(id) < 20 or len(id) > 128 or not all([char.isalnum() or char in "_-" for char in id.elems()]):
+            return render_error("Invalid Google Sheet link")
         json_b = get_json(id, "B2:B23", api)
         json_f_g = get_json(id, "F2:G2", api)
+        if not json_b or not json_f_g or type(json_f_g[0]) != "list" or len(json_f_g[0]) < 2:
+            return render_error("Could not load Tilt data")
+        for row in [0, 6, 7, 14, 20, 21]:
+            if len(json_b) <= row or type(json_b[row]) != "list" or not json_b[row]:
+                return render_error("Invalid Tilt sheet layout")
 
     # parse cells B8:B23
     b_dob = json_b[0][0].split()[0]
@@ -73,7 +83,7 @@ def main(config):
 
     # ensure the user-specified fg is possible
     if b_fg < 1 or b_fg >= b_og:
-        fail("Final gravity must be > 1 and less than OG")
+        return render_error("Final gravity must be below OG")
 
     return render.Root(
         child = render.Column(
@@ -217,6 +227,11 @@ def render_title(b_name, t_color):
         ],
     )
 
+def render_error(message):
+    return render.Root(
+        child = render.WrappedText(content = message, width = 64, height = 32, align = "center"),
+    )
+
 def render_animation(test):
     return animation.Transformation(
         child = test,
@@ -242,14 +257,15 @@ def render_animation(test):
     )
 
 def get_json(id, range, api):
-    url = "https://sheets.googleapis.com/v4/spreadsheets/{0}/values/Report!{1}?key={2}".format(id, range, api)
+    url = "https://sheets.googleapis.com/v4/spreadsheets/{0}/values/Report!{1}".format(id, range)
 
     # download the JSON data
-    rep = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
+    rep = http.get(url, params = {"key": api})
     if rep.status_code != 200:
-        fail("Could not retrieve tilt data. Failed with status %d", rep.status_code)
+        return None
 
-    return rep.json()["values"]
+    data = rep.json()
+    return data.get("values") if type(data) == "dict" and type(data.get("values")) == "list" else None
 
 def get_schema():
     return schema.Schema(

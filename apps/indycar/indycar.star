@@ -239,12 +239,7 @@ def get_schema():
                 icon = "palette",
                 default = DEFAULTS["text_color"],
             ),
-            schema.Generated(
-                id = "nri_generated",
-                source = "datadisplay",
-                handler = show_nri_options,
-            ),
-        ],
+        ] + show_nri_options("nri"),
     )
 
 def show_nri_options(datadisplay):

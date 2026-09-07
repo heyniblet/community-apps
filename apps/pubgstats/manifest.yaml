@@ -6,7 +6,7 @@ desc: Displays individual player's gaming stats from PlayerUnknown's Battlegroun
 author: joes-io
 fileName: pubg_stats.star
 packageName: pubgstats
-recommendedInterval: 5
+recommendedInterval: 30
 category: gaming
 tags:
   - gaming

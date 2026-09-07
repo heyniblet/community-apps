@@ -54,15 +54,17 @@ def render_entity(entity_id, config):
         return 0, None
     if not name:
         name = fetch.get("attributes", {}).get("friendly_name") or config.get(entity_id)
+    name = str(name)[:32]
 
     state = fetch["state"]
-    isnum = (state.count(".") == 1 and state.replace(".", "").isdigit()) or state.isdigit()
-    count = float(state) if isnum else 0
+    parsed = parse_number(state)
+    isnum = parsed != None
+    count = parsed if isnum else 0
     display = humanize.comma(math.round(count * 10) / 10) if isnum else state
 
     unit = ""
     if config.bool("show_units") and "attributes" in fetch and "unit_of_measurement" in fetch["attributes"]:
-        unit = fetch["attributes"]["unit_of_measurement"] + " "
+        unit = str(fetch["attributes"]["unit_of_measurement"])[:12] + " "
 
     return count, render.Row(
         main_align = "space_between",
@@ -82,25 +84,45 @@ def render_entity(entity_id, config):
     )
 
 def get_color(count, config):
-    if not config.get("target_value"):
+    max_target = parse_number(config.get("target_value"))
+    if max_target == None or max_target <= 0:
         return "#fff"
 
     range = ["#AD1A1A", "#ad3a1a", "#ad721a", "#ada11a", "#92ad1a", "#37ad1a"]
-    max_target = float(config.get("target_value"))
     if count >= max_target:
         return range[-1]
 
     i = int(((len(range) - 1) * count) / max_target)
     return range[i]
 
+def parse_number(value):
+    if value == None:
+        return None
+    value = str(value).strip()
+    unsigned = value[1:] if value.startswith("-") else value
+    parts = unsigned.split(".")
+    if not unsigned or len(parts) not in [1, 2] or not all([part.isdigit() for part in parts]):
+        return None
+    return float(value)
+
 def fetch_entity(entity_id, config):
-    if config.get(entity_id):
-        rep = http.get(config.get("ha_url") + "/api/states/" + config.get(entity_id), ttl_seconds = 10, headers = {
-            "Authorization": "Bearer " + config.get("ha_token"),
+    entity = config.get(entity_id)
+    base_url = config.get("ha_url") or ""
+    token = config.get("ha_token") or ""
+    if entity and token and base_url.startswith("https://"):
+        parts = entity.split(".")
+        if len(parts) != 2 or not all([part.replace("_", "").replace("-", "").isalnum() for part in parts]):
+            return None
+        rep = http.get(base_url.rstrip("/") + "/api/states/" + entity, headers = {
+            "Authorization": "Bearer " + token,
         })
         if rep.status_code != 200:
-            fail("%s request failed with status %d: %s" % (entity_id, rep.status_code, rep.body()))
-        return rep.json()
+            return None
+        data = rep.json()
+        if type(data) != "dict" or data.get("state") == None:
+            return None
+        attributes = data.get("attributes") if type(data.get("attributes")) == "dict" else {}
+        return {"state": str(data["state"])[:64], "attributes": attributes}
     return None
 
 def get_schema():
@@ -126,7 +148,7 @@ def get_schema():
             schema.Text(
                 id = "ha_url",
                 name = "HomeAssistant URL",
-                desc = "HomeAssistant URL. The address of your HomeAssistant instance, as a full URL.",
+                desc = "Public HTTPS URL of the Home Assistant instance (port 443).",
                 icon = "book",
             ),
             schema.Text(

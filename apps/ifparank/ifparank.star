@@ -5,7 +5,6 @@ Summary: Display IFPA Ranking
 Description: Display an International Flipper Pinball Association (IFPA) World Ranking.
 """
 
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/pin_icon.png", PIN_ICON_ASSET = "file")
 load("render.star", "render")
@@ -14,27 +13,28 @@ load("schema.star", "schema")
 PIN_ICON = PIN_ICON_ASSET.readall()
 
 def main(config):
-    apiKey = config.get("ifpa_api_key")
-    playerId = config.str("playerId", "1")  # Default to KME, also specified in schema
-    if apiKey == None:
+    api_key = config.str("ifpa_api_key")
+    player_id = config.str("playerId", "1")
+    if not api_key:
         return render.Root(
             child = render.Text("No IFPA API Key provided.", font = "5x8"),
         )
-    IFPA_URL = "https://api.ifpapinball.com/v1/player/" + playerId + "?api_key=" + apiKey
+    if not player_id or len(player_id) > 12 or any([c not in "0123456789" for c in player_id.elems()]):
+        return render.Root(child = render.Text("Invalid player ID", font = "5x8"))
 
-    # Keep a cache of the JSON response from the IFPA servers. Key is the user ID, value is the response as a String
-    #        print ("Calling IFPA API")
-    res = http.get(IFPA_URL, ttl_seconds = 43200)
+    res = http.get(
+        "https://api.ifpapinball.com/v1/player/" + player_id,
+        params = {"api_key": api_key},
+    )
     if res.status_code != 200:
-        fail("IFPA request failed: statusCode =", res.status_code)
-    ifpaCache = json.encode(res.json())  #res.json() converts to dict, but store in cache as a string
-
-    #    else :
-    #        print ("Using cache")
-
-    j = json.decode(ifpaCache)  # need to turn cached string back into a dict
-    ifpa_initial = j["player"]["initials"]
-    ifpa_rank = j["player_stats"]["current_wppr_rank"]
+        return render.Root(child = render.Text("IFPA unavailable", font = "5x8"))
+    data = res.json()
+    player = data.get("player", {})
+    stats = data.get("player_stats", {})
+    if not player.get("initials") or stats.get("current_wppr_rank") == None:
+        return render.Root(child = render.Text("No ranking found", font = "5x8"))
+    ifpa_initial = player["initials"]
+    ifpa_rank = stats["current_wppr_rank"]
 
     return render.Root(
         child = render.Box(

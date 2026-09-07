@@ -105,9 +105,9 @@ def handle_icon(config):
 
     encoded = None
     if icon_name != DISPLAY_ICONOTE:
-        for sublist in ICONS:
-            if icon_name in sublist:
-                encoded = sublist[sublist.index(icon_name)]
+        for icon in ICONS:
+            if icon_name == icon[0]:
+                encoded = icon[1]
                 break
 
     if encoded == None or icon_name == DISPLAY_ICONOTE:
@@ -244,8 +244,8 @@ def get_schema():
         schema.Option(display = "Photo", value = "2"),
     ]
     choose_icon = [
-        schema.Option(display = key, value = value)
-        for key, value in ICONS
+        schema.Option(display = icon[0], value = icon[0])
+        for icon in ICONS
     ]
     choose_image_delay = [
         schema.Option(display = "1 sec", value = "1"),

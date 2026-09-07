@@ -990,7 +990,7 @@ def get_schema():
                 name = "EV Brand",
                 desc = "Logo Selection",
                 icon = "hashtag",
-                default = TESLA_LOGO_18X18,
+                default = "TESLA",
                 options = [
                     schema.Option(
                         display = "VW",

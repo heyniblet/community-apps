@@ -5,7 +5,6 @@ Description: Flights nearby using data from Flightradar integration in HA
 Author: motoridersd
 """
 
-load("cache.star", "cache")
 load("db.star", "DB")
 load("encoding/json.star", "json")
 load("filter.star", "filter")
@@ -343,7 +342,6 @@ CATEGORY_ICONS = {
 }
 
 def get_airplane_shape(flight):
-    print(flight)
     if "aircraft_code" in flight:
         type_designator = flight["aircraft_code"]
     else:
@@ -375,41 +373,51 @@ def get_airplane_shape(flight):
     return SHAPES["unknown"]
 
 def get_entity_status(ha_server, entity_id, token):
-    if ha_server == None:
-        #fail("Home Assistant server not configured")
+    if not ha_server or not valid_entity_id(entity_id) or not token:
         return None
 
-    if entity_id == None:
-        #fail("Entity ID not configured")
+    rep = http.get("%s/api/states/%s" % (ha_server.rstrip("/"), entity_id), headers = {
+        "Authorization": "Bearer %s" % token,
+    })
+    if rep.status_code != 200 or len(rep.body()) > 2 * 1024 * 1024:
         return None
-
-    if token == None:
-        #fail("Bearer token not configured")
-        return None
-
-    state_res = None
-    cache_key = "%s.%s" % (ha_server, entity_id)
-    cached_res = cache.get(cache_key)
-    if cached_res != None:
-        state_res = json.decode(cached_res)
-    else:
-        rep = http.get("%s/api/states/%s" % (ha_server, entity_id), headers = {
-            "Authorization": "Bearer %s" % token,
-        })
-        if rep.status_code != 200:
-            return None
-
-        state_res = rep.json()
-        cache.set(cache_key, rep.body(), ttl_seconds = 10)
-    return state_res
+    state_res = json.decode(rep.body(), {})
+    return state_res if type(state_res) == "dict" else None
 
 def get_ha_location(base_url, token):
-    url = "%s/api/config" % base_url
-    res = http.get(url, headers = {"Authorization": "Bearer %s" % token, "content-type": "application/json"}, ttl_seconds = 86400)
-    if res.status_code != 200:
+    url = "%s/api/config" % base_url.rstrip("/")
+    res = http.get(url, headers = {"Authorization": "Bearer %s" % token, "content-type": "application/json"})
+    if res.status_code != 200 or len(res.body()) > 256 * 1024:
         return None
-    data = res.json()
+    data = json.decode(res.body(), {})
+    if type(data) != "dict" or type(data.get("latitude")) not in ["int", "float"] or type(data.get("longitude")) not in ["int", "float"]:
+        return None
     return data.get("latitude"), data.get("longitude")
+
+def valid_entity_id(value):
+    return type(value) == "string" and value and len(value) <= 128 and all([char.isalnum() or char in "_.-" for char in value.codepoints()])
+
+def valid_server(value):
+    if type(value) != "string" or not value or len(value) > 2048 or "\r" in value or "\n" in value:
+        return False
+    if not value.startswith("https://") and not value.startswith("http://"):
+        return False
+    authority = value.split("://", 1)[1].rstrip("/")
+    return authority and "/" not in authority and "?" not in authority and "#" not in authority
+
+def valid_code(value):
+    return type(value) == "string" and value and len(value) <= 8 and all([char.isalnum() for char in value.codepoints()])
+
+def safe_label(value, maximum):
+    return value[:maximum] if type(value) == "string" and value else None
+
+def valid_color(value, fallback):
+    if type(value) != "string" or len(value) != 7 or not value.startswith("#"):
+        return fallback
+    return value if all([char in "0123456789abcdefABCDEF" for char in value[1:].codepoints()]) else fallback
+
+def valid_png(value):
+    return type(value) == "string" and len(value) >= 8 and len(value) <= 2 * 1024 * 1024 and value[1:4] == "PNG"
 
 def calculate_radar_position(home_lat, home_lon, plane_lat, plane_lon, angle_offset = 0, radius_km = 50):
     # Simplified equirectangular projection for small distances
@@ -460,7 +468,7 @@ def skip_execution():
     return []
 
 def render_radar_view(flight, home_lat, home_lon, angle_offset = 0, scale = 1, colors = None, plane_img = None):
-    if not home_lat or not home_lon:
+    if home_lat == None or home_lon == None:
         return render.Box(width = 64 * scale, height = 32 * scale, color = "#000", child = render.Text("No Loc"))
 
     plane_lat = flight["latitude"]
@@ -536,10 +544,7 @@ def render_radar_view(flight, home_lat, home_lon, angle_offset = 0, scale = 1, c
     )
 
 def filter_flight(flight, show_all_aircraft = False):
-    return all([
-        show_all_aircraft or flight["airline_icao"],
-        flight["altitude"] >= 1000,
-    ])
+    return type(flight) == "dict" and type(flight.get("altitude")) in ["int", "float"] and flight["altitude"] >= 1000 and all([type(flight.get(field, 0)) in ["int", "float"] for field in ["latitude", "longitude", "heading", "distance", "ground_speed"]]) and (show_all_aircraft or flight.get("airline_icao"))
 
 def main(config):
     #If hardcoding HA info in applet, replace values below with yours. REMOVE EVERYTHING AFTER THE = and add your values
@@ -549,11 +554,17 @@ def main(config):
     ha_server = config.get("homeassistant_server")  #Don't forget to include a port at the end of the URL if using one
     entity_id = config.get("homeassistant_entity_id")  #The FlightRadar24 Integration sensor, default is 'sensor.flightradar24_current_in_area'
     token = config.get("homeassistant_token")  #Your long lived access token
-    radar_offset_str = config.get("radar_degree_offset", "0")
+    radar_offset_str = str(config.get("radar_degree_offset", "0"))
     radar_offset = int(radar_offset_str) if radar_offset_str.isdigit() else 0
+    radar_offset = max(0, min(359, radar_offset))
     show_all_aircraft = config.bool("show_all_aircraft")
     logostream_api_key = config.get("logostream_api_key")
     tail_direction = config.get("tail_direction", "flipped")
+
+    configured = ha_server or entity_id or token
+    valid_token = type(token) == "string" and token and len(token) <= 8192 and "\r" not in token and "\n" not in token
+    if configured and (not valid_server(ha_server) or not valid_entity_id(entity_id) or not valid_token):
+        return render.Root(child = render.WrappedText("Check HA settings", color = "#ff6666"))
 
     scale = 2 if canvas.is2x() else 1
 
@@ -585,8 +596,9 @@ def main(config):
         home_lon = -105.0
     else:
         entity_status = get_entity_status(ha_server, entity_id, token)
-        extracted_attributes = entity_status["attributes"] if entity_status and "attributes" in entity_status else dict()
-        flights = extracted_attributes["flights"] if "flights" in extracted_attributes else dict()
+        extracted_attributes = entity_status["attributes"] if entity_status and type(entity_status.get("attributes")) == "dict" else {}
+        flights = extracted_attributes.get("flights", [])
+        flights = flights[:500] if type(flights) == "list" else []
         matches_filters = [flight for flight in flights if filter_flight(flight, show_all_aircraft)]
         sorted_matches = sorted(
             matches_filters,
@@ -601,30 +613,37 @@ def main(config):
     if len(sorted_matches) == 0:
         return skip_execution()
 
-    if media_image == None:
-        icao = sorted_matches[0].get("airline_icao")
-        iata = sorted_matches[0].get("airline_iata") or (sorted_matches[0].get("flight_number")[:2] if sorted_matches[0].get("flight_number") else None)
+    flight = sorted_matches[0]
+    icao = safe_label(flight.get("airline_icao"), 8)
+    flight_number = safe_label(flight.get("flight_number"), 16)
+    callsign = safe_label(flight.get("callsign"), 16)
+    origin = safe_label(flight.get("airport_origin_code_iata"), 8)
+    destination = safe_label(flight.get("airport_destination_code_iata"), 8)
+    aircraft_code = safe_label(flight.get("aircraft_code"), 8)
 
-        if (icao or iata) and logostream_api_key:
+    if media_image == None:
+        iata = safe_label(flight.get("airline_iata"), 8) or (flight_number[:2] if flight_number else None)
+
+        if type(logostream_api_key) == "string" and logostream_api_key and len(logostream_api_key) <= 2048 and "\r" not in logostream_api_key and "\n" not in logostream_api_key:
             # Try ICAO first
-            if icao:
-                logostream_url = "https://airlines-api.logostream.dev/airlines/icao/%s?key=%s&variant=tail" % (icao, logostream_api_key)
-                res = http.get(logostream_url, ttl_seconds = 86400)
-                if res.status_code == 200:
+            if valid_code(icao):
+                logostream_url = "https://airlines-api.logostream.dev/airlines/icao/%s" % icao
+                res = http.get(logostream_url, params = {"key": logostream_api_key, "variant": "tail"})
+                if res.status_code == 200 and valid_png(res.body()):
                     media_image = res.body()
 
             # Fallback to IATA if ICAO fails or is missing
-            if media_image == None and iata:
-                logostream_url = "https://airlines-api.logostream.dev/airlines/iata/%s?key=%s&variant=tail" % (iata, logostream_api_key)
-                res = http.get(logostream_url, ttl_seconds = 86400)
-                if res.status_code == 200:
+            if media_image == None and valid_code(iata):
+                logostream_url = "https://airlines-api.logostream.dev/airlines/iata/%s" % iata
+                res = http.get(logostream_url, params = {"key": logostream_api_key, "variant": "tail"})
+                if res.status_code == 200 and valid_png(res.body()):
                     media_image = res.body()
 
         if media_image == None:
             # Final fallback to generic "unknown tail" image
             media_image = UNKNOWN_TAIL_ASSET_2X.readall() if canvas.is2x() else UNKNOWN_TAIL_ASSET.readall()
 
-    airplane_shape = get_airplane_shape(sorted_matches[0])
+    airplane_shape = get_airplane_shape(flight)
 
     # Always set tiny_ico
     tiny_ico = airplane_shape["2x"].readall() if canvas.is2x() else airplane_shape["1x"].readall()
@@ -632,14 +651,14 @@ def main(config):
     lines = []
 
     #make a list of lines we'd prefer to have in order, we'll display the top 3 of them.
-    if "flight_number" in sorted_matches[0] and sorted_matches[0]["flight_number"]:
-        lines.append(render.Text("%s" % sorted_matches[0]["flight_number"]))
-    elif "callsign" in sorted_matches[0] and sorted_matches[0]["callsign"]:
-        lines.append(render.Text("%s" % sorted_matches[0]["callsign"]))
+    if flight_number:
+        lines.append(render.Text(flight_number))
+    elif callsign:
+        lines.append(render.Text(callsign))
 
-    if ("airport_origin_code_iata" in sorted_matches[0] and sorted_matches[0]["airport_origin_code_iata"]) or ("airport_destination_code_iata" in sorted_matches[0] and sorted_matches[0]["airport_destination_code_iata"]):
-        origin = sorted_matches[0].get("airport_origin_code_iata") or "?"
-        destination = sorted_matches[0].get("airport_destination_code_iata") or "?"
+    if origin or destination:
+        origin = origin or "?"
+        destination = destination or "?"
         line = render.Row(
             expanded = True,
             main_align = "between_evenly",
@@ -652,7 +671,7 @@ def main(config):
         )
         lines.append(line)
 
-    if "aircraft_code" in sorted_matches[0] and sorted_matches[0]["aircraft_code"] != None and tiny_ico:
+    if aircraft_code and tiny_ico:
         line = render.Row(
             children = [
                 render.Box(
@@ -663,12 +682,12 @@ def main(config):
                         angle = sorted_matches[0].get("heading", 0) - radar_offset,
                     ),
                 ),
-                render.Text(" %s" % sorted_matches[0]["aircraft_code"]),
+                render.Text(" %s" % aircraft_code),
             ],
         )
         lines.append(line)
-    elif "aircraft_code" in sorted_matches[0] and sorted_matches[0]["aircraft_code"] != None:
-        line = render.Text("%s" % sorted_matches[0]["aircraft_code"])
+    elif aircraft_code:
+        line = render.Text(aircraft_code)
         lines.append(line)
 
     display = render.Row(
@@ -691,16 +710,16 @@ def main(config):
     )
 
     radar = None
-    if home_lat and home_lon:
+    if home_lat != None and home_lon != None:
         radar_colors = {
-            "radar": config.get("radar_color", "#003300"),
-            "home": config.get("home_color", "#00ff00"),
-            "alt": config.get("altitude_color", "#ff0000"),
-            "dst": config.get("distance_color", "#00ff00"),
-            "hdg": config.get("heading_color", "#0000ff"),
-            "spd": config.get("speed_color", "#ffff00"),
+            "radar": valid_color(config.get("radar_color"), "#003300"),
+            "home": valid_color(config.get("home_color"), "#00ff00"),
+            "alt": valid_color(config.get("altitude_color"), "#ff0000"),
+            "dst": valid_color(config.get("distance_color"), "#00ff00"),
+            "hdg": valid_color(config.get("heading_color"), "#0000ff"),
+            "spd": valid_color(config.get("speed_color"), "#ffff00"),
         }
-        radar = render_radar_view(sorted_matches[0], home_lat, home_lon, radar_offset, scale, radar_colors, tiny_ico)
+        radar = render_radar_view(flight, home_lat, home_lon, radar_offset, scale, radar_colors, tiny_ico)
 
     if radar:
         return render.Root(

@@ -5,9 +5,17 @@ Description: Tells you the cycle that's active in each of the Warframe open area
 Author: grantmatheny
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
+load("time.star", "time")
+
+def cycle_remaining(cycle):
+    if cycle.get("timeLeft"):
+        return cycle["timeLeft"].split()
+    seconds = max(0, int((time.parse_time(cycle["expiry"]) - time.now()).seconds))
+    return ["%dh" % (seconds // 3600), "%dm" % ((seconds % 3600) // 60), "%ds" % (seconds % 60)]
 
 def time_dict_conversion(timedict):
     if timedict.get("h") == None and (timedict.get("m") == None or int(timedict.get("m")) == 0):
@@ -31,6 +39,8 @@ def time_dict_conversion(timedict):
 
 def main(config):
     platform = config.str("platform", "pc")
+    if platform not in ("pc", "ps4", "xb1", "swi"):
+        platform = "pc"
 
     _wf_status_url = "https://api.warframestat.us/%s" % platform
 
@@ -53,23 +63,31 @@ def main(config):
     rep = http.get(_wf_status_url, ttl_seconds = 60)
     if rep.status_code != 200:
         fail("Warframe request failed with status %d", rep.status_code)
-    cetusactive = rep.json()["cetusCycle"]["state"].title()
-    cetusremaining = rep.json()["cetusCycle"]["timeLeft"].split()
+    body = rep.body()
+    data = json.decode(body, {}) if body and len(body) <= 1024 * 1024 else {}
+    required = ("cetusCycle", "earthCycle", "cambionCycle", "vallisCycle")
+    if type(data) != "dict" or any([type(data.get(key)) != "dict" for key in required]):
+        fail("Warframe response was invalid")
+    cetusactive = data["cetusCycle"]["state"].title()
+    cetusremaining = cycle_remaining(data["cetusCycle"])
 
-    earthactive = rep.json()["earthCycle"]["state"].title()
-    earthremaining = rep.json()["earthCycle"]["timeLeft"].split()
+    earthactive = data["earthCycle"]["state"].title()
+    earthremaining = cycle_remaining(data["earthCycle"])
 
-    cambionactive = rep.json()["cambionCycle"]["active"].title()
-    cambionremaining = rep.json()["cambionCycle"]["timeLeft"].split()
+    cambionactive = data["cambionCycle"]["state"].title()
+    cambionremaining = cycle_remaining(data["cambionCycle"])
 
-    vallisactive = rep.json()["vallisCycle"]["state"].title()
-    vallisremaining = rep.json()["vallisCycle"]["timeLeft"].split()
+    vallisactive = data["vallisCycle"]["state"].title()
+    vallisremaining = cycle_remaining(data["vallisCycle"])
 
     zariman_toggle = config.bool("warframe_cycles_zariman_enabled", False)
 
     if zariman_toggle:
-        zarimanactive = rep.json()["zarimanCycle"]["state"].title()
-        zarimanremaining = rep.json()["zarimanCycle"]["timeLeft"].split()
+        zariman = data.get("zarimanCycle", {})
+        if type(zariman) != "dict":
+            fail("Warframe Zariman response was invalid")
+        zarimanactive = zariman["state"].title()
+        zarimanremaining = cycle_remaining(zariman)
     else:
         zarimanactive = "Corpus"
         zarimanremaining = ["4h", "53m", "38s"]

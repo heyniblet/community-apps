@@ -12,7 +12,7 @@ The app itself is not connected to any music service and does not update automat
 
 ## Configuration (Schema)
 
-The app has a `Typeahead` control where the user types the name of the album and it displays a list of options to choose from. This list is populated with results from a Spotify API, see details below.
+The app has a text field where the user enters an album name, optionally with the artist to refine the match.
 
 There are also options to change the app colors and one option to hide the app from rotation.
 
@@ -20,17 +20,15 @@ There are also options to change the app colors and one option to hide the app f
 
 ## API Details
 
-As mentioned above, the app uses Spotify's [Search for Item](https://developer.spotify.com/documentation/web-api/reference/search) API to build a list of possible albums to choose from.
+The app uses the [MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API) to resolve the album and the [Cover Art Archive](https://coverartarchive.org/) for artwork.
 
 ### Authentication
 
-The API above requires bearer token authentication. To do this, we follow the same process as Spotify's own public web player. We call an open endpoint that returns an access token, which is then used on the next request.
-
-The token is cached for its validity and the cover images are cached for 24 hours.
+No authentication is required. Album matches and cover images are cached for 24 hours.
 
 ### Rate Limiting
 
-Spotify's APIs are [rate limited](https://developer.spotify.com/documentation/web-api/concepts/rate-limits), however the value is not published on the documentation. The only information is that the limit is calculated based on a 30 second rolling window.
+MusicBrainz asks clients to stay at or below one request per second. The app sends an identifying user agent and its 24-hour cache keeps normal usage well below that rate.
 
 ---
 
@@ -38,7 +36,7 @@ Spotify's APIs are [rate limited](https://developer.spotify.com/documentation/we
 
 The app has safeguards in place to identify potential errors and always display something on the screen. For instance, failure to recover the cover image of an album will be handled and a default image will be shown.
 
-Failures when calling the API that populates the `Typeahead` control are also handled and a message is shown on the Tidbyt screen.
+Album lookup failures show an error state on the display.
 
 ---
 

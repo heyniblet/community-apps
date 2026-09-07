@@ -30,6 +30,11 @@ CURRENT_DAY_OFFSET = 5
 
 DAY_IN_SECONDS = 86400
 HOUR_IN_SECONDS = 3600
+MAX_CALENDAR_BYTES = 2 * 1024 * 1024
+MAX_CALENDAR_LINES = 30000
+MAX_EVENTS = 500
+MAX_OCCURRENCES_PER_EVENT = 256
+MAX_RENDER_EVENTS = 1000
 
 DEFAULT_LOCATION = """
  {
@@ -212,6 +217,8 @@ def expand_recurring_event(evt, rrule_str, exdates, win_start, win_end, default_
                     "UNIX_Epoch_Elapsed": duration_sec,
                     "type": evt["type"],
                 })
+                if len(occurrences) >= MAX_OCCURRENCES_PER_EVENT:
+                    break
 
         count += 1
         freq = rule["FREQ"]
@@ -378,11 +385,16 @@ def main(config):
             ),
         )
 
-    ttl = int(config.str("ttl", "3600"))
-    rep = http.get(url, ttl_seconds = ttl)
-    if rep.status_code != 200:
+    if not url.startswith("https://calendar.google.com/calendar/ical/") or not url.endswith(".ics"):
+        return render.Root(child = render.WrappedText("Use a Google Calendar iCal URL.", font = "tom-thumb"))
+
+    ttl_value = config.str("ttl", "3600")
+    ttl = int(ttl_value) if ttl_value in ["300", "900", "3600", "86400"] else 3600
+    rep = http.get(url)
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_CALENDAR_BYTES:
         print("iCal fetch failed with status %d" % rep.status_code)
-        return []
+        return render.Root(child = render.Text("Calendar unavailable", font = "tom-thumb"))
 
     location_data = json.decode(config.get("location", DEFAULT_LOCATION))
     timezone = location_data.get("timezone", time.tz())
@@ -429,7 +441,7 @@ def main(config):
     led_display_range_start = today_at_0000 - days_to_duration(4)
     led_display_range_end = today_at_0000 + days_to_duration(57, 23, 59, 59)
 
-    raw_lines = rep.body().split("\n")
+    raw_lines = body.split("\n")[:MAX_CALENDAR_LINES]
 
     # Handle iCalendar Line Folding (RFC 5545)
     lines = []
@@ -454,6 +466,8 @@ def main(config):
                 dur = cur_event["raw_end"].unix - cur_event["raw_start"].unix
                 cur_event["duration_sec"] = dur if dur > 0 else 0
                 parsed_events.append(cur_event)
+                if len(parsed_events) >= MAX_EVENTS:
+                    break
             in_vevent = False
             cur_event = None
             continue
@@ -480,9 +494,13 @@ def main(config):
     hms_events = []
 
     for evt in parsed_events:
+        if len(day_events) + len(hms_events) >= MAX_RENDER_EVENTS:
+            break
         if evt["rrule"]:
             occurrences = expand_recurring_event(evt, evt["rrule"], evt["exdates"], led_display_range_start, led_display_range_end, timezone)
             for occ in occurrences:
+                if len(day_events) + len(hms_events) >= MAX_RENDER_EVENTS:
+                    break
                 if occ["type"] == "DAY":
                     day_events.append(occ)
                 else:
@@ -530,13 +548,14 @@ def main(config):
         frames.append(frame_background)  # Basically everything drawn (No dot).
 
         ret_val = render.Root(
+            max_age = ttl,
             delay = 500,
             child = render.Animation(
                 children = frames,
             ),
         )
     else:
-        ret_val = render.Root(frame_all)
+        ret_val = render.Root(frame_all, max_age = ttl)
 
     return ret_val
 
@@ -550,7 +569,7 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Text(id = "calendar_url", name = "Calendar URL", desc = "Google Calendar iCal URL", icon = "calendar"),
+            schema.Text(id = "calendar_url", name = "Calendar URL", desc = "Google Calendar secret or public iCal URL", icon = "calendar", secret = True),
             schema.Dropdown(id = "ttl", name = "Refresh Rate", desc = "iCal cache interval", icon = "clock", default = "3600", options = ttl_options),
             schema.Location(id = "location", name = "Location", desc = "Location timezone", icon = "locationDot"),
             schema.Toggle(id = "24hour_format", name = "24-Hour Clock", desc = "Display 24-hour time", icon = "clock", default = False),

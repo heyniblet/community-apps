@@ -5,6 +5,7 @@ Description: Shows what's currently playing on BBC Radio stations from BBC Sound
 Author: Andrew Westling
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -159,6 +160,9 @@ DEFAULT_DISPLAY_MODE = DISPLAY_MODE_OPTIONS[0].value
 DEFAULT_SCROLL_DIRECTION = SCROLL_DIRECTION_OPTIONS[0].value
 DEFAULT_SCROLL_SPEED = SCROLL_SPEED_OPTIONS[0].value
 DEFAULT_USE_CUSTOM_COLORS = False
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_ITEMS = 100
+MAX_TEXT_LENGTH = 240
 
 COLORS = {
     "white": "#FFFFFF",
@@ -167,6 +171,20 @@ COLORS = {
     "dark_gray": "#444444",
     "error_red": "#FF0000",
 }
+
+def fetch_data(endpoint):
+    response = http.get(url = endpoint, ttl_seconds = 30)
+    if response.status_code != 200:
+        return None
+    body = response.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return None
+    payload = json.decode(body)
+    data = payload.get("data") if type(payload) == "dict" else None
+    return data[:MAX_ITEMS] if type(data) == "list" else None
+
+def safe_text(value):
+    return value[:MAX_TEXT_LENGTH] if type(value) == "string" else ""
 
 def get_header_bar(station_id):
     station_config = BBC_STATIONS.get(station_id, BBC_STATIONS[DEFAULT_STATION])
@@ -203,11 +221,16 @@ def main(config):
     station_id = config.str("station", DEFAULT_STATION)
     display_mode = config.str("display_mode", DEFAULT_DISPLAY_MODE)
     scroll_direction = config.str("scroll_direction", DEFAULT_SCROLL_DIRECTION)
-    scroll_speed = int(config.str("scroll_speed", DEFAULT_SCROLL_SPEED))
+    scroll_speed_value = config.str("scroll_speed", DEFAULT_SCROLL_SPEED)
 
     # Get station configuration
     if station_id not in BBC_STATIONS:
         station_id = DEFAULT_STATION
+    if display_mode not in ["segments", "broadcasts"]:
+        display_mode = DEFAULT_DISPLAY_MODE
+    if scroll_direction not in ["vertical", "horizontal"]:
+        scroll_direction = DEFAULT_SCROLL_DIRECTION
+    scroll_speed = int(scroll_speed_value) if scroll_speed_value in ["0", "100", "200"] else int(DEFAULT_SCROLL_SPEED)
 
     station_config = BBC_STATIONS[station_id]
 
@@ -219,9 +242,8 @@ def main(config):
         endpoint = "https://rms.api.bbc.co.uk/v2/services/{}/segments/latest".format(station_id)
 
     # Get data
-    whats_on = http.get(url = endpoint, ttl_seconds = 30)
-
-    if (whats_on.status_code) != 200:
+    data = fetch_data(endpoint)
+    if data == None:
         return render.Root(
             child = render.Column(
                 children = [
@@ -232,8 +254,7 @@ def main(config):
         )
 
     # Parse data
-    data = whats_on.json()
-    has_data = data and "data" in data and len(data["data"]) > 0
+    has_data = len(data) > 0
 
     title = ""
     detail = ""
@@ -242,16 +263,18 @@ def main(config):
     if has_data:
         if display_mode == "broadcasts":
             # Handle broadcast data
-            broadcast = data["data"][0]
-            programme = broadcast.get("programme", {})
-            titles = programme.get("titles", {})
+            broadcast = data[0] if type(data[0]) == "dict" else {}
+            programme = broadcast.get("programme")
+            programme = programme if type(programme) == "dict" else {}
+            titles = programme.get("titles")
+            titles = titles if type(titles) == "dict" else {}
 
             # For broadcasts, use primary (programme name) and secondary (episode title)
-            title = titles.get("primary", "") or ""
-            detail = titles.get("secondary", "") or ""
+            title = safe_text(titles.get("primary"))
+            detail = safe_text(titles.get("secondary"))
 
             # Add tertiary information if available
-            tertiary = titles.get("tertiary", "") or ""
+            tertiary = safe_text(titles.get("tertiary"))
             if tertiary and detail:
                 detail = detail + " - " + tertiary
             elif tertiary and not detail:
@@ -259,24 +282,27 @@ def main(config):
 
             # If no secondary/tertiary title, use synopsis short as subtitle
             if not detail:
-                synopses = programme.get("synopses", {})
-                detail = synopses.get("short", "") or ""
+                synopses = programme.get("synopses")
+                synopses = synopses if type(synopses) == "dict" else {}
+                detail = safe_text(synopses.get("short"))
         else:
             # Handle segments data - look for currently playing item
             current_item = None
-            for item in data["data"]:
-                if item.get("offset", {}).get("now_playing", False):
+            for item in data:
+                offset = item.get("offset") if type(item) == "dict" else None
+                if type(offset) == "dict" and offset.get("now_playing", False):
                     current_item = item
                     break
 
             # If we found a currently playing item, use it
             if current_item:
-                titles = current_item.get("titles", {})
+                titles = current_item.get("titles")
+                titles = titles if type(titles) == "dict" else {}
 
                 if current_item.get("segment_type") == "music":
                     # For music: primary is usually composer, secondary is piece title
-                    detail = titles.get("primary", "") or ""
-                    title = titles.get("secondary", "") or ""
+                    detail = safe_text(titles.get("primary"))
+                    title = safe_text(titles.get("secondary"))
 
                     # If no secondary title, use primary as title and clear detail
                     if not title and detail:
@@ -284,11 +310,11 @@ def main(config):
                         detail = ""
                 elif current_item.get("segment_type") == "speech":
                     # For speech segments: use primary as title, secondary as subtitle/description
-                    title = titles.get("primary", "") or ""
-                    detail = titles.get("secondary", "") or ""
+                    title = safe_text(titles.get("primary"))
+                    detail = safe_text(titles.get("secondary"))
                 else:
                     # Fallback for unknown segment types
-                    title = titles.get("primary", "") or titles.get("secondary", "") or ""
+                    title = safe_text(titles.get("primary")) or safe_text(titles.get("secondary"))
                     detail = ""
             else:
                 # No currently playing item found, fallback to broadcasts
@@ -297,30 +323,36 @@ def main(config):
     # If segments mode but no good data, fallback to broadcasts API
     if display_mode == "segments" and (not has_data or should_fallback_to_broadcasts or (not title and not detail)):
         broadcasts_endpoint = "https://rms.api.bbc.co.uk/v2/broadcasts/latest?service={}&on_air=now".format(station_id)
-        broadcasts_response = http.get(url = broadcasts_endpoint, ttl_seconds = 30)
+        broadcasts_data = fetch_data(broadcasts_endpoint)
 
-        if broadcasts_response.status_code == 200:
-            broadcasts_data = broadcasts_response.json()
-            if broadcasts_data and "data" in broadcasts_data and len(broadcasts_data["data"]) > 0:
-                broadcast = broadcasts_data["data"][0]
-                programme = broadcast.get("programme", {})
-                titles = programme.get("titles", {})
+        if broadcasts_data:
+            broadcast = broadcasts_data[0] if type(broadcasts_data[0]) == "dict" else {}
+            programme = broadcast.get("programme")
+            programme = programme if type(programme) == "dict" else {}
+            titles = programme.get("titles")
+            titles = titles if type(titles) == "dict" else {}
 
-                # Use broadcast data as fallback
-                title = titles.get("primary", "") or ""
-                detail = titles.get("secondary", "") or ""
+            # Use broadcast data as fallback
+            title = safe_text(titles.get("primary"))
+            detail = safe_text(titles.get("secondary"))
 
-                # Add tertiary information if available
-                tertiary = titles.get("tertiary", "") or ""
-                if tertiary and detail:
-                    detail = detail + " - " + tertiary
-                elif tertiary and not detail:
-                    detail = tertiary
+            # Add tertiary information if available
+            tertiary = safe_text(titles.get("tertiary"))
+            if tertiary and detail:
+                detail = detail + " - " + tertiary
+            elif tertiary and not detail:
+                detail = tertiary
 
-                # If no secondary/tertiary title, use synopsis short as subtitle
-                if not detail:
-                    synopses = programme.get("synopses", {})
-                    detail = synopses.get("short", "") or ""
+            # If no secondary/tertiary title, use synopsis short as subtitle
+            if not detail:
+                synopses = programme.get("synopses")
+                synopses = synopses if type(synopses) == "dict" else {}
+                detail = safe_text(synopses.get("short"))
+
+    title = title[:MAX_TEXT_LENGTH]
+    detail = detail[:MAX_TEXT_LENGTH]
+    if not title and not detail:
+        return render.Root(child = render.Column(children = [get_header_bar(station_id), get_error_content(station_id)]))
 
     # Handle colors
     color_title = station_config["color"]

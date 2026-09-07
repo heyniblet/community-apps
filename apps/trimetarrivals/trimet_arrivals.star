@@ -8,37 +8,40 @@ DEFAULT_LOCATION = """
 {"lat":45.6,"lng":"-122.64","locality":"Portland, OR","timezone":"America/Los_Angeles"}
 """
 DEFAULT_STOP = "13043"
-URL = "https://developer.trimet.org/ws/V2/arrivals?locIDs={}&appID={}&json=true"
-# URL = "https://developer.trimet.org/ws/V2/arrivals?locIDs={}&appID=3EE99DA9677E312D637CED197&json=true"
+URL = "https://developer.trimet.org/ws/V2/arrivals"
 
 def main(config):
-    api_key = config.get("trimet_api_key") or "3EE99DA9677E312D637CED197"
-    # print("api_key: %s" % api_key)
+    api_key = config.str("trimet_api_key")
 
     # font_sm = config.get("font-sm", "tom-thumb")
     font_sm = config.get("font-sm", "CG-pixel-3x5-mono")
     font_lg = config.get("font-lg", "6x13")
     stop = config.str("stop", DEFAULT_STOP)
+    if not api_key:
+        return render.Root(child = render.Text("API key missing", font = "5x8"))
+    if not stop or len(stop) > 12 or any([c not in "0123456789" for c in stop.elems()]):
+        return render.Root(child = render.Text("Invalid stop ID", font = "5x8"))
     location = config.get("location", DEFAULT_LOCATION)
     loc = json.decode(location)
     timezone = loc["timezone"]
     now = time.now().in_location(timezone).format("1/2 3:04 PM")
 
-    print("stop: %s" % stop)
-
-    print("Miss! Calling TriMet API with")
-    response = http.get(URL.format(stop, api_key), ttl_seconds = 30)
+    response = http.get(URL, params = {"locIDs": stop, "appID": api_key, "json": "true"})
     if response.status_code != 200:
-        fail("request failed with status %d", response.status_code)
+        return render.Root(child = render.Text("TriMet unavailable", font = "5x8"))
     rep = response.json()
-
-    # print(rep["resultSet"])
-    # arrival_data = rep["resultSet"]["arrival"][0]["fullSign"]
-    est = int(rep["resultSet"]["arrival"][0]["estimated"])
+    result = rep.get("resultSet", {})
+    arrivals = result.get("arrival", [])
+    locations = result.get("location", [])
+    if not arrivals or not locations:
+        return render.Root(child = render.Text("No arrivals", font = "5x8"))
+    timestamp = arrivals[0].get("estimated") or arrivals[0].get("scheduled")
+    if timestamp == None:
+        return render.Root(child = render.Text("No arrival time", font = "5x8"))
+    est = int(timestamp)
     conv = time.from_timestamp(est // 1000).in_location(timezone).format("3:04 PM")
 
-    # print(int(rep["resultSet"]["arrival"][0]["estimated"]))
-    stop = rep["resultSet"]["location"][0]["desc"]
+    stop = locations[0].get("desc", "TriMet stop")
 
     return render.Root(
         child = render.Column(

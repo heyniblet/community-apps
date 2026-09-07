@@ -23,14 +23,24 @@ HTTP_CACHE_TTL = 3 * 60 * 60  # 3 hours
 
 # Used for fetching game images, which are cached for longer
 HTTP_CACHE_TTL_LONG = 72 * 60 * 60  # 72 hours
+MAX_XML_BYTES = 2 * 1024 * 1024
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 def main(config):
+    api_key = config.get("bgg_api_key")
+    if type(api_key) != "string" or not api_key or len(api_key) > 2048 or "\r" in api_key or "\n" in api_key:
+        return render.Root(child = render.WrappedText(content = "BGG API key required", align = "center"))
+
     bgg_username = config.str("bgg_username")
 
     if (bgg_username == None or bgg_username == ""):
-        return demo(config)
+        return demo(config, api_key)
+    if len(bgg_username) > 80 or "\r" in bgg_username or "\n" in bgg_username:
+        return render.Root(child = error_message("Invalid username"))
 
-    last_play_data = get_last_play_data(bgg_username)
+    last_play_data = get_last_play_data(bgg_username, api_key)
+    if last_play_data == None:
+        return render.Root(child = error_message())
     last_play_date = last_play_data.query("//plays/play/@date")
 
     if last_play_date == None:
@@ -38,34 +48,45 @@ def main(config):
     else:
         last_play_id = last_play_data.query("//plays/play/item/@objectid")
         last_play_game = last_play_data.query("//plays/play/item/@name")
-        game_image = get_image(last_play_id)
+        if type(last_play_date) != "string" or len(last_play_date) != 10 or type(last_play_game) != "string":
+            return render.Root(child = error_message())
+        game_image = get_image(last_play_id, api_key)
 
         if game_image == None:
             game_image = ""
 
-        return render_main(config, game_image, last_play_date, last_play_game)
+        return render_main(config, game_image, last_play_date, last_play_game[:240])
 
-def get_last_play_data(bgg_username):
+def get_last_play_data(bgg_username, api_key):
     encoded_username = humanize.url_encode(bgg_username)
-    resp = http.get(BGG_PLAYS_API_URL.format(encoded_username), ttl_seconds = HTTP_CACHE_TTL)
+    resp = http.get(BGG_PLAYS_API_URL.format(encoded_username), headers = {"Authorization": "Bearer " + api_key})
 
-    if resp.status_code == 200:
-        return xpath.loads(resp.body())
-    else:
+    if resp.status_code != 200:
         return None
+    body = resp.body()
+    return xpath.loads(body) if len(body) <= MAX_XML_BYTES else None
 
-def get_image(game_id):
+def get_image(game_id, api_key):
     if game_id == None:
         game_id = DEMO_GAME_ID
+    game_id = str(game_id)
+    if not game_id.isdigit() or len(game_id) > 20:
+        return None
 
-    resp = http.get(BGG_THING_API_URL.format(game_id), ttl_seconds = HTTP_CACHE_TTL_LONG)
+    resp = http.get(BGG_THING_API_URL.format(game_id), headers = {"Authorization": "Bearer " + api_key})
 
     if resp.status_code == 200:
-        xml_content = xpath.loads(resp.body())
+        body = resp.body()
+        if len(body) > MAX_XML_BYTES:
+            return None
+        xml_content = xpath.loads(body)
         image_url = xml_content.query("//item/image")
 
+        if type(image_url) != "string" or not image_url.startswith("https://cf.geekdo-images.com/"):
+            return None
         response = http.get(image_url, ttl_seconds = HTTP_CACHE_TTL_LONG)
-        return response.body()
+        image = response.body()
+        return image if response.status_code == 200 and len(image) <= MAX_IMAGE_BYTES else None
     else:
         return None
 
@@ -151,16 +172,16 @@ def render_main(config, game_image, last_play_date, last_play_game):
         ),
     )
 
-def demo(config):
+def demo(config, api_key):
     timezone = time.tz()
     yesterday_long = time.now().in_location(timezone) - time.parse_duration("86400s")
     yesterday = yesterday_long.format("2006-01-02")
-    game_image = get_image(DEMO_GAME_ID)
+    game_image = get_image(DEMO_GAME_ID, api_key)
 
     return render_main(config, game_image, yesterday, DEMO_GAME_NAME)
 
-def error_message():
-    return render.WrappedText(content = "Error fetching data", align = "center", font = "5x8", color = "#FF0000")
+def error_message(message = "Error fetching data"):
+    return render.WrappedText(content = message, align = "center", font = "5x8", color = "#FF0000")
 
 def get_schema():
     label_options = [
@@ -194,6 +215,13 @@ def get_schema():
                 default = label_options[0].value,
                 icon = "tag",
                 options = label_options,
+            ),
+            schema.Text(
+                id = "bgg_api_key",
+                name = "BoardGameGeek API key",
+                desc = "Your BoardGameGeek API key. See https://boardgamegeek.com/using_the_xml_api for details.",
+                icon = "key",
+                secret = True,
             ),
         ],
     )

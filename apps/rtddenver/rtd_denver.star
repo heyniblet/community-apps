@@ -24,10 +24,13 @@ DEFAULT_STOP_ID = "11981"
 DEFAULT_WALK_TIME = "5"
 DEFAULT_YELLOW_BUFFER = "5"  # minutes above walk_time before color = yellow
 DEFAULT_GREEN_BUFFER = "10"  # minutes above walk_time before color = green
+MAX_RESPONSE_BYTES = 256 * 1024
 
 def main(config):
     """Main function to render RTD arrival times"""
-    stop_id = config.get("stop_id", DEFAULT_STOP_ID)
+    stop_id = str(config.get("stop_id", DEFAULT_STOP_ID)).strip()
+    if not stop_id.isdigit() or len(stop_id) > 12:
+        stop_id = DEFAULT_STOP_ID
 
     # Parse walk time with validation
     walk_time = parse_int(config.get("walk_time", DEFAULT_WALK_TIME), 5)
@@ -41,14 +44,21 @@ def main(config):
     if rep.status_code != 200:
         return error_screen("RTD unavailable")
 
-    data = json.decode(rep.body())
+    body = rep.body()
+    data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
+    if type(data) != "dict":
+        return error_screen("RTD unavailable")
 
     # Proxy may return stop_name if enhanced; fall back gracefully
     stop_name = data.get("stop_name", "")
     if stop_name == "" or stop_name == None:
         stop_name = "Stop %s" % stop_id
+    else:
+        stop_name = str(stop_name)[:120]
 
     predictions = data.get("predictions", [])
+    if type(predictions) != "list":
+        predictions = []
 
     if len(predictions) == 0:
         return no_service_screen(stop_name)
@@ -56,10 +66,14 @@ def main(config):
     # Group predictions by route, collecting up to 2 departure times per route
     route_order = []
     routes = {}
-    for pred in predictions:
-        route = pred.get("route", "?")
+    for pred in predictions[:100]:
+        if type(pred) != "dict":
+            continue
+        route = str(pred.get("route", "?"))[:12]
         minutes = pred.get("minutes", 0)
-        headsign = pred.get("headsign", "")
+        headsign = str(pred.get("headsign", ""))[:120]
+        if type(minutes) not in ["int", "float"] or minutes < 0 or minutes > 1440:
+            continue
 
         if route not in routes:
             route_order.append(route)
@@ -239,10 +253,11 @@ def error_screen(msg):
 
 def parse_int(s, default):
     """Safely parse a string to int with a default fallback"""
-    if s == None or s == "":
+    s = str(s or "")
+    if not s.isdigit():
         return default
     val = int(s)
-    if val < 0:
+    if val < 0 or val > 120:
         return default
     return val
 

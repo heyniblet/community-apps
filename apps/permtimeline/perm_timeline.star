@@ -1,10 +1,11 @@
 """
 Applet: PERM Timeline
 Summary: Track PERM progress
-Description: PERM Timeline offers a comprehensive view of the processing journey for PERM applications. Discover how many applications were completed today, calculate how long it's been since your submission, and get an estimate of how much time remains before your application is approved. The tool also provides an approximate approval date to help you plan ahead with confidence.
+Description: Shows the official average PERM processing time, how long it has been since your submission, and an approximate approval date.
 Author: Ihor Burenko
 """
 
+load("html.star", "html")
 load("http.star", "http")
 load("images/check_icon.png", CHECK_ICON_ASSET = "file")
 load("math.star", "math")
@@ -18,45 +19,48 @@ timezone = "America/New_York"
 DATE_FORMAT = "2006-01-02"
 PRINTABLE_DATE_FORMAT = "Jan 2 2006"
 
-DATA_URL = "https://perm-parser.onrender.com/api/parse"
+DATA_URL = "https://flag.dol.gov/processingtimes"
 DEFAULT_APPLICATION_DATE = "2024-08-13T13:32:32.000Z"
 
 COLOR_GREEN = "#00953E"
 COLOR_BLUE = "#0051ba"
-CACHE_TIME = 300
+CACHE_TIME = 3600
+MAX_RESPONSE_BYTES = 256 * 1024
+
+def error_view(message = "PERM data unavailable"):
+    return render.Root(
+        child = render.WrappedText(
+            content = message,
+            width = 64,
+            align = "center",
+            color = "#ff0000",
+        ),
+    )
+
+def fetch_days_to_approval():
+    rep = http.get(DATA_URL, ttl_seconds = CACHE_TIME)
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
+        return None
+
+    tables = html(body).find("table")
+    for table_index in range(tables.len()):
+        table = tables.eq(table_index)
+        if "Average Number of Days to Process PERM Applications" not in table.find("caption").text():
+            continue
+        rows = table.find("tbody tr")
+        for row_index in range(rows.len()):
+            cells = rows.eq(row_index).find("td")
+            if cells.len() >= 3 and cells.eq(0).text().strip() == "Analyst Review":
+                value = cells.eq(2).text().strip()
+                return int(value) if value.isdigit() else None
+    return None
 
 def main(config):
     application_date = config.get("application_date", DEFAULT_APPLICATION_DATE)
-
-    rep = http.get(DATA_URL, ttl_seconds = CACHE_TIME)
-    if rep.status_code != 200:
-        fail("Backend request failed with status %d", rep.status_code)
-
-    today_completed_data = rep.json().get("today_completed")
-    days_to_approval_data = rep.json().get("days_to_approval")
-
-    if today_completed_data and "error" in today_completed_data:
-        return render.Root(
-            child = render.WrappedText(
-                content = "Error: {}".format(today_completed_data["error"]),
-                width = 64,
-                align = "center",
-                color = "#ff0000",
-            ),
-        )
-
-    if days_to_approval_data and "error" in days_to_approval_data:
-        return render.Root(
-            child = render.WrappedText(
-                content = "Error: {}".format(days_to_approval_data["error"]),
-                width = 64,
-                align = "center",
-                color = "#ff0000",
-            ),
-        )
-
-    today_completed = today_completed_data
-    days_to_approval = days_to_approval_data["value"]
+    days_to_approval = fetch_days_to_approval()
+    if days_to_approval == None:
+        return error_view()
 
     calculated_dates = calculate_dates(days_to_approval, application_date)
 
@@ -64,7 +68,7 @@ def main(config):
         render.Box(
             child = render.Column(
                 children = [
-                    _get_today_completed(today_completed),
+                    _get_average_days(days_to_approval),
                     _get_padding(),
                     _get_chart(calculated_dates),
                     _get_approval_date(calculated_dates),
@@ -176,16 +180,16 @@ def _get_approval_date(calculated_dates):
         expanded = True,
     )
 
-def _get_today_completed(today_completed):
+def _get_average_days(days_to_approval):
     return render.Row(
         children = [
             render.Image(src = CHECK_ICON),
             render.Text(
-                content = today_completed,
+                content = str(days_to_approval),
                 font = "5x8",
             ),
             render.Text(
-                content = " today",
+                content = " day avg",
                 font = "5x8",
             ),
         ],
@@ -197,8 +201,8 @@ def calculate_dates(days_to_approval, start_date):
     now = time.now().in_location(timezone)
     parsed_start_date = time.parse_time(start_date).in_location("America/New_York")
 
-    days_after_start = int((now - parsed_start_date).hours // 24)
-    days_left = days_to_approval - days_after_start
+    days_after_start = max(0, int((now - parsed_start_date).hours // 24))
+    days_left = max(0, days_to_approval - days_after_start)
     approximate_approval_date = (now + time.parse_duration(str(days_left * 24) + "h")).format(PRINTABLE_DATE_FORMAT)
     return {
         "days_after_start": days_after_start,
@@ -207,7 +211,7 @@ def calculate_dates(days_to_approval, start_date):
     }
 
 def calculate_pixels(days_after_start, days_left, total_pixels = 64):
-    total_days = days_after_start + days_left
+    total_days = max(1, days_after_start + days_left)
 
     percent_days_after = days_after_start * 100 / total_days
 

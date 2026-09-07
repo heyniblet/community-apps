@@ -6,7 +6,7 @@ desc: View NCAAM standings by conference.
 author: LunchBox8484
 fileName: ncaam_standings.star
 packageName: ncaamstandings
-recommendedInterval: 5
+recommendedInterval: 60
 category: sports
 tags:
   - news

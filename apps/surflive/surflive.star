@@ -308,12 +308,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "spot",
-                name = "Spot Name",
-                desc = "Spot Name in Surfline",
+                name = "Surfline Spot ID",
+                desc = "Surfline spot ID; find it in the spot page URL",
                 icon = "compass",
-                handler = search_handler,
+                default = DEFAULT_SPOT_ID,
             ),
             schema.Text(
                 id = "spot_name",

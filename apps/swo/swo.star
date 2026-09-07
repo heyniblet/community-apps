@@ -1,9 +1,9 @@
 load("http.star", "http")
 load("render.star", "render")
 
-DAY1OUTLOOK = "https://www.spc.noaa.gov/products/outlook/day1otlk.gif"
-DAY2OUTLOOK = "https://www.spc.noaa.gov/products/outlook/day2otlk.gif"
-DAY3OUTLOOK = "https://www.spc.noaa.gov/products/outlook/day3otlk.gif"
+DAY1OUTLOOK = "https://www.spc.noaa.gov/products/outlook/day1otlk.png"
+DAY2OUTLOOK = "https://www.spc.noaa.gov/products/outlook/day2otlk.png"
+DAY3OUTLOOK = "https://www.spc.noaa.gov/products/outlook/day3otlk.png"
 
 def main():
     img1 = http.get(DAY1OUTLOOK, ttl_seconds = 3600).body()

@@ -5,6 +5,7 @@ Description: The app shows today's nameday names in Sweden.
 Author: y34752
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -19,13 +20,17 @@ def getlistasstring(listin):
 
 def main(config):
     SCROLL_SPEED = config.str("scroll_speed", "60")
-    print("Miss! Calling todays name API.")
-    rep = http.get("https://sholiday.faboul.se/dagar/v2.1/", ttl_seconds = 120)
-    if rep.status_code != 200:
-        fail("Todays name request failed with status:", rep.status_code)
-    rep = rep.json()
-
-    namelist = rep["dagar"][0]["namnsdag"]
+    if SCROLL_SPEED not in ["200", "150", "100", "60", "30"]:
+        SCROLL_SPEED = "100"
+    response = http.get("https://sholiday.faboul.se/dagar/v2.1/", ttl_seconds = 3600)
+    body = response.body()
+    rep = json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 32 * 1024 else {}
+    days = rep.get("dagar", []) if type(rep) == "dict" else []
+    first = days[0] if type(days) == "list" and days and type(days[0]) == "dict" else {}
+    raw_names = first.get("namnsdag", [])
+    namelist = [name[:60] for name in raw_names[:20] if type(name) == "string"] if type(raw_names) == "list" else []
+    if not namelist:
+        namelist = ["Namnsdag unavailable"]
     names = getlistasstring(namelist)
     return render.Root(
         delay = int(SCROLL_SPEED),

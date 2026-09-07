@@ -5,192 +5,102 @@ Description: Gaze upon glorious marine life.
 Author: vlauffer
 """
 
+load("bsoup.star", "bsoup")
 load("http.star", "http")
 load("images/fail_image.png", FAIL_IMAGE_ASSET = "file")
-load("re.star", "re")
+load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
-FAIL_IMAGE = FAIL_IMAGE_ASSET.readall()
+DIRECTORY_URL = "https://www.fisheries.noaa.gov/topic/sustainable-seafood/seafood-profiles"
+NOAA_ORIGIN = "https://www.fisheries.noaa.gov"
+MAX_HTML_BYTES = 512 * 1024
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+CACHE_TTL_SECONDS = 24 * 60 * 60
 
-CACHE_TTL_SECONDS = 3600 * 24 * 7
-FISH_WIDTH = 40
-FISH_HEIGHT = 20
+def fetch_html(url):
+    response = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_HTML_BYTES:
+        return ""
+    return body
 
-OFFSET = 39
+def clean_text(value, maximum = 140):
+    if type(value) != "string":
+        return ""
+    return " ".join(value.split())[:maximum]
 
-FONTS = ["tb-8", "tom-thumb", "Dina_r400-6", "5x8"]
-FONT_DEFAULT = FONTS[0]
+def seafood_profiles():
+    body = fetch_html(DIRECTORY_URL)
+    if not body:
+        return []
+    profiles = []
+    for link in bsoup.parseHtml(body).find_all("a")[:1000]:
+        title = link.find("div", {"class": "bold-font"})
+        image = link.find("img")
+        href = clean_text(link.attrs().get("href", ""), 180)
+        src = clean_text(image.attrs().get("src", ""), 300) if image != None else ""
+        name = clean_text(title.get_text(), 80) if title != None else ""
+        if not href.startswith("/species/") or not href.rstrip().endswith("/seafood"):
+            continue
+        if not src.startswith("/s3/"):
+            src = ""
+        if name:
+            profiles.append({"name": name, "url": NOAA_ORIGIN + href.strip(), "image": NOAA_ORIGIN + src if src else ""})
+    return profiles
 
-CONTENT_TITLES = ["Species Name", "Biology", "Location", "Habitat", "Physical Description", "Texture", "Taste"]
+def profile_fact(url):
+    body = fetch_html(url)
+    if not body:
+        return ["Fish fact", "NOAA profile unavailable"]
+    facts = []
+    for item in bsoup.parseHtml(body).find_all("div", {"class": "species-profile__status"})[:20]:
+        title_node = item.find("h3", {"class": "species-profile__status-title"})
+        value_node = item.find("p")
+        title = clean_text(title_node.get_text(), 30) if title_node != None else ""
+        value = clean_text(value_node.get_text(), 140) if value_node != None else ""
+        if title and value:
+            facts.append([title, value])
+    return facts[random.number(0, len(facts) - 1)] if facts else ["Fish fact", "NOAA profile unavailable"]
 
-FISH_WATCH_URL = "https://www.fishwatch.gov/api/species/"
+def fetch_image(url):
+    if not url.startswith(NOAA_ORIGIN + "/s3/"):
+        return FAIL_IMAGE_ASSET.readall()
+    response = http.get(url, ttl_seconds = CACHE_TTL_SECONDS)
+    body = response.body()
+    if response.status_code != 200 or not body or len(body) > MAX_IMAGE_BYTES:
+        return FAIL_IMAGE_ASSET.readall()
+    octets = body.elem_ords()
+    if len(body) < 4 or not (octets[0] == 137 and body[1:4] == "PNG" or octets[0] == 255 and octets[1] == 216):
+        return FAIL_IMAGE_ASSET.readall()
+    return body
 
 def main():
-    #get fish data and pick a random fish
-    fish_barrel = get_fish_barrel()
-    random_index = random(len(fish_barrel))
-    fish = fish_barrel[random_index]
-
-    # get specific fish
-    # fishToGet=FISH_WATCH_URL+"pink-shrimp"
-    # fish = http.get(fishToGet).json()[0]
-
-    #check and set an available fish picture. If no picture is found, display FAIL_IMAGE
-    fish_pic = fish["Species Illustration Photo"]["src"]
-    if fish_pic == None:
-        # print("No fish in this pond")
-        fish_pic = FAIL_IMAGE
-    else:
-        # print("Look at that fish!")
-        fish_pic = get_fish_pic(fish_pic)
-
-    #check to see if fish data is present
-    if len(fish) == 0:
-        fail("Not able to catch fish :(")
-
-    #get a random fact from list
-    fact = get_fact(fish, CONTENT_TITLES[1:])
-
-    #modify speed of marquee based on length of fact
-    delay_var = 80
-
-    if len(fact[1]) > 80:
-        delay_var = 60
-
-    if len(fact[1]) > 109:
-        delay_var = 45
-
+    profiles = seafood_profiles()
+    if not profiles:
+        return render.Root(child = render.WrappedText("FishWatch unavailable"))
+    profile = profiles[random.number(0, len(profiles) - 1)]
+    fact = profile_fact(profile["url"])
     return render.Root(
-        delay = delay_var,
+        delay = 60 if len(fact[1]) > 80 else 80,
         child = render.Marquee(
             width = 64,
             height = 32,
-            offset_start = OFFSET,
-            offset_end = OFFSET,
+            offset_start = 39,
+            offset_end = 39,
             scroll_direction = "vertical",
             child = render.Column(
                 main_align = "center",
                 cross_align = "center",
                 children = [
-                    render.WrappedText(
-                        content = fish[CONTENT_TITLES[0]],
-                        font = FONT_DEFAULT,
-                    ),
-                    render.Image(
-                        src = fish_pic,
-                        width = FISH_WIDTH,
-                        height = FISH_HEIGHT,
-                    ),
-                    render.WrappedText(
-                        content = fact[0] + ":",
-                        font = FONT_DEFAULT,
-                    ),
-                    #adding row with expanded = True alligns other children to middle
-                    render.Row(
-                        expanded = True,
-                        main_align = "center",
-                        children = [
-                            render.WrappedText(
-                                content = fact[1],
-                                font = FONT_DEFAULT,
-                            ),
-                        ],
-                    ),
+                    render.WrappedText(content = profile["name"], font = "tb-8"),
+                    render.Image(src = fetch_image(profile["image"]), width = 40, height = 20),
+                    render.WrappedText(content = fact[0] + ":", font = "tb-8"),
+                    render.WrappedText(content = fact[1], font = "tb-8"),
                 ],
             ),
         ),
     )
 
-def get_fish_pic(url):
-    res = http.get(url = url, ttl_seconds = CACHE_TTL_SECONDS, headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
-    if res.status_code != 200:
-        fail("No fish here! Request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
-
-    return res.body()
-
-def get_fish_barrel():
-    # print("Let's go fishing!")
-    rep = http.get(FISH_WATCH_URL, ttl_seconds = CACHE_TTL_SECONDS, headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
-    if rep.status_code != 200:
-        fail("FishWatch request failed with status %d", rep.status_code)
-    fish_barrel = rep.json()
-
-    return fish_barrel
-
-def get_fact(fish_info, content_titles_clone):
-    #find a random fact
-    for _ in (range(0, len(content_titles_clone))):
-        random_index = random(len(content_titles_clone))
-        random_attribute = content_titles_clone.pop(random_index)
-        fish_facts = fish_info[random_attribute]
-
-        if not fish_facts:
-            # print("1: No facts at " + random_attribute)
-            continue
-
-        #checks to see if there are multiple facts available. If so, pick a random line
-        #If just one fact is available, return if not empty or too long
-        fish_facts_split = fish_facts.split("</li>")
-        if len(fish_facts_split) == 1:
-            fish_fact_sin_chars = remove_chars(fish_facts_split[0])
-            if fish_facts_split[0] == "":
-                # print("2: No facts at " + random_attribute)
-                continue
-
-            if not fact_length_check_by_char(fish_fact_sin_chars):
-                # print("Fact is too long: "+fish_fact_sin_chars)
-                continue
-
-            return [random_attribute, fish_fact_sin_chars]
-
-        #pick random fact from line
-        fish_fact = pick_random_lines(fish_facts_split)
-        if fish_fact == "no_valid_lines":
-            continue
-
-        return [random_attribute, fish_fact]
-
-    # print("No facts found in get_fact")
-    return ["error", "no facts found"]
-
-def pick_random_lines(facts):
-    #find a random fact from the array of split lines and return it
-    for _ in range(0, len(facts) - 1):
-        random_fact_index = random(len(facts))
-        random_fact = facts.pop(random_fact_index)
-        random_fact = remove_chars(random_fact)
-        if random_fact == "":
-            # print("blank fact found, picking another line")
-            continue
-
-        if not fact_length_check_by_char(random_fact):
-            # print("Fact is too long: "+ random_fact)
-            continue
-
-        return random_fact
-
-    return "no_valid_lines"
-
-def fact_length_check_by_char(fact):
-    if len(fact) > 140:
-        return False
-    return True
-
-def remove_chars(sentance):
-    regex_strings = ["\\<.*?\\>", "\n", "&nbsp;", "&amp;"]
-    for re_string in regex_strings:
-        sentance = re.sub(re_string, "", sentance)
-    return sentance
-
-def random(num):
-    randSecond = time.now().nanosecond / 1000
-    randNum = int(randSecond % num)
-    return randNum
-
 def get_schema():
-    return schema.Schema(
-        version = "1",
-        fields = [],
-    )
+    return schema.Schema(version = "1", fields = [])

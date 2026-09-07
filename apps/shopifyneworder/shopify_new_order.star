@@ -16,6 +16,7 @@ load("images/recent_orders.png", RECENT_ORDERS_ASSET = "file")
 load("images/recent_sales.png", RECENT_SALES_ASSET = "file")
 load("images/trends_animated.gif", TRENDS_ANIMATED_ASSET = "file")
 load("images/trends_container.png", TRENDS_CONTAINER_ASSET = "file")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
@@ -26,7 +27,6 @@ IMAGE_STARFIELD = IMAGE_STARFIELD_ASSET.readall()
 
 # CONFIG
 SHOPIFY_COUNTER_API_HOST = "https://www.shopcounter.app"
-CACHE_TTL = 30
 
 # COLORS
 COLOR_LIME = "#D0F224"
@@ -58,15 +58,15 @@ TRENDS_ANIMATED_BACKGROUND = TRENDS_ANIMATED_ASSET.readall()
 APP_ID = "shopify_new_orders"
 
 def api_fetch(counter_id, request_config):
-    print("Calling Counter API.")
-    url = "{}/tidbyt/api/{}/{}".format(SHOPIFY_COUNTER_API_HOST, counter_id, APP_ID)
-    rep = http.post(url, body = json.encode({"config": request_config}), headers = {"Content-Type": "application/json"}, ttl_seconds = CACHE_TTL)
-    if rep.status_code != 200:
-        print("Counter API request failed with status {}".format(rep.status_code))
+    if type(counter_id) != "string" or not re.match(r"^[A-Za-z0-9_-]{1,128}$", counter_id):
         return None
-    api_response = rep.json()
-
-    return api_response
+    url = "{}/tidbyt/api/{}/{}".format(SHOPIFY_COUNTER_API_HOST, counter_id, APP_ID)
+    rep = http.post(url, body = json.encode({"config": request_config}), headers = {"Content-Type": "application/json"})
+    body = rep.body()
+    if rep.status_code != 200 or not body or len(body) > 256 * 1024:
+        return None
+    api_response = json.decode(body, {})
+    return api_response if type(api_response) == "dict" else None
 
 # Error View
 # Renders an error message
@@ -176,9 +176,14 @@ def main(config):
     if not api_response:
         return error_view()
 
-    api_config = api_response["config"]
-    api_data = api_response["data"]
-    orders = api_data["orders"]
+    api_config = api_response.get("config", {})
+    api_data = api_response.get("data", {})
+    if type(api_config) != "dict" or type(api_data) != "dict" or type(api_data.get("orders")) != "list":
+        return error_view()
+    orders = []
+    for order in api_data.get("orders")[:50]:
+        if type(order) == "dict":
+            orders.append({"line_item_count": str(order.get("line_item_count", ""))[:20], "current_total_price": str(order.get("current_total_price", ""))[:40]})
     text_color = api_config.get("textColor")
     background_color = api_config.get("backgroundColor")
     logo = api_config.get("logo", IMAGE_RECENT_ORDERS)
@@ -280,6 +285,7 @@ def get_schema():
                 name = "Counter ID",
                 desc = "Unique ID of the counter set up in the Counter app for Shopify",
                 icon = "shopify",
+                secret = True,
             ),
             schema.Text(
                 id = "textColor",

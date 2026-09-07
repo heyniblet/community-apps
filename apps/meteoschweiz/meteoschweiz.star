@@ -1162,12 +1162,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Typeahead(
+            schema.Text(
                 id = "station",
-                name = "Location",
-                desc = "MeteoSwiss location for which to display the weather forecast.",
+                name = "MeteoSwiss Station ID",
+                desc = "Forecast station ID from MeteoSwiss Open Data.",
                 icon = "locationDot",
-                handler = search_station,
+                default = "KLO",
             ),
             schema.Dropdown(
                 id = "forecast_type",

@@ -5,60 +5,121 @@ Description: Display detailed, decoded METAR information.
 Author: SamuelSagarino
 """
 
-load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("math.star", "math")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
 DEFAULT_AIRPORT = "KORL"
+METAR_URL = "https://aviationweather.gov/api/data/metar"
+MAX_RESPONSE_BYTES = 512 * 1024
+
+def render_error(message):
+    return render.Root(
+        child = render.Column(
+            expanded = True,
+            main_align = "center",
+            cross_align = "center",
+            children = [render.Text("METAR", color = "#fff"), render.Text(message, color = "#888")],
+        ),
+    )
+
+def parse_airport(value):
+    if type(value) != "string":
+        return None
+    value = value.strip().upper()
+    return value if len(value) == 4 and all([char.isalnum() for char in value.codepoints()]) else None
+
+def number(value, minimum, maximum):
+    if type(value) not in ["int", "float"] or value < minimum or value > maximum:
+        return None
+    return value
+
+def parse_report_time(value):
+    if type(value) != "string" or not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$", value):
+        return None
+    year = int(value[0:4])
+    month = int(value[5:7])
+    day = int(value[8:10])
+    hour = int(value[11:13])
+    minute = int(value[14:16])
+    second = int(value[17:19])
+    if year < 2000 or year > 2100 or month < 1 or month > 12 or hour > 23 or minute > 59 or second > 59:
+        return None
+    days = [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if day < 1 or day > days[month - 1]:
+        return None
+    return time.time(year = year, month = month, day = day, hour = hour, minute = minute, second = second, location = "UTC")
+
+def sanitize_metar(value, airport):
+    if type(value) != "dict" or value.get("icaoId") != airport:
+        return None
+    observation_time = value.get("reportTime")
+    if parse_report_time(observation_time) == None:
+        return None
+    temperature = number(value.get("temp"), -100, 100)
+    dewpoint = number(value.get("dewp"), -100, 100)
+    wind_speed = number(value.get("wspd", 0), 0, 300)
+    wind_gust = number(value.get("wgst"), 0, 400) if value.get("wgst") != None else None
+    wind_direction = value.get("wdir", 0)
+    if wind_direction != "VRB":
+        wind_direction = number(wind_direction, 0, 360)
+    visibility = value.get("visib")
+    if visibility != "10+":
+        visibility = number(visibility, 0, 100)
+    if None in [temperature, dewpoint, wind_speed, wind_direction, visibility]:
+        return None
+
+    clouds = []
+    raw_clouds = value.get("clouds", [])
+    if type(raw_clouds) != "list":
+        return None
+    for layer in raw_clouds[:4]:
+        if type(layer) != "dict" or layer.get("cover") not in ["SKC", "CLR", "FEW", "SCT", "BKN", "OVC", "VV"]:
+            continue
+        base = number(layer.get("base"), 0, 100000)
+        clouds.append({"cover": layer["cover"], "base": int(base) if base != None else 12000})
+
+    weather = value.get("wxString")
+    weather = weather if type(weather) == "string" and len(weather) <= 64 else None
+    return {
+        "icaoId": airport,
+        "reportTime": observation_time,
+        "temp": temperature,
+        "dewp": dewpoint,
+        "wdir": wind_direction,
+        "wspd": wind_speed,
+        "wgst": wind_gust,
+        "visib": visibility,
+        "clouds": clouds,
+        "wxString": weather,
+    }
 
 def main(config):
     # Define schema options from the user.
-    airport = config.str("airport", DEFAULT_AIRPORT)
+    airport = parse_airport(config.str("airport", DEFAULT_AIRPORT))
     f_selector = config.bool("fahrenheit_temperatures", False)
+    if not airport:
+        return render_error("Invalid airport")
 
-    # API URL
-    apiURL = "https://www.aviationweather.gov/api/data/metar?format=json&ids=%s&hours=2"
-
-    # Store cahces by airport. That way if two users are pulling the same airport's METAR it is only fetched once.
-    cacheName = "metar/" + airport
-
-    # Define cached data; if available.
-    metarData_cached = cache.get(cacheName)
-
-    # Check if cache has data.
-    if metarData_cached != None:
-        metarData = json.decode(metarData_cached)
-        print("Cached metar data found for " + cacheName)
-    else:
-        print("No cached metar data found for " + cacheName)
-
-        rep = http.get(apiURL % airport, ttl_seconds = 120)
-
-        if rep.status_code != 200:
-            fail("API Error: Failure")
-
-        metarData = rep.json()
-
-    # Setup array
-    decodedMetar = metarData[0]
+    rep = http.get(
+        METAR_URL,
+        params = {"format": "json", "ids": airport, "hours": "2"},
+        ttl_seconds = 300,
+        headers = {"User-Agent": "Niblet DetailedMETAR/1.0 (+https://heyniblet.com)"},
+    )
+    body = rep.body()
+    metar_data = json.decode(body, None) if rep.status_code == 200 and len(body) <= MAX_RESPONSE_BYTES else None
+    decodedMetar = sanitize_metar(metar_data[0], airport) if type(metar_data) == "list" and metar_data else None
+    if decodedMetar == None:
+        return render_error("No data")
 
     # Get observation time.
-    decodedObservationMetar = decodedMetar["reportTime"]
-
-    # Convert time to time object by parsing values from observation_time
-    year = int(decodedObservationMetar[0:4])
-    month = int(decodedObservationMetar[5:7])
-    day = int(decodedObservationMetar[8:10])
-    hour = int(decodedObservationMetar[11:13])
-    minute = int(decodedObservationMetar[14:16])
-    second = int(decodedObservationMetar[17:19])
-
-    observationDate = time.time(year = year, month = month, day = day, hour = hour, minute = minute, second = second, location = "Etc/UTC")
+    observationDate = parse_report_time(decodedMetar["reportTime"])
 
     # Create "humanized" readout. Ex; "5 minutes ago"
     humanizedTime = humanize.time(observationDate)
@@ -698,57 +759,18 @@ def pixel(x, y, color):
 
 # Returns current flight category.
 def getFlightCategory(decodedMetar):
-    visibility = None
     flightCategory = None
     cloudLayers = decodedMetar["clouds"]
-    visibility = None
-    cloudLayerCount = len(cloudLayers)
 
     if (decodedMetar["visib"] == "10+"):
         visibility = 10
     else:
         visibility = int(decodedMetar["visib"])
 
-    baseClouds = int(12000)
-
-    if (cloudLayerCount == 1):
-        if cloudLayers[0]["cover"] == "BKN":
-            baseClouds = cloudLayers[0]["base"]
-
-        if cloudLayers[0]["cover"] == "OVC":
-            baseClouds = cloudLayers[0]["base"]
-
-    if (cloudLayerCount == 2):
-        if cloudLayers[0]["cover"] == "BKN":
-            baseClouds = cloudLayers[0]["base"]
-
-        if cloudLayers[0]["cover"] == "OVC":
-            baseClouds = cloudLayers[0]["base"]
-
-        if cloudLayers[1]["cover"] == "BKN":
-            baseClouds = cloudLayers[1]["base"]
-
-        if cloudLayers[1]["cover"] == "OVC":
-            baseClouds = cloudLayers[1]["base"]
-
-    if (cloudLayerCount == 3):
-        if cloudLayers[0]["cover"] == "BKN":
-            baseClouds = cloudLayers[0]["base"]
-
-        if cloudLayers[0]["cover"] == "OVC":
-            baseClouds = cloudLayers[0]["base"]
-
-        if cloudLayers[1]["cover"] == "BKN":
-            baseClouds = cloudLayers[1]["base"]
-
-        if cloudLayers[1]["cover"] == "OVC":
-            baseClouds = cloudLayers[1]["base"]
-
-        if cloudLayers[2]["cover"] == "BKN":
-            baseClouds = cloudLayers[2]["base"]
-
-        if cloudLayers[2]["cover"] == "OVC":
-            baseClouds = cloudLayers[2]["base"]
+    baseClouds = 12000
+    for layer in cloudLayers:
+        if layer["cover"] in ["BKN", "OVC", "VV"] and layer["base"] < baseClouds:
+            baseClouds = layer["base"]
 
     #IFR
     if baseClouds > 3000 and visibility >= 5:

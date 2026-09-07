@@ -7,43 +7,48 @@ Author: thickey256
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
 def main(config):
     feed_url = config.get("feed_url") or "https://tidbyt-json-display.s3.eu-west-1.amazonaws.com/example.json"
-    feed_refresh = config.get("feed_refresh") or "120"
-    feed_refresh = int(feed_refresh)
+    if not valid_feed_url(feed_url):
+        return error_frame("Invalid public HTTPS feed")
 
-    #Load the json file
-    rep = http.get(url = feed_url, ttl_seconds = feed_refresh)
+    rep = http.get(url = feed_url)
+    body = rep.body()
+    json_contents = json.decode(body, {}) if rep.status_code == 200 and body and len(body) <= 64 * 1024 else {}
+    if type(json_contents) != "dict":
+        return error_frame("JSON feed unavailable")
 
-    #Turn the body into json
-    json_contents = json.decode(rep.body())
-
-    if rep.status_code != 200:
-        fail("Json URL didn't load %d", rep.status_code)
-
-    #Set the font
     font = "tom-thumb"
+    title = bounded_text(json_contents.get("title_text"), 120)
+    data = json_contents.get("data", [])
+    if not title or type(data) != "list":
+        return error_frame("Invalid JSON feed")
 
-    #Sort out the icon (10x10 png works well)
-    icon_image = http.get(json_contents["title_image"], ttl_seconds = 7200)
+    icon = None
+    image_url = json_contents.get("title_image")
+    origin = "https://" + feed_url.split("/")[2]
+    if type(image_url) == "string" and len(image_url) <= 2048 and image_url.startswith(origin + "/") and not any([c in image_url for c in ["@", " ", "\t", "\r", "\n"]]):
+        icon_response = http.get(image_url, ttl_seconds = 3600)
+        icon_body = icon_response.body()
+        content_type = icon_response.headers.get("Content-Type", "").lower()
+        if icon_response.status_code == 200 and icon_body and len(icon_body) <= 512 * 1024 and content_type.startswith("image/"):
+            icon = icon_body
 
-    #This constructs the header, an image and a title
+    title_children = []
+    if icon != None:
+        title_children.append(render.Box(width = 11, child = render.Image(src = icon)))
+    title_children.append(render.Marquee(width = 64, child = render.Text(title)))
     children_array = [
         render.Box(
             render.Row(
                 expanded = True,  # Use as much horizontal space as possible
                 main_align = "start",  # Controls horizontal alignment
                 cross_align = "center",  # Controls vertical alignment
-                children = [
-                    render.Box(
-                        width = 11,
-                        child = render.Image(src = icon_image.body()),
-                    ),
-                    render.Marquee(width = 64, child = render.Text(json_contents["title_text"])),
-                ],
+                children = title_children,
             ),
             height = 10,
         ),
@@ -53,19 +58,38 @@ def main(config):
         ),
     ]
 
-    #Loop through each line of data (no more than 3 will fit)
-    for item in json_contents["data"]:
+    for item in data[:3]:
+        if type(item) != "dict":
+            continue
+        item_title = bounded_text(item.get("title"), 100)
+        item_value = bounded_text(item.get("value"), 200)
+        if not item_title or not item_value:
+            continue
         children_array.append(
             render.Padding(
                 pad = (1, 0, 1, 1),
-                child = render.Marquee(width = 64, child = render.Text("%s:%s" % (item["title"], item["value"]), font = font, color = item["color"])),
+                child = render.Marquee(width = 64, child = render.Text("%s:%s" % (item_title, item_value), font = font, color = valid_color(item.get("color")))),
             ),
         )
 
-    #Render it all out
     return render.Root(
         child = render.Column(children = children_array),
     )
+
+def valid_feed_url(value):
+    if type(value) != "string" or len(value) > 2048 or not value.startswith("https://"):
+        return False
+    parts = value.split("/")
+    return len(parts) >= 3 and parts[2] and ":" not in parts[2] and not any([c in value for c in ["@", "\\", " ", "\t", "\r", "\n", "#"]])
+
+def bounded_text(value, limit):
+    return value[:limit] if type(value) == "string" else ""
+
+def valid_color(value):
+    return value if type(value) == "string" and re.match(r"^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$", value) else "#ffffff"
+
+def error_frame(message):
+    return render.Root(child = render.WrappedText(content = message, width = 64, color = "#f00"))
 
 def get_schema():
     return schema.Schema(

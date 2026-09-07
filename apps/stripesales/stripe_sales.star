@@ -1,3 +1,4 @@
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
@@ -43,8 +44,10 @@ def get_beginning_of_today():
 def get_total(charges):
     total = 0
 
-    for charge in charges:
-        total = total + charge["amount"]
+    for charge in charges[:100]:
+        amount = charge.get("amount") if type(charge) == "dict" else None
+        if type(amount) == "int" and amount >= 0 and charge.get("paid") != False:
+            total = total + amount
 
     return total // 100
 
@@ -53,9 +56,9 @@ def stripe_api(endpoint, params, api_key):
 
     headers = {"Content-Type": "application/json", "Authorization": "Bearer {}".format(api_key)}
 
-    response = http.get(url = url, headers = headers, params = params, ttl_seconds = 300)
-
-    return response.json()
+    response = http.get(url = url, headers = headers, params = params)
+    body = response.body()
+    return json.decode(body, {}) if response.status_code == 200 and body and len(body) <= 256 * 1024 else {}
 
 def get_charges(api_key):
     beginning_of_today = get_beginning_of_today().unix
@@ -69,13 +72,13 @@ def get_charges(api_key):
 def get_sales(api_key):
     res = get_charges(api_key)
 
-    data = res.get("data")
+    data = res.get("data") if type(res) == "dict" else None
 
-    if data != None:
+    if type(data) == "list":
         total = get_total(data)
         return {"total": "$" + humanize.comma(total), "count": len(data)}
 
-    return {"error": res["error"]["message"]}
+    return {"error": "Stripe data unavailable"}
 
 def get_content(api_key):
     return get_sales(api_key)
@@ -83,7 +86,7 @@ def get_content(api_key):
 def main(config):
     api_key = config.get(API_KEY)
 
-    if api_key == None:
+    if type(api_key) != "string" or len(api_key) < 8 or len(api_key) > 256 or any([c in api_key for c in [" ", "\t", "\r", "\n"]]):
         return render_error_message("API Key required.")
 
     content = get_content(api_key)
@@ -107,6 +110,7 @@ def get_schema():
                 name = "API Key",
                 desc = "Your Stripe secret key",
                 icon = "user",
+                secret = True,
             ),
         ],
     )

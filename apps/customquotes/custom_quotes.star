@@ -12,9 +12,9 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 # Set default spreadsheet, API keys and supported range (1000)
-default_spreadsheet_id = "default"
-default_api_key = "default"
-range = "Sheet1!A1:B1000"
+default_spreadsheet_id = ""
+default_api_key = ""
+range = "Sheet1%21A1%3AB1000"
 
 # Set fonts
 QUOTE_FONT = "tom-thumb"
@@ -30,38 +30,42 @@ PADDING = 2
 INNER_HEIGHT = OUTER_HEIGHT - 2 * PADDING
 INNER_WIDTH = OUTER_WIDTH - 2 * PADDING
 
-#Set cache time
-TTL_SECONDS = 3600  # Increased to 1 hour since we're using static image
+def valid_id(value, max_length):
+    if not value or len(value) > max_length:
+        return False
+    for c in value.elems():
+        if c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_":
+            return False
+    return True
 
 def main(config):
     # Get spreadsheet and API key from user entry
     spreadsheet_id = config.str("spreadsheet_id", default_spreadsheet_id)
     api_key = config.str("api_key", default_api_key)
-    url = "https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}?key={}".format(spreadsheet_id, range, api_key)
+    if not valid_id(spreadsheet_id, 128) or not valid_id(api_key, 256):
+        return render.Root(child = render.WrappedText("Set a valid sheet ID and API key", width = 64, align = "center"))
+    url = "https://sheets.googleapis.com/v4/spreadsheets/{}/values/{}".format(spreadsheet_id, range)
 
     # Make a GET request to input data from Google Sheet
-    r = http.get(url, ttl_seconds = TTL_SECONDS)
+    r = http.get(url, params = {"key": api_key})
 
     # check the HTTP response code
     # if we fail, send back error message
     status_code = r.status_code
-    if (status_code != 200):
+    if status_code != 200 or len(r.body()) > 2 * 1024 * 1024:
         quote = "Check spreadsheet ID or API key"
         author = ""
     else:
         # Extract the values array from the response
-        array = r.json()["values"]
-
-        # Extracting rows and columns
-        quotes = [item[0] if len(item) > 0 else "" for item in array]
-        authors = [item[1] if len(item) > 1 else "" for item in array]
-
-        # Randomly pick one quote-author
-        quote_id = int(time.now().nanosecond / 1000) % len(quotes)
-        if (quote_id == 0):
-            quote_id = quote_id + 1
-        quote = quotes[quote_id]
-        author = authors[quote_id]
+        values = r.json().get("values", [])
+        rows = [item for item in values[1:1001] if type(item) == "list" and len(item) > 0 and item[0]]
+        if not rows:
+            quote = "No quote to display"
+            author = ""
+        else:
+            row = rows[int(time.now().nanosecond / 1000) % len(rows)]
+            quote = str(row[0])[:500]
+            author = str(row[1])[:100] if len(row) > 1 else ""
 
         # Display error if no quote
         if (quote == ""):

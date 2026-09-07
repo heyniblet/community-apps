@@ -5,10 +5,13 @@ Description: Shows the latest published headline on DailyWire.com.
 Author: bmdelaune
 """
 
-load("http.star", "http")  #HTTP Client
+load("html.star", "html")
+load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
-load("xpath.star", "xpath")  #XPath Expressions to read XML RSS Feed
+
+DAILYWIRE_FEED_XML_URL = "https://www.dailywire.com/feeds/rss.xml"
+MAX_RESPONSE_BYTES = 512 * 1024
 
 def main():
     title = get_headline()
@@ -53,13 +56,14 @@ def main():
     )
 
 def get_headline():
-    DAILYWIRE_FEED_XML_URL = "https://www.dailywire.com/feeds/rss.xml"
-
-    resp = http.get(DAILYWIRE_FEED_XML_URL)
-    if resp.status_code == 200:
-        results = xpath.loads(resp.body()).query_all("//rss[1]/channel[1]/item/title[text()]")
-        if len(results) > 0:
-            return results[0]
+    resp = http.get(DAILYWIRE_FEED_XML_URL, ttl_seconds = 600)
+    body = resp.body()
+    if resp.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES:
+        titles = html(body).find("item title")
+        if titles.len() > 0:
+            title = titles.first().text().strip()
+            if title:
+                return title[:300]
     return "!! Error"
 
 def get_schema():

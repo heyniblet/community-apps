@@ -1,7 +1,7 @@
 """
 Applet: Plex Recently Added
 Summary: Display Plex recently added
-Description: Displays recently added on Plex server. Recommended to set up a local proxy server `index.js` to host the data. See https://github.com/tidbyt/community/blob/main/apps/plexrecentlyadded/README.md for more information.
+Description: Displays recently added media from a public HTTPS Plex or proxy endpoint.
 Author: noahpodgurski
 """
 
@@ -14,7 +14,7 @@ load("images/sample3.jpg", SAMPLE3_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
 
-REFRESH_TIME = 86400  # twice a day
+REFRESH_TIME = 3600
 
 SAMPLE_DATA = {
     "MediaContainer": {
@@ -42,34 +42,56 @@ SAMPLE_IMAGES = [
     SAMPLE3_ASSET,
 ]
 
-def requestStatus(serverIP, serverPort, plexToken, apiKey):
-    res = http.get(
-        "http://%s:%d/library/recentlyAdded" % (serverIP, serverPort),
-        headers = {
-            "Accept": "application/json",
-            "X-Plex-Token": plexToken,
-            "x-api-key": apiKey,
-        },
-        ttl_seconds = REFRESH_TIME,
-    )
-    if res.status_code != 200:
-        fail("request failed with status %d", res.status_code)
-    res = res.json()
-    return res
+def request_headers(plexToken, apiKey):
+    headers = {
+        "Accept": "application/json",
+        "X-Plex-Token": plexToken,
+        "X-Plex-Client-Identifier": "niblet-plex-recently-added",
+    }
+    if apiKey:
+        headers["x-api-key"] = apiKey
+    return headers
 
-def requestThumb(serverIP, serverPort, plexToken, apiKey, thumbnailURL):
+def server_url(serverIP, serverPort):
+    serverIP = serverIP or ""
+    serverPort = serverPort or ""
+    serverIP = serverIP.strip().rstrip("/")
+    if not serverIP or " " in serverIP or "\t" in serverIP or "\n" in serverIP or "@" in serverIP:
+        return None
+    if serverIP.startswith("http://"):
+        return None
+    if serverIP.startswith("https://"):
+        return serverIP
+    if "/" in serverIP or not serverPort.isdigit() or int(serverPort) < 1 or int(serverPort) > 65535:
+        return None
+    return "https://%s:%s" % (serverIP, serverPort)
+
+def requestStatus(base_url, plexToken, apiKey):
     res = http.get(
-        "http://%s:%d%s" % (serverIP, serverPort, thumbnailURL),
-        headers = {
-            "Accept": "image/jpeg",
-            "X-Plex-Token": plexToken,
-            "x-api-key": apiKey,
-        },
+        base_url + "/library/recentlyAdded",
+        headers = request_headers(plexToken, apiKey),
         ttl_seconds = REFRESH_TIME,
     )
-    if res.status_code != 200:
-        fail("request failed with status %d", res.status_code)
-    return res.body()
+    body = res.body().strip()
+    if res.status_code != 200 or len(body) > 2097152 or not body.startswith("{") or not body.endswith("}"):
+        print("Plex library request failed with status %d" % res.status_code)
+        return None
+    data = res.json()
+    return data if type(data) == "dict" else None
+
+def requestThumb(base_url, plexToken, apiKey, thumbnailURL):
+    if type(thumbnailURL) != "string" or not thumbnailURL.startswith("/") or thumbnailURL.startswith("//"):
+        return None
+    res = http.get(
+        base_url + thumbnailURL,
+        headers = request_headers(plexToken, apiKey),
+        ttl_seconds = REFRESH_TIME,
+    )
+    body = res.body()
+    if res.status_code != 200 or len(body) > 4194304:
+        print("Plex thumbnail request failed with status %d" % res.status_code)
+        return None
+    return body
 
 def main(config):
     usingSampleData = False
@@ -80,9 +102,12 @@ def main(config):
     showTitleCard = config.bool("showTitleCard", True)
     title = ""
 
-    if not serverIP or type(int(serverPort)) != "int":
+    base_url = server_url(serverIP, serverPort)
+    if not serverIP:
         usingSampleData = True
         print("Using sample data")
+    elif not base_url or not plexToken:
+        return render_message("Use HTTPS and add your Plex token")
 
     if usingSampleData:
         # have to do it this weird way to dodge frozen hash table error
@@ -96,28 +121,35 @@ def main(config):
             title = newData["MediaContainer"]["Metadata"][i]["title"]
         data = newData
     else:
-        serverPort = int(serverPort)
-        data = requestStatus(serverIP, serverPort, plexToken, apiKey)
+        data = requestStatus(base_url, plexToken, apiKey)
+        if not data:
+            return render_message("Plex is unavailable")
 
     recentlyAdded = []
 
     # Only show up to 3 of the most recently added items.
     # Each item adds 2 elements to `recentlyAdded`, so we break when the length is 6.
-    metadata = data.get("MediaContainer", {}).get("Metadata", [])
-    for entry in metadata:
+    container = data.get("MediaContainer", {})
+    metadata = container.get("Metadata", []) if type(container) == "dict" else []
+    for entry in metadata if type(metadata) == "list" else []:
         if len(recentlyAdded) >= 6:
             break
+        if type(entry) != "dict":
+            continue
 
         thumbnailURL = entry.get("parentThumb") or entry.get("thumb") or entry.get("grandparentThumb") or entry.get("art")
         if not thumbnailURL:
             continue
 
         title = entry.get("parentTitle") or entry.get("title", "Unknown")
+        title = title[:120] if type(title) == "string" else "Unknown"
 
         if not usingSampleData:
-            thumbnail = requestThumb(serverIP, serverPort, plexToken, apiKey, thumbnailURL)
+            thumbnail = requestThumb(base_url, plexToken, apiKey, thumbnailURL)
         else:
             thumbnail = thumbnailURL
+        if not thumbnail:
+            continue
 
         recentlyAdded.append(
             render.Column(
@@ -135,6 +167,8 @@ def main(config):
             render.Box(height = 32, width = 1, color = "#EFAF08"),
         )
 
+    if not recentlyAdded:
+        return render_message("Nothing recently added")
     if showTitleCard:
         return render.Root(
             render.Stack(
@@ -218,20 +252,32 @@ def main(config):
             ),
         )
 
+def render_message(text):
+    return render.Root(
+        child = render.Column(
+            children = [
+                render.Image(src = PLEX_ICON_ASSET.readall()),
+                render.WrappedText(text, align = "center"),
+            ],
+            main_align = "center",
+            cross_align = "center",
+        ),
+    )
+
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
             schema.Text(
                 id = "serverIP",
-                name = "Server IP",
-                desc = "IP of Plex Server",
+                name = "Plex HTTPS URL",
+                desc = "Public HTTPS Plex or reverse-proxy URL. A bare host plus Server Port also works.",
                 icon = "gear",
             ),
             schema.Text(
                 id = "serverPort",
                 name = "Server Port",
-                desc = "Ex: 32400",
+                desc = "Used only with a bare host, for example 32400",
                 icon = "gear",
             ),
             schema.Text(

@@ -5,6 +5,7 @@ Description: Daily, monthly, annual and lifetime energy production and consumpti
 Author: Converted from SolarEdge version by ckyr
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
 load("images/plug_sum.gif", PLUG_SUM_ASSET = "file")
@@ -17,7 +18,7 @@ SUN_SUM = SUN_SUM_ASSET.readall()
 
 # Cache for 1 minute only - let Tronbyt control refresh timing
 # Proxy has 2-hour cache, so API calls are minimized regardless of render frequency
-CACHE_TTL = 60
+MAX_RESPONSE_BYTES = 256 * 1024
 
 # Colors
 GRAY = "#777777"
@@ -29,6 +30,7 @@ WHITE = "#FFFFFF"
 
 def format_energy(wh):
     """Format energy value with appropriate unit (kWh, MWh, or GWh)."""
+    wh = safe_energy(wh)
     if wh >= 1000000000:  # >= 1 GWh
         return humanize.float("#,###.##", wh / 1000000000) + " GWh"
     elif wh >= 1000000:  # >= 1 MWh
@@ -89,45 +91,37 @@ def create_summary_frame(title, production, consumption):
     )
 
 def main(config):
-    proxy_url = config.str("proxy_url", "")
-    api_key = config.str("api_key", "")
+    proxy_url = safe_proxy_url(config.str("proxy_url", ""))
+    api_key = safe_api_key(config.str("api_key", ""))
 
     frames = []
 
     # Get energy data from proxy
     if proxy_url and api_key:
-        # Clean up the proxy URL
-        proxy_url = proxy_url.strip()
-        proxy_url = proxy_url.rstrip("/")
-
-        # Ensure it has https://
-        if not proxy_url.startswith("http://") and not proxy_url.startswith("https://"):
-            proxy_url = "https://" + proxy_url
-
         # Build the full URL
         full_url = proxy_url + "/api/solar"
-
-        print("Calling:", full_url)
 
         # Call the proxy service
         rep = http.get(
             full_url,
             headers = {"X-API-Key": api_key},
-            ttl_seconds = CACHE_TTL,
         )
 
         if rep.status_code != 200:
             return render.Root(render.Box(render.WrappedText("Proxy Error: " + str(rep.status_code), color = RED)))
 
-        data = rep.json()
+        body = rep.body()
+        data = json.decode(body, None) if body and len(body) <= MAX_RESPONSE_BYTES else None
 
-        if "error" in data:
-            return render.Root(render.Box(render.WrappedText("Error: " + data["error"], color = RED)))
+        if type(data) != "dict" or "error" in data:
+            return render.Root(render.Box(render.WrappedText("Invalid proxy response", color = RED)))
 
-        periods = data.get("periods", {})
+        periods = data.get("periods")
+        if type(periods) != "dict":
+            periods = {}
 
         # Day
-        day_data = periods.get("day", {})
+        day_data = safe_period(periods.get("day"))
         frames.append(create_summary_frame(
             "Energy Today",
             day_data.get("production_wh", 0),
@@ -135,7 +129,7 @@ def main(config):
         ))
 
         # Week
-        week_data = periods.get("week", {})
+        week_data = safe_period(periods.get("week"))
         frames.append(create_summary_frame(
             "Energy Week",
             week_data.get("production_wh", 0),
@@ -143,7 +137,7 @@ def main(config):
         ))
 
         # Month
-        month_data = periods.get("month", {})
+        month_data = safe_period(periods.get("month"))
         frames.append(create_summary_frame(
             "Energy Month",
             month_data.get("production_wh", 0),
@@ -151,7 +145,7 @@ def main(config):
         ))
 
         # Year
-        year_data = periods.get("year", {})
+        year_data = safe_period(periods.get("year"))
         frames.append(create_summary_frame(
             "Energy Year",
             year_data.get("production_wh", 0),
@@ -159,7 +153,7 @@ def main(config):
         ))
 
         # Lifetime
-        lifetime_data = periods.get("lifetime", {})
+        lifetime_data = safe_period(periods.get("lifetime"))
         frames.append(create_summary_frame(
             "Energy Life",
             lifetime_data.get("production_wh", 0),
@@ -179,6 +173,25 @@ def main(config):
         child = render.Animation(children = frames),
     )
 
+def safe_proxy_url(value):
+    value = str(value or "").strip().rstrip("/")
+    if len(value) > 512 or not value.startswith("https://"):
+        return ""
+    host = value[len("https://"):]
+    if not host or any([char in host for char in ["/", "@", ":", "?", "#", "\\", " ", "\t", "\r", "\n"]]):
+        return ""
+    return value
+
+def safe_api_key(value):
+    value = str(value or "").strip()
+    return value if value and len(value) <= 512 and "\r" not in value and "\n" not in value else ""
+
+def safe_energy(value):
+    return min(1000000000000000, max(0, value)) if type(value) in ["int", "float"] else 0
+
+def safe_period(value):
+    return value if type(value) == "dict" else {}
+
 def get_schema():
     return schema.Schema(
         version = "1",
@@ -186,7 +199,7 @@ def get_schema():
             schema.Text(
                 id = "proxy_url",
                 name = "Proxy URL",
-                desc = "URL of your Enphase proxy service (e.g., https://your-app.onrender.com)",
+                desc = "HTTPS origin of your Enphase proxy service (for example, your-app.onrender.com)",
                 icon = "globe",
             ),
             schema.Text(

@@ -12,10 +12,17 @@ load("schema.star", "schema")
 load("xpath.star", "xpath")
 
 NEWS_ICON = NEWS_ICON_ASSET.readall()
+PRIMARY_FEED = "https://bigblagger.co.uk/feed"
+FALLBACK_FEED = "https://news.google.com/rss/search?q=site%3Abigblagger.co.uk&hl=en-GB&gl=GB&ceid=GB:en"
+MAX_FEED_BYTES = 512 * 1024
 
 def main(config):
     fontsize = config.get("fontsize", "tb-8")
-    articles = get_cacheable_data("https://bigblagger.co.uk/feed", 1)
+    if fontsize not in ["tb-8", "tom-thumb"]:
+        fontsize = "tb-8"
+    articles = get_cacheable_data(PRIMARY_FEED, 1)
+    if articles == None:
+        articles = get_cacheable_data(FALLBACK_FEED, 1)
 
     if articles == None:
         return connectionError(config)
@@ -118,19 +125,23 @@ def connectionError(config):
 def get_cacheable_data(url, articlecount):
     articles = []
 
-    res = http.get("https://bigblagger.co.uk/feed".format(url), ttl_seconds = 900)
+    res = http.get(url, ttl_seconds = 900)
     if res.status_code != 200:
         return None
     data = res.body()
+    if len(data) > MAX_FEED_BYTES:
+        return None
 
     data_xml = xpath.loads(data)
 
-    for i in range(1, articlecount + 1):
+    for i in range(1, min(articlecount, 10) + 1):
         title_query = "//item[{}]/title".format(str(i))
         desc_query = "//item[{}]/description".format(str(i))
-        articles.append((data_xml.query(title_query), str(data_xml.query(desc_query)).replace("None", "")))
+        title = data_xml.query(title_query)
+        if type(title) == "string" and title:
+            articles.append((title[:500], str(data_xml.query(desc_query)).replace("None", "")[:1000]))
 
-    return articles
+    return articles if articles else None
 
 def get_schema():
     fsoptions = [

@@ -13,10 +13,11 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 STATIONS_URL = "https://www.bbc.co.uk/sounds/stations"
-JSON_PREFIX = "window.__PRELOADED_STATE__ = "
-USER_AGENT = "https://github.com/tidbyt/community/tree/main/apps/bbcradio"
+USER_AGENT = "https://github.com/heyniblet/community-apps/tree/niblet/portable-fixes-2026-09-04/apps/bbcradio"
 TIMEZONE = "Europe/London"
 RADIO_4 = "bbc_radio_four"
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_TEXT_LENGTH = 240
 FONT = "tom-thumb"
 GREEN = "#22ff7b"
 ORANGE = "#ff7b22"
@@ -24,62 +25,119 @@ PURPLE = "#7b22ff"
 LIGHT_GREY = "#b0b2b4"
 DARK_GREY = "#3a3c3e"
 
+STATIONS = [
+    ["Radio 1", "bbc_radio_one"],
+    ["Radio 1 Anthems", "bbc_radio_one_anthems"],
+    ["Radio 1 Dance", "bbc_radio_one_dance"],
+    ["Radio 1Xtra", "bbc_1xtra"],
+    ["Radio 2", "bbc_radio_two"],
+    ["Radio 3", "bbc_radio_three"],
+    ["Radio 3 Unwind", "bbc_radio_three_unwind"],
+    ["Radio 4", "bbc_radio_four"],
+    ["Radio 4 Extra", "bbc_radio_four_extra"],
+    ["Radio 5 Live", "bbc_radio_five_live"],
+    ["Radio 5 Sports Extra", "bbc_radio_five_live_sports_extra"],
+    ["Radio 5 Sports Extra 2", "bbc_radio_five_sports_extra_2"],
+    ["Radio 5 Sports Extra 3", "bbc_radio_five_sports_extra_3"],
+    ["Radio 6 Music", "bbc_6music"],
+    ["Radio 6 Indie Forever", "bbc_radio_six_indie_forever"],
+    ["Asian Network", "bbc_asian_network"],
+    ["World Service", "bbc_world_service"],
+    ["Live News", "bbc_sounds_news"],
+    ["Radio Scotland", "bbc_radio_scotland"],
+    ["Radio Scotland Extra", "bbc_radio_scotland_mw"],
+    ["Radio Orkney", "bbc_radio_orkney"],
+    ["Radio Shetland", "bbc_radio_shetland"],
+    ["Radio nan Gàidheal", "bbc_radio_nan_gaidheal"],
+    ["Radio Ulster", "bbc_radio_ulster"],
+    ["Radio Foyle", "bbc_radio_foyle"],
+    ["Radio Wales", "bbc_radio_wales"],
+    ["Radio Wales Extra", "bbc_radio_wales_am"],
+    ["Radio Cymru", "bbc_radio_cymru"],
+    ["Radio Cymru 2", "bbc_radio_cymru_2"],
+    ["CBeebies Radio", "cbeebies_radio"],
+    ["Radio Berkshire", "bbc_radio_berkshire"],
+    ["Radio Bristol", "bbc_radio_bristol"],
+    ["Radio Cambridgeshire", "bbc_radio_cambridge"],
+    ["Radio Cornwall", "bbc_radio_cornwall"],
+    ["CWR", "bbc_radio_coventry_warwickshire"],
+    ["Radio Cumbria", "bbc_radio_cumbria"],
+    ["Radio Derby", "bbc_radio_derby"],
+    ["Radio Devon", "bbc_radio_devon"],
+    ["Essex", "bbc_radio_essex"],
+    ["Radio Gloucestershire", "bbc_radio_gloucestershire"],
+    ["Radio Guernsey", "bbc_radio_guernsey"],
+    ["Hereford & Worcester", "bbc_radio_hereford_worcester"],
+    ["Radio Humberside", "bbc_radio_humberside"],
+    ["Radio Jersey", "bbc_radio_jersey"],
+    ["Radio Kent", "bbc_radio_kent"],
+    ["Radio Lancashire", "bbc_radio_lancashire"],
+    ["Radio Leeds", "bbc_radio_leeds"],
+    ["Radio Leicester", "bbc_radio_leicester"],
+    ["Radio Lincolnshire", "bbc_radio_lincolnshire"],
+    ["Radio London", "bbc_london"],
+    ["Radio Manchester", "bbc_radio_manchester"],
+    ["Radio Merseyside", "bbc_radio_merseyside"],
+    ["Radio Newcastle", "bbc_radio_newcastle"],
+    ["Radio Norfolk", "bbc_radio_norfolk"],
+    ["Radio Northampton", "bbc_radio_northampton"],
+    ["Radio Nottingham", "bbc_radio_nottingham"],
+    ["Radio Oxford", "bbc_radio_oxford"],
+    ["Radio Sheffield", "bbc_radio_sheffield"],
+    ["Radio Shropshire", "bbc_radio_shropshire"],
+    ["Radio Solent", "bbc_radio_solent"],
+    ["Radio Solent Dorset", "bbc_radio_solent_west_dorset"],
+    ["Radio Somerset", "bbc_radio_somerset_sound"],
+    ["Radio Stoke", "bbc_radio_stoke"],
+    ["Radio Suffolk", "bbc_radio_suffolk"],
+    ["Radio Surrey", "bbc_radio_surrey"],
+    ["Radio Sussex", "bbc_radio_sussex"],
+    ["Radio Tees", "bbc_tees"],
+    ["Three Counties Radio", "bbc_three_counties_radio"],
+    ["Radio Wiltshire", "bbc_radio_wiltshire"],
+    ["Radio WM", "bbc_wm"],
+    ["Radio York", "bbc_radio_york"],
+]
+
 def extract_station(station):
+    if type(station) != "dict":
+        return None
     result = {}
     network = station.get("network")
-    if network:
+    if type(network) == "dict":
         station_id = network.get("id")
-        if station_id:
-            result["id"] = station_id
-        else:
-            print("No station ID", station)
+        if type(station_id) != "string" or not station_id or len(station_id) > 120:
             return None
+        result["id"] = station_id
 
         name = network.get("short_title")
-        if name:
-            result["name"] = name
-        else:
-            print("No station name", station)
+        if type(name) != "string" or not name:
             return None
+        result["name"] = name[:MAX_TEXT_LENGTH]
     else:
-        print("No network", station)
         return None
 
-    missing_info = False
     titles = station.get("titles")
-    if titles:
+    if type(titles) == "dict":
         programme = titles.get("primary")
-        if programme:
-            result["programme"] = programme
-        else:
-            print("No programme title")
-            missing_info = True
+        if type(programme) == "string" and programme:
+            result["programme"] = programme[:MAX_TEXT_LENGTH]
 
         timing = titles.get("secondary")
-        if timing:
-            result["timing"] = timing
-        else:
-            print("No programme timing")
-            missing_info = True
+        if type(timing) == "string" and timing:
+            result["timing"] = timing[:80]
 
     synopses = station.get("synopses")
-    if synopses:
+    if type(synopses) == "dict":
         synopsis = synopses.get("short")
-        if synopsis:
-            result["synopsis"] = synopsis
-        else:
-            print("No short synopsis")
-            missing_info = True
-    else:
-        print("No synopses")
-        missing_info = True
-
-    if missing_info:
-        print(station)
+        if type(synopsis) == "string" and synopsis:
+            result["synopsis"] = synopsis[:MAX_TEXT_LENGTH]
     return result
 
 def extract_stations(module):
-    raw = module["data"]
+    raw = module.get("data") if type(module) == "dict" else None
+    if type(raw) != "list":
+        return {}
     stations = [extract_station(s) for s in raw if s]
     return {s["id"]: s for s in stations if s}
 
@@ -91,13 +149,27 @@ def load_stations():
         },
         ttl_seconds = 60,
     )
-    page = html(resp.body())
+    if resp.status_code != 200:
+        return {}, {}
+    body = resp.body()
+    if len(body) > MAX_RESPONSE_BYTES:
+        return {}, {}
+    page = html(body)
     script = page.find("script#__NEXT_DATA__")
     if not script:
-        fail("Could not find __NEXT_DATA__ script")
+        return {}, {}
 
     raw = json.decode(script.text())
-    modules = raw["props"]["pageProps"]["dehydratedState"]["queries"][0]["state"]["data"]["data"]
+    props = raw.get("props") if type(raw) == "dict" else None
+    page_props = props.get("pageProps") if type(props) == "dict" else None
+    dehydrated = page_props.get("dehydratedState") if type(page_props) == "dict" else None
+    queries = dehydrated.get("queries") if type(dehydrated) == "dict" else None
+    first_query = queries[0] if type(queries) == "list" and len(queries) > 0 and type(queries[0]) == "dict" else None
+    state = first_query.get("state") if type(first_query) == "dict" else None
+    state_data = state.get("data") if type(state) == "dict" else None
+    modules = state_data.get("data") if type(state_data) == "dict" else None
+    if type(modules) != "list" or len(modules) < 2:
+        return {}, {}
 
     return extract_stations(modules[0]), extract_stations(modules[1])
 
@@ -160,18 +232,27 @@ def render_program(station, show_synopsis, colour):
 def render_progress_bar(station, colour):
     # Can't trust the "progress" field in the API response to be up to date.
     timing = station.get("timing")
-    if timing:
-        start, _, end = timing.split(" ")
-        start_hour, start_min = [int(x) for x in start.split(":")]
-        end_hour, end_min = [int(x) for x in end.split(":")]
-        now = time.now()
+    parts = timing.split(" ") if type(timing) == "string" else []
+    start_parts = parts[0].split(":") if len(parts) == 3 else []
+    end_parts = parts[2].split(":") if len(parts) == 3 else []
+    start_hour = 0
+    start_min = 0
+    end_hour = 0
+    end_min = 0
+    valid_time = len(start_parts) == 2 and len(end_parts) == 2 and all([part.isdigit() for part in start_parts + end_parts])
+    if valid_time:
+        start_hour, start_min = [int(x) for x in start_parts]
+        end_hour, end_min = [int(x) for x in end_parts]
+        valid_time = start_hour < 24 and end_hour < 24 and start_min < 60 and end_min < 60
+    if valid_time:
+        now = time.now().in_location(TIMEZONE)
         begin = time.time(year = now.year, month = now.month, day = now.day, hour = start_hour, minute = start_min, location = TIMEZONE)
         finish = time.time(year = now.year, month = now.month, day = now.day, hour = end_hour, minute = end_min, location = TIMEZONE)
         if finish < begin:
             finish += 24 * time.hour  # Wrap past midnight
         duration = finish - begin
         elapsed = now - begin
-        progress = int(64.0 * (elapsed / duration))
+        progress = max(0, min(64, int(64.0 * (elapsed / duration)))) if finish != begin else 0
     else:
         progress = 0
     return render.Padding(
@@ -198,7 +279,9 @@ def main(config):
     show_synopsis = config.bool("show_synopsis", False)
     national, local = load_stations()
     stations = dict(national, **local)
-    station = stations[station]
+    station = stations.get(station) or stations.get(RADIO_4)
+    if station == None:
+        return render.Root(child = render.Text("BBC unavailable", color = LIGHT_GREY, font = FONT))
 
     return render.Root(
         child = render.Stack(
@@ -211,19 +294,9 @@ def main(config):
     )
 
 def get_schema():
-    national, local = load_stations()
     stations = [
-        schema.Option(
-            display = v["name"],
-            value = k,
-        )
-        for k, v in national.items()
-    ] + [
-        schema.Option(
-            display = v["name"],
-            value = k,
-        )
-        for k, v in local.items()
+        schema.Option(display = station[0], value = station[1])
+        for station in STATIONS
     ]
 
     return schema.Schema(

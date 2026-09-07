@@ -37,6 +37,7 @@ reference gtfs-realtime-bindings decoder:
     that DO carry stop_id are all planned work. So alerts match on route.
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -1002,9 +1003,12 @@ def route_alerts(routes, now):
     if resp.status_code != 200:
         return {}
 
+    body = resp.body()
+    data = json.decode(body, {}) if body and len(body) <= 2 * 1024 * 1024 else {}
     wanted = {r: True for r in routes}
     out = {}
-    for entity in resp.json().get("entity", []):
+    entities = data.get("entity", []) if type(data) == "dict" else []
+    for entity in entities[:500] if type(entities) == "list" else []:
         alert = entity.get("alert")
         if not alert:
             continue
@@ -1409,6 +1413,8 @@ def main(config):
             continue
         reached += 1
         body = resp.body()
+        if not body or len(body) > 2 * 1024 * 1024:
+            continue
         for letter in letters:
             found, ts = feed_arrivals(body, stop_id + letter)
             for f in found:

@@ -6,11 +6,13 @@ Author: DavidGoldman
 """
 
 load("http.star", "http")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 
 DEFAULT_STATION = "NEW"
 FONT = "tb-8"
+MAX_RESPONSE_BYTES = 256 * 1024
 
 STATIONS = {
     "NWK": "Newark",
@@ -98,42 +100,58 @@ def main(config):
     selected_station = config.get("station", DEFAULT_STATION)
     direction_filter = config.get("direction_filter", ALL_DIRECTION)
     short_title = config.bool("short_title", True)
+    if selected_station not in STATIONS or direction_filter not in DIRECTIONS:
+        return render.Root(child = render.Text("Invalid PATH settings", font = FONT))
 
     # Fetch PATH train data
     url = "https://panynj.gov/bin/portauthority/ridepath.json"
     response = http.get(url, ttl_seconds = 30)
+    body = response.body()
 
-    if response.status_code != 200:
+    if response.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
         return render.Root(
             child = render.Text("Error fetching PATH data: HTTP {}".format(response.status_code)),
         )
 
     data = response.json()
+    if type(data) != "dict" or type(data.get("results")) != "list":
+        return render.Root(child = render.Text("Invalid PATH data", font = FONT))
 
     # Find the train data that the user cares about.
     train_info = []
     for station in data["results"]:
-        station_name = station["consideredStation"]
+        if type(station) != "dict" or type(station.get("destinations")) != "list":
+            continue
+        station_name = station.get("consideredStation")
         if station_name != selected_station:
             continue
         for destination in station["destinations"]:
-            direction = destination["label"]
+            if type(destination) != "dict" or type(destination.get("messages")) != "list":
+                continue
+            direction = destination.get("label")
             for message in destination["messages"]:
-                target = message["target"]
+                if type(message) != "dict":
+                    continue
+                target = message.get("target")
                 if direction_filter != ALL_DIRECTION and direction_filter != direction and direction_filter != target:
                     continue
-                arrival = message["arrivalTimeMessage"]
+                seconds = str(message.get("secondsToArrival", ""))
+                arrival = message.get("arrivalTimeMessage")
+                head_sign = message.get("headSign")
+                if not re.match(r"^\d{1,6}$", seconds) or type(arrival) != "string" or type(head_sign) != "string":
+                    continue
                 if arrival == "0 min":
                     arrival = "now"
+                line_color = message.get("lineColor", "fff")
+                colors = ["#" + x for x in line_color.split(",") if re.match(r"^[0-9A-Fa-f]{3}([0-9A-Fa-f]{3})?$", x)] if type(line_color) == "string" else []
                 train_info.append({
                     "station": station_name,
                     "destination": target,
                     "arrival": arrival,
-                    "secondsToArrival": int(message["secondsToArrival"]),
-                    "colors": ["#" + x for x in message.get("lineColor", "fff").split(",")],
-                    "lastUpdated": message["lastUpdated"],
+                    "secondsToArrival": int(seconds),
+                    "colors": colors or ["#fff"],
                     "direction": direction,
-                    "headSign": message["headSign"],
+                    "headSign": head_sign,
                 })
         break
 
@@ -150,8 +168,8 @@ def main(config):
         num_colors = len(colors)
 
         # Use the shorthand to avoid scrolling if the name matches what we expect.
-        if short_title and (head_sign == STATIONS[dest] or head_sign in SPECIAL_ROUTES):
-            label = render.Text(SPECIAL_ROUTES.get(head_sign) or SHORT_STATION_NAMES[dest], font = FONT)
+        if short_title and (head_sign == STATIONS.get(dest) or head_sign in SPECIAL_ROUTES):
+            label = render.Text(SPECIAL_ROUTES.get(head_sign) or SHORT_STATION_NAMES.get(dest, dest or "PATH"), font = FONT)
         else:
             label = render.Marquee(child = render.Text(head_sign, font = FONT), width = 49)
 

@@ -5,6 +5,7 @@ Description: Shows available bikes and docks at an Indego station.
 Author: radiocolin
 """
 
+load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/bike_dock.png", BIKE_DOCK_ASSET = "file")
 load("images/bike_dock_gray.png", BIKE_DOCK_GRAY_ASSET = "file")
@@ -12,6 +13,7 @@ load("images/electric_bike.png", ELECTRIC_BIKE_ASSET = "file")
 load("images/electric_bike_gray.png", ELECTRIC_BIKE_GRAY_ASSET = "file")
 load("images/regular_bike.png", REGULAR_BIKE_ASSET = "file")
 load("images/regular_bike_gray.png", REGULAR_BIKE_GRAY_ASSET = "file")
+load("re.star", "re")
 load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
@@ -30,35 +32,37 @@ default_dock = "3162.0"
 
 def get_indego_data():
     r = http.get(indego_api_endpoint, ttl_seconds = 600)
-    if r.status_code != 200:
-        fail("GET %s failed with status %d: %s", r.status_code, r.body())
-    return r.json()
-
-def populate_schema():
-    data = get_indego_data()
-    sorted_features = sorted(data["features"], key = lambda f: f["properties"]["name"])
-    result = []
-    for feature in sorted_features:
-        properties = feature["properties"]
-        formatted_feature = schema.Option(display = properties["name"], value = str(properties["id"]))
-        result.append(formatted_feature)
-    return result
+    body = r.body()
+    data = json.decode(body, {}) if r.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
+    return data if type(data) == "dict" else {}
 
 def get_dock_info(selected_dock):
     data = get_indego_data()
     r = {}
-    for dock in data["features"]:
-        if str(dock["properties"]["id"]) == selected_dock:
-            r["name"] = dock["properties"]["name"]
-            r["docksAvailable"] = int(dock["properties"]["docksAvailable"])
-            r["classicBikesAvailable"] = int(dock["properties"]["classicBikesAvailable"])
-            r["electricBikesAvailable"] = int(dock["properties"]["electricBikesAvailable"])
+    features = data.get("features", [])
+    if type(features) != "list":
+        return r
+    for dock in features[:3000]:
+        properties = dock.get("properties", {}) if type(dock) == "dict" else {}
+        if type(properties) == "dict" and str(properties.get("id")) == selected_dock:
+            r["name"] = str(properties.get("name", "Station"))[:120]
+            r["docksAvailable"] = safe_count(properties.get("docksAvailable"))
+            r["classicBikesAvailable"] = safe_count(properties.get("classicBikesAvailable"))
+            r["electricBikesAvailable"] = safe_count(properties.get("electricBikesAvailable"))
+            break
     return r
+
+def safe_count(value):
+    return int(value) if type(value) in ["int", "float"] and value >= 0 and value <= 10000 else 0
 
 def main(config):
     scale = 2 if canvas.is2x() else 1
     selected_dock = config.str("dock", default_dock)
+    if not re.match(r"^[0-9]{1,12}(\.[0-9]+)?$", selected_dock):
+        selected_dock = default_dock
     dock_data = get_dock_info(selected_dock)
+    if not dock_data:
+        return render.Root(child = render.WrappedText("Indego station unavailable", width = 64, align = "center", color = "#f00"))
 
     if dock_data.get("classicBikesAvailable") > 0:
         regular_bike_color = "#FF9400"
@@ -122,13 +126,12 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "dock",
-                name = "Dock",
-                desc = "The dock to display data for.",
+                name = "Dock ID",
+                desc = "The numeric Indego station ID to display.",
                 icon = "bicycle",
                 default = default_dock,
-                options = populate_schema(),
             ),
         ],
     )

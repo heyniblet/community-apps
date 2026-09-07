@@ -181,7 +181,7 @@ ALL_DATA = {
                         "date": "2022-01-24T14:48:23+00:00",
                         "headline": "China to cut energy consumption intensity by 13.5% in five years",
                         "headline_original": "China to cut energy consumption intensity by 13.5% pct in five years",
-                        "link": "http://www.xinhuanet.com/english/20220124/b53f7dc6f5c246569cb440d87e387d83/c.html ",
+                        "link": "https://www.xinhuanet.com/english/20220124/b53f7dc6f5c246569cb440d87e387d83/c.html ",
                         "source": "Xinhua",
                         "summary": "",
                     },

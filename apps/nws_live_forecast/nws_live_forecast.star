@@ -31,6 +31,13 @@ SUNNY = SUNNY_ASSET.readall()
 # Free API from National Weather Service
 WEATHER_URL = "https://api.weather.gov/points/"
 
+# NWS requires clients to identify themselves. Use the same explicit response
+# format for the point lookup and the discovered hourly forecast endpoint.
+NWS_HEADERS = {
+    "User-Agent": "tronbyt-nws-live-forecast (https://github.com/tronbyt/apps)",
+    "Accept": "application/geo+json",
+}
+
 # This is how many fit comfortaly on the screen
 MAX_DAYS_TO_SHOW = 3
 
@@ -60,11 +67,19 @@ def main(config):
     location = json.decode(config.get("location") or DEFAULT_LOCATION)
     units = config.get("units") or DEFAULT_UNITS
 
-    response = http.get(WEATHER_URL + str(location["lat"]) + "," + str(location["lng"]), ttl_seconds = 300)
+    response = http.get(
+        WEATHER_URL + str(location["lat"]) + "," + str(location["lng"]),
+        headers = NWS_HEADERS,
+        ttl_seconds = 300,
+    )
     if response.status_code != 200:
         fail("failed to fetch weather %d", response.status_code)
 
-    forecast = http.get(response.json()["properties"]["forecastHourly"], ttl_seconds = 300)
+    forecast = http.get(
+        response.json()["properties"]["forecastHourly"],
+        headers = NWS_HEADERS,
+        ttl_seconds = 300,
+    )
     if forecast.status_code != 200:
         fail("failed to fetch forecast %d", forecast.status_code)
 
