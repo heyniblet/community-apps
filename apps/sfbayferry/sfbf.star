@@ -122,10 +122,16 @@ def get_schema():
                 default = route_options[0].value,
                 options = route_options,
             ),
-            schema.Generated(
+            schema.Dropdown(
                 id = "direction",
-                source = "route",
-                handler = get_direction_options,
+                name = "Direction?",
+                desc = "Choose east/north or west/south for the selected route.",
+                icon = "compass",
+                default = "0",
+                options = [
+                    schema.Option(display = "East or North", value = "0"),
+                    schema.Option(display = "West or South", value = "1"),
+                ],
             ),
         ],
     )

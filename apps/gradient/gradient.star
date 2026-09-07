@@ -405,10 +405,33 @@ def get_schema():
                 icon = "play",
                 default = False,
             ),
-            schema.Generated(
-                id = "gradient_generated",
-                source = "gradient_type",
-                handler = more_gradient_options,
+            schema.Color(
+                id = "color1",
+                name = "Color #1",
+                desc = "Top left corner",
+                icon = "brush",
+                default = "#FF0000",
+            ),
+            schema.Color(
+                id = "color2",
+                name = "Color #2",
+                desc = "Top right corner",
+                icon = "brush",
+                default = "#FFFF00",
+            ),
+            schema.Color(
+                id = "color3",
+                name = "Color #3",
+                desc = "Bottom left corner",
+                icon = "brush",
+                default = "#0000FF",
+            ),
+            schema.Color(
+                id = "color4",
+                name = "Color #4",
+                desc = "Bottom right corner",
+                icon = "brush",
+                default = "#FFFFFF",
             ),
             # schema.Generated(
             #     id = "animation_generated",

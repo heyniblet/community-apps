@@ -157,52 +157,51 @@ preparation_options = [
 ]
 
 def get_schema():
+    fields = [
+        schema.Dropdown(
+            id = "scroll",
+            name = "Scroll",
+            desc = "Scroll Speed",
+            icon = "stopwatch",
+            options = scroll_speed_options,
+            default = scroll_speed_options[0].value,
+        ),
+        schema.Toggle(
+            id = "oldschool",
+            name = "Old School Bartender?",
+            desc = "Is your bartender an experience 'old school' mixologist?",
+            icon = "personChalkboard",
+            default = True,
+        ),
+        schema.Dropdown(
+            id = "base",
+            name = "Base Spirit",
+            desc = "Choose your base spirit for your Martini.",
+            icon = "flask",
+            default = base_options[0].value,
+            options = base_options,
+        ),
+        schema.Dropdown(
+            id = "preparation",
+            name = "Preparation",
+            desc = "How would you like your martini prepared?",
+            icon = "spoon",
+            default = preparation_options[0].value,
+            options = preparation_options,
+        ),
+    ]
+    fields.extend(get_vermouth_options("Gin"))
+    fields.append(
+        schema.Dropdown(
+            id = "garnish",
+            name = "Garnish",
+            desc = "What would you like added to your Martini?",
+            icon = "martiniGlassCitrus",
+            default = garnish_options[0].value,
+            options = garnish_options,
+        ),
+    )
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Dropdown(
-                id = "scroll",
-                name = "Scroll",
-                desc = "Scroll Speed",
-                icon = "stopwatch",
-                options = scroll_speed_options,
-                default = scroll_speed_options[0].value,
-            ),
-            schema.Toggle(
-                id = "oldschool",
-                name = "Old School Bartender?",
-                desc = "Is your bartender an experience 'old school' mixologist?",
-                icon = "personChalkboard",  #"user", #"person",
-                default = True,
-            ),
-            schema.Dropdown(
-                id = "base",
-                name = "Base Spirit",
-                desc = "Choose your base spirit for your Martini.",
-                icon = "flask",  #"martiniGlassEmpty",
-                default = base_options[0].value,
-                options = base_options,
-            ),
-            schema.Dropdown(
-                id = "preparation",
-                name = "Preparation",
-                desc = "How would you like your martini prepared?",
-                icon = "spoon",
-                default = preparation_options[0].value,
-                options = preparation_options,
-            ),
-            schema.Generated(
-                id = "vermouthtype",
-                source = "base",
-                handler = get_vermouth_options,
-            ),
-            schema.Dropdown(
-                id = "garnish",
-                name = "Garnish",
-                desc = "What would you like added to your Martini?",
-                icon = "martiniGlassCitrus",
-                default = garnish_options[0].value,
-                options = garnish_options,
-            ),
-        ],
+        fields = fields,
     )

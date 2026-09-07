@@ -138,34 +138,31 @@ def get_lighthouses(enabled):
         return []
 
 def get_schema():
+    fields = [
+        schema.Toggle(
+            id = "displayArtwork",
+            name = "Display Background Image?",
+            desc = "Display Background Image?",
+            icon = "photoFilm",
+            default = True,
+        ),
+        schema.Toggle(
+            id = "displayMajorCities",
+            name = "Display Cities?",
+            desc = "Display major cities?",
+            icon = "city",
+            default = False,
+        ),
+        schema.Toggle(
+            id = "pickVisits",
+            name = "Highlight Visited?",
+            desc = "Highlight the lighthouses you've visted?",
+            icon = "highlighter",
+            default = False,
+        ),
+    ]
+    fields.extend(get_lighthouses("true"))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Toggle(
-                id = "displayArtwork",
-                name = "Display Background Image?",
-                desc = "Display Background Image?",
-                icon = "photoFilm",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "displayMajorCities",
-                name = "Display Cities?",
-                desc = "Display major cities?",
-                icon = "city",
-                default = False,
-            ),
-            schema.Toggle(
-                id = "pickVisits",
-                name = "Highlight Visited?",
-                desc = "Highlight the lighthouses you've visted?",
-                icon = "highlighter",
-                default = False,
-            ),
-            schema.Generated(
-                id = "lighthouseList",
-                source = "pickVisits",
-                handler = get_lighthouses,
-            ),
-        ],
+        fields = fields,
     )

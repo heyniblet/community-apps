@@ -99,7 +99,6 @@ load("images/rank_space_force_e9c_chief_master_sergeant_of_the_space_force.png",
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
-load("time.star", "time")
 
 BRANCH_OPTIONS = [
     schema.Option(display = "Display A Random Rank Each Time", value = "random"),
@@ -1395,10 +1394,13 @@ def get_schema():
                 options = BRANCH_OPTIONS,
                 default = BRANCH_OPTIONS[0].value,
             ),
-            schema.Generated(
-                id = "rank",
-                source = "branch",
-                handler = get_ranks,
+            schema.Dropdown(
+                id = "myrank",
+                name = "Rank",
+                desc = "Choose your rank from the selected military branch",
+                icon = "personMilitaryRifle",
+                options = ARMY_RANKS + AIR_FORCE_RANKS + COAST_GUARD_RANKS + MARINE_RANKS + NAVY_RANKS + SPACE_FORCE_RANKS,
+                default = ARMY_RANKS[5].value,
             ),
         ],
     )

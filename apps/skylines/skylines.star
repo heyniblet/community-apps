@@ -322,64 +322,61 @@ def get_schema():
         ),
     ]
 
+    fields = [
+        schema.Dropdown(
+            id = "scroll",
+            name = "Speed",
+            desc = "Speed of the drawing",
+            icon = "clock",
+            options = scroll_speed_options,
+            default = scroll_speed_options[0].value,
+        ),
+        schema.Toggle(
+            id = "stars",
+            name = "Display Stars",
+            desc = "Do you want stars to appear on the screen?",
+            icon = "star",
+            default = True,
+        ),
+        schema.Color(
+            id = "skyline_outline_color",
+            name = "Skyline",
+            desc = "Skyline Color",
+            icon = "brush",
+            default = DEFAULT_COLORS[0],
+        ),
+        schema.Color(
+            id = "text_color",
+            name = "Text",
+            desc = "Text Color",
+            icon = "brush",
+            default = DEFAULT_COLORS[3],
+        ),
+        schema.Dropdown(
+            id = "text_display",
+            icon = "tv",
+            name = "Text Overlay",
+            desc = "What text do you want to display?",
+            options = text_display_choices,
+            default = text_display_choices[0].value,
+        ),
+        schema.Text(
+            id = "custom_text",
+            name = "Custom Text",
+            desc = "Text you want to appear over the skyline.",
+            icon = "pencil",
+        ),
+        schema.Dropdown(
+            id = "display_type",
+            icon = "tv",
+            name = "What to display",
+            desc = "What do you want this to display?",
+            options = display_type,
+            default = display_type[0].value,
+        ),
+    ]
+    fields.extend(get_city_options("List"))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Dropdown(
-                id = "scroll",
-                name = "Speed",
-                desc = "Speed of the drawing",
-                icon = "clock",
-                options = scroll_speed_options,
-                default = scroll_speed_options[0].value,
-            ),
-            schema.Toggle(
-                id = "stars",
-                name = "Display Stars",
-                desc = "Do you want stars to appear on the screen?",
-                icon = "star",
-                default = True,
-            ),
-            schema.Color(
-                id = "skyline_outline_color",
-                name = "Skyline",
-                desc = "Skyline Color",
-                icon = "brush",
-                default = DEFAULT_COLORS[0],
-            ),
-            schema.Color(
-                id = "text_color",
-                name = "Text",
-                desc = "Text Color",
-                icon = "brush",
-                default = DEFAULT_COLORS[3],
-            ),
-            schema.Dropdown(
-                id = "text_display",
-                icon = "tv",
-                name = "Text Overlay",
-                desc = "What text do you want to display?",
-                options = text_display_choices,
-                default = text_display_choices[0].value,
-            ),
-            schema.Text(
-                id = "custom_text",
-                name = "Custom Text",
-                desc = "Text you want to appear over the skyline.",
-                icon = "pencil",
-            ),
-            schema.Dropdown(
-                id = "display_type",
-                icon = "tv",
-                name = "What to display",
-                desc = "What do you want this to display?",
-                options = display_type,
-                default = display_type[0].value,
-            ),
-            schema.Generated(
-                id = "generated",
-                source = "display_type",
-                handler = get_city_options,
-            ),
-        ],
+        fields = fields,
     )

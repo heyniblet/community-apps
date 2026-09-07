@@ -200,56 +200,53 @@ options = [
 ]
 
 def get_schema():
+    fields = [
+        schema.Text(
+            id = "title",
+            name = "Title",
+            desc = "Title of the event",
+            icon = "addressCard",
+            default = "How to start:",
+        ),
+        schema.Color(
+            id = "color",
+            name = "Color",
+            desc = "Color of the segments",
+            icon = "brush",
+            default = "#7AB0FF",
+        ),
+        schema.Color(
+            id = "activeColor",
+            name = "Active Color",
+            desc = "Color of the active segments",
+            icon = "brush",
+            default = "#FBFF7A",
+        ),
+        schema.Color(
+            id = "progressColor",
+            name = "Progress Bar Color",
+            desc = "Color of the progress bar",
+            icon = "brush",
+            default = "#EEF485",
+        ),
+        schema.Text(
+            id = "progressBarFrames",
+            name = "Progress Bar Timing",
+            desc = "Number of frames for the progress bar to reach 100%",
+            icon = "clock",
+            default = "690",
+        ),
+        schema.Dropdown(
+            id = "numSegments",
+            name = "Segments",
+            desc = "Number of segments to display",
+            icon = "gear",
+            default = options[3].value,
+            options = options,
+        ),
+    ]
+    fields.extend(more_options("5"))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Text(
-                id = "title",
-                name = "Title",
-                desc = "Title of the event",
-                icon = "addressCard",
-                default = "How to start:",
-            ),
-            schema.Color(
-                id = "color",
-                name = "Color",
-                desc = "Color of the segments",
-                icon = "brush",
-                default = "#7AB0FF",
-            ),
-            schema.Color(
-                id = "activeColor",
-                name = "Active Color",
-                desc = "Color of the active segments",
-                icon = "brush",
-                default = "#FBFF7A",
-            ),
-            schema.Color(
-                id = "progressColor",
-                name = "Progress Bar Color",
-                desc = "Color of the progress bar",
-                icon = "brush",
-                default = "#EEF485",
-            ),
-            schema.Text(
-                id = "progressBarFrames",
-                name = "Progress Bar Timing",
-                desc = "Number of frames for the progress bar to reach 100%",
-                icon = "clock",
-                default = "690",
-            ),
-            schema.Dropdown(
-                id = "numSegments",
-                name = "Segments",
-                desc = "Number of segments to display",
-                icon = "gear",
-                default = options[3].value,
-                options = options,
-            ),
-            schema.Generated(
-                id = "generated",
-                source = "numSegments",
-                handler = more_options,
-            ),
-        ],
+        fields = fields,
     )

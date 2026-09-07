@@ -336,28 +336,26 @@ def get_teams(type):
         icon = "hockeyPuck"
     elif type == "mls":
         teams = sorted(MLS_TEAMS, key = lambda x: x[0])
-        icon = "soccerBall"
+        icon = "futbol"
     return [
         schema.Toggle(id = "%s%s" % (type, team[0]), name = team[0], desc = "%s" % team[2], icon = icon)
         for team in teams
     ]
 
 def get_schema():
+    fields = [
+        schema.Dropdown(
+            id = "type",
+            name = "League",
+            desc = "Which league to map?",
+            icon = "globe",
+            options = LEAGUE_OPTIONS,
+            default = LEAGUE_OPTIONS[0].value,
+        ),
+    ]
+    for league in ["mlb", "nba", "nfl", "nhl", "mls"]:
+        fields.extend(get_teams(league))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Dropdown(
-                id = "type",
-                name = "League",
-                desc = "Which league to map?",
-                icon = "globe",
-                options = LEAGUE_OPTIONS,
-                default = LEAGUE_OPTIONS[0].value,
-            ),
-            schema.Generated(
-                id = "teamlist",
-                source = "type",
-                handler = get_teams,
-            ),
-        ],
+        fields = fields,
     )

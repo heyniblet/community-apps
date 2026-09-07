@@ -346,10 +346,11 @@ def get_schema():
                 options = speed_options,
                 default = speed_options[1].value,
             ),
-            schema.Generated(
-                id = "custom",
-                source = "type",
-                handler = get_custom,
+            schema.Text(
+                id = "phrase",
+                name = "Custom Phrase",
+                desc = "Used when Display is Custom Phrase.",
+                icon = "message",
             ),
         ],
     )

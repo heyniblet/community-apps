@@ -220,10 +220,20 @@ def get_schema():
                 options = opt_display_text,
                 default = opt_display_text[0].value,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "display_text",
-                handler = more_options,
+            schema.Text(
+                id = "display_text_custom",
+                name = "Custom Text",
+                desc = "Used when Display Text is Custom.",
+                icon = "gear",
+                default = "RECORDING...",
+            ),
+            schema.Dropdown(
+                id = "custom_text_align",
+                name = "Custom Text Alignment",
+                desc = "Choose the alignment for custom text.",
+                icon = "gear",
+                options = opt_custom_text_align,
+                default = opt_custom_text_align[0].value,
             ),
         ],
     )

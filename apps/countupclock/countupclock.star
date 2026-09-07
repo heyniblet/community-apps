@@ -325,10 +325,12 @@ def get_schema():
                 icon = "clock",
                 default = True,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "display_hours",
-                handler = show_minutes_option,
+            schema.Toggle(
+                id = "display_minutes",
+                name = "Display minutes",
+                desc = "Display minutes when hours are enabled.",
+                icon = "clock",
+                default = False,
             ),
         ],
     )

@@ -570,34 +570,31 @@ def get_states(type):
         return []
 
 def get_schema():
+    fields = [
+        schema.Toggle(
+            id = "show_hints",
+            name = "Show Hints",
+            icon = "newspaper",
+            desc = "Show Hints to guess state flag.",
+            default = True,
+        ),
+        schema.Toggle(
+            id = "show_answer",
+            name = "Show Answer",
+            icon = "newspaper",
+            desc = "Show the name of the selected state flag.",
+            default = True,
+        ),
+        schema.Toggle(
+            id = "show_single",
+            name = "Show Single State?",
+            icon = "flagUsa",
+            desc = "Show just one particular state flag.",
+            default = False,
+        ),
+    ]
+    fields.extend(get_states("true"))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Toggle(
-                id = "show_hints",
-                name = "Show Hints",
-                icon = "newspaper",
-                desc = "Show Hints to guess state flag.",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "show_answer",
-                name = "Show Answer",
-                icon = "newspaper",
-                desc = "Show the name of the selected state flag.",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "show_single",
-                name = "Show Single State?",
-                icon = "flagUsa",
-                desc = "Show just one particular state flag.",
-                default = False,
-            ),
-            schema.Generated(
-                id = "statelist",
-                source = "show_single",
-                handler = get_states,
-            ),
-        ],
+        fields = fields,
     )

@@ -147,27 +147,24 @@ def more_options(eventCount):
         return returnArray
 
 def get_schema():
+    fields = [
+        schema.Text(
+            id = "eventCount",
+            name = "Number of Events",
+            desc = "How many different events are we counting down until? (20 max)",
+            icon = "gear",
+        ),
+        schema.Toggle(
+            id = "daily",
+            name = "Daily Repeat?",
+            desc = "Should we treat all events as today (i.e. ignore dates)?",
+            icon = "gear",
+        ),
+    ]
+    fields.extend(more_options("20"))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Text(
-                id = "eventCount",
-                name = "Number of Events",
-                desc = "How many different events are we counting down until? (20 max)",
-                icon = "gear",
-            ),
-            schema.Toggle(
-                id = "daily",
-                name = "Daily Repeat?",
-                desc = "Should we treat all events as today (i.e. ignore dates)?",
-                icon = "gear",
-            ),
-            schema.Generated(
-                id = "generated",
-                source = "eventCount",
-                handler = more_options,
-            ),
-        ],
+        fields = fields,
     )
 
 def find_shortest_non_negative_time_index(times):

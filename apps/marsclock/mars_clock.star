@@ -442,43 +442,40 @@ def get_schema():
         ),
     ]
 
+    fields = [
+        schema.Dropdown(
+            id = "location",
+            name = "Location",
+            desc = "Show the time on Mars at this location",
+            icon = "locationCrosshairs",
+            default = locations[0].value,
+            options = locations,
+        ),
+        schema.Dropdown(
+            id = "secondline",
+            name = "Show below clock",
+            desc = "Display location or Mars Sol Date below the clock",
+            icon = "a",
+            default = secondlines[2].value,
+            options = secondlines,
+        ),
+        schema.Toggle(
+            id = "fmt24_mars",
+            name = "24-hour Mars clock",
+            desc = "",
+            icon = "clock",
+            default = False,
+        ),
+        schema.Toggle(
+            id = "color_mars_time",
+            name = "Color Mars time",
+            desc = "Display Mars time in orange",
+            icon = "palette",
+            default = True,
+        ),
+    ]
+    fields.extend(earth_options("showearth"))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Dropdown(
-                id = "location",
-                name = "Location",
-                desc = "Show the time on Mars at this location",
-                icon = "locationCrosshairs",
-                default = locations[0].value,
-                options = locations,
-            ),
-            schema.Dropdown(
-                id = "secondline",
-                name = "Show below clock",
-                desc = "Display location or Mars Sol Date below the clock",
-                icon = "a",
-                default = secondlines[2].value,
-                options = secondlines,
-            ),
-            schema.Toggle(
-                id = "fmt24_mars",
-                name = "24-hour Mars clock",
-                desc = "",
-                icon = "clock",
-                default = False,
-            ),
-            schema.Toggle(
-                id = "color_mars_time",
-                name = "Color Mars time",
-                desc = "Display Mars time in orange",
-                icon = "palette",
-                default = True,
-            ),
-            schema.Generated(
-                id = "earth_options",
-                source = "secondline",
-                handler = earth_options,
-            ),
-        ],
+        fields = fields,
     )

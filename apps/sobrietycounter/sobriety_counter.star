@@ -37,10 +37,11 @@ def get_schema():
                 options = options,
                 default = options[0].value,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "addiction",
-                handler = other_addiction,
+            schema.Text(
+                id = "addiction_other",
+                name = "Other Addiction",
+                desc = "Used when Addiction is Other.",
+                icon = "pen",
             ),
         ],
     )

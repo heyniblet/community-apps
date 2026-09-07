@@ -117,21 +117,18 @@ def get_nth_dow(now, n, dow):
     return None
 
 def get_schema():
+    fields = [
+        schema.Text(
+            id = "num_birthdays",
+            name = "Number of Birthdays",
+            desc = "Specify the number of birthdays to add (20 max)",
+            icon = "cakeCandles",
+        ),
+    ]
+    fields.extend(more_options("20"))
     return schema.Schema(
         version = "1",
-        fields = [
-            schema.Text(
-                id = "num_birthdays",
-                name = "Number of Birthdays",
-                desc = "Specify the number of birthdays to add",
-                icon = "cakeCandles",
-            ),
-            schema.Generated(
-                id = "generated",
-                source = "num_birthdays",
-                handler = more_options,
-            ),
-        ],
+        fields = fields,
     )
 
 def more_options(num):

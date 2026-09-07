@@ -343,10 +343,30 @@ def get_schema():
                 icon = "palette",
                 default = DEFAULT_TEXT_COLOR,
             ),
-            schema.Generated(
-                id = "nascar_generated",
-                source = "data_display",
-                handler = show_nri_options,
+            schema.Dropdown(
+                id = "fade_slide",
+                name = "Fade or Slide",
+                desc = "Show Race / Track / Time via Fade or Slide",
+                icon = "eye",
+                default = DEFAULT_ANIMATION,
+                options = [
+                    schema.Option(display = "Fade Race / Track / Time In and Out", value = "fade"),
+                    schema.Option(display = "Slide Race / Track / Time In and Out", value = "slide"),
+                ],
+            ),
+            schema.Toggle(
+                id = "is_24_hour_format",
+                name = "24 hour format",
+                desc = "Display the time in 24 hour format.",
+                icon = "clock",
+                default = DEFAULT_TIME_24,
+            ),
+            schema.Toggle(
+                id = "is_us_date_format",
+                name = "US Date format",
+                desc = "Display the date in US format.",
+                icon = "calendarDays",
+                default = DEFAULT_DATE_US,
             ),
         ],
     )
