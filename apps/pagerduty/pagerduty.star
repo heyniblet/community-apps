@@ -12,7 +12,6 @@ load("http.star", "http")
 load("humanize.star", "humanize")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 load("time.star", "time")
 
 DEFAULT_TIMEZONE = "US/Eastern"
@@ -27,12 +26,6 @@ MAX_RESPONSE_BYTES = 512 * 1024
 MAX_ONCALL_SHIFTS = 500
 
 PAGERDUTY_BASE_URL = "https://api.pagerduty.com"
-PAGERDUTY_CLIENT_ID = "85d49cda-f774-438e-9f13-12cf5b644dba"
-PAGERDUTY_CLIENT_SECRET = secret.decrypt("""
-AV6+xWcEtYmJAnDtS6Eppriq/Rmq7bouK7h8Pbzq93fhw5UuGlS3/CGz+Iehxx9IIqsSWaTFw8ZSYtqe
-e7si79zwvaVujMsIxVaWikJl+lni6rYLiWE0uS4poSsLVuNnpl5JOpiAzVhzo+q5JCNuGukH188iMfw3
-suxf4nTNuaCKHMz/8sNhxqQZE1NuimjgRQ==
-""")
 
 def Error(message = ""):
     return render.Root(
@@ -81,7 +74,7 @@ def pagerduty_api_call(config, url, use_cache = True):
     res = http.get(
         url,
         headers = {
-            "Authorization": "Bearer %s" % access_token,
+            "Authorization": "Token token=%s" % access_token,
             "Accept": "application/vnd.pagerduty+json;version=2",
         },
         ttl_seconds = timeout,
@@ -106,7 +99,7 @@ def get_pagerduty_counts(config, profile = None, teams_supported = True):
         acknowledged = 0,
     )
     team_param = ""
-    team_id = config.get("team_id", DEFAULT_TEAM_ID)
+    team_id = config.get("team_id") or DEFAULT_TEAM_ID
 
     if teams_supported and profile != None:
         if team_id != "all":
@@ -281,7 +274,7 @@ def get_state(config):
     hide_when_not_oncall = config.bool("hide_when_not_oncall", DEFAULT_HIDE_WHEN_NOT_ONCALL)
     level_one_only = config.bool("only_lvl_1_oncall", DEFAULT_ONLY_LEVEL_1)
     only_when_oncall = config.bool("only_when_oncall", DEFAULT_SHOW_ONCALL_BAR_ME_ONLY)
-    team_id = config.get("team_id", DEFAULT_TEAM_ID)
+    team_id = config.get("team_id") or DEFAULT_TEAM_ID
     counts = None
     shifts = []
     profile = None
@@ -439,88 +432,22 @@ def main(config):
         ),
     )
 
-def build_teams(refresh_token):
-    config = dict(auth = refresh_token)
-    user = get_current_user(config)
-    teams_supported = are_teams_supported(config)
-
-    if not teams_supported:
-        return []
-
-    options = [
-        schema.Option(
-            display = "All",
-            value = "all",
-        ),
-    ]
-
-    if user != None and user["teams"] != None:
-        for team in user["teams"]:
-            options.append(
-                schema.Option(
-                    display = team["summary"],
-                    value = team["id"],
-                ),
-            )
-
-    return [
-        schema.Dropdown(
-            id = "team_id",
-            name = "Team",
-            desc = "Limit stats to a specific team",
-            icon = "peopleGroup",
-            options = options,
-            default = options[0].value,
-        ),
-    ]
-
-# buildifier: disable=function-docstring
-def oauth_handler(params):
-    params = json.decode(params)
-
-    res = http.post(
-        url = "https://app.pagerduty.com/oauth/token",
-        headers = {
-            "Accept": "application/json",
-        },
-        form_body = dict(
-            params,
-            client_secret = PAGERDUTY_CLIENT_SECRET,
-        ),
-        form_encoding = "application/x-www-form-urlencoded",
-    )
-    body = res.body()
-
-    if res.status_code != 200 or not body or len(body) > MAX_RESPONSE_BYTES:
-        fail("token request failed with status code: %d" % res.status_code)
-
-    token_params = res.json()
-    if type(token_params) != "dict" or not token_params.get("access_token"):
-        fail("token request returned invalid data")
-    access_token = token_params["access_token"]
-
-    return access_token
-
 def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
+            schema.Text(
                 id = "auth",
-                name = "PagerDuty",
-                desc = "Connect your PagerDuty account.",
-                icon = "pager",
-                handler = oauth_handler,
-                client_id = PAGERDUTY_CLIENT_ID,
-                authorization_endpoint = "https://app.pagerduty.com/oauth/authorize",
-                scopes = [
-                    "read",
-                ],
+                name = "PagerDuty API token",
+                desc = "A read-only PagerDuty user API token.",
+                icon = "key",
+                secret = True,
             ),
-            schema.Generated(
-                id = "generated_teams",
-                source = "auth",
-                handler = build_teams,
+            schema.Text(
+                id = "team_id",
+                name = "Team ID",
+                desc = "Optional PagerDuty team ID; leave blank for all your teams.",
+                icon = "peopleGroup",
             ),
             schema.Toggle(
                 id = "show_icon",

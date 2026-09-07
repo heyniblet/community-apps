@@ -2,7 +2,7 @@
 id: mantle
 name: Mantle
 summary: Track SaaS revenue metrics
-desc: Track important revenue metrics. Manage plans and pricing. Improve customer relationships. Focus on growing your business.
+desc: Track Mantle revenue metrics with a scoped API key and app ID.
 author: Mantle Rev Ops
 fileName: mantle.star
 packageName: mantle

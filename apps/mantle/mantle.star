@@ -6,20 +6,15 @@ Author: Mantle Rev Ops
 """
 
 load("encoding/base64.star", "base64")
-load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/mantle_logo.png", MANTLE_LOGO_ASSET = "file")
 load("render.star", "render")
 load("schema.star", "schema")
-load("secret.star", "secret")
 load("time.star", "time")
 
 MANTLE_LOGO = MANTLE_LOGO_ASSET.readall()
 
 MANTLE_HOST = "https://app.heymantle.com"
-
-MANTLE_CLIENT_ID = "94093fc7-586c-4e2e-b341-0dca7017e6c5"
-MANTLE_API_SECRET = secret.decrypt("AV6+xWcE7zUeeYGCniv/L9khaO9xdb9JuEbPar/edlU8qoq/mtJCSwz7QrA7ud/5/CbKqKPUTjigf+qlNItaviy3b3nh++isj2B0Csqz6E+imrZFXkm+toWVAH+f31sabNcC5uOd6w5/AQnxFZOX/s0YpJY61Cn0S1ftbuPWaZbukOIQzQtFN340Qqv+EibVSFwjsMn6DnPyDvu7KP9Jzold3tjopA==")
 
 CACHE_TTL_SECONDS = 60 * 30  # 30 minutes
 
@@ -707,30 +702,6 @@ def main(config):
         result = render_metric(config, metric, access_token, app_id, current_start_date, compare_previous_period)
     return result
 
-def oauth_handler(params):
-    params = json.decode(params)
-    url = "{}/api/oauth/token".format(
-        MANTLE_HOST,
-    )
-    request_params = {
-        "client_id": params["client_id"],
-        "client_secret": MANTLE_API_SECRET,
-        "grant_type": "authorization_code",
-        "code": params["code"],
-        "redirect_uri": params["redirect_uri"],
-    }
-    rep = http.post(
-        url,
-        form_body = request_params,
-        headers = {"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    if rep.status_code != 200:
-        print("Mantle OAuth token request failed with status {}".format(rep.status_code))
-        return None
-    response = rep.json()
-    access_token = response["accessToken"]
-    return access_token
-
 def generate_app_toggles(access_token):
     if not access_token:
         return []
@@ -839,23 +810,19 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.OAuth2(
+            schema.Text(
                 id = "auth",
-                name = "Mantle Account",
-                desc = "Connect your Mantle account.",
-                icon = "usersGear",
-                handler = oauth_handler,
-                client_id = MANTLE_CLIENT_ID,
-                authorization_endpoint = "{}/oauth/authorize".format(MANTLE_HOST),
-                scopes = [
-                    "read:apps",
-                    "read:metrics",
-                ],
+                name = "Mantle API key",
+                desc = "A scoped Mantle API key with read access to apps and metrics.",
+                icon = "key",
+                secret = True,
             ),
-            schema.Generated(
-                id = "generated",
-                source = "auth",
-                handler = generate_app_toggles,
+            schema.Text(
+                id = "app",
+                name = "App ID",
+                desc = "Mantle app ID, or all_apps for combined metrics.",
+                icon = "puzzlePiece",
+                default = "all_apps",
             ),
             schema.Dropdown(
                 id = "metric",
@@ -885,10 +852,10 @@ def get_schema():
                     for date_range in DATE_RANGES
                 ],
             ),
-            schema.Generated(
-                id = "generated",
-                source = "metric",
-                handler = get_metric_options,
-            ),
+            schema.Toggle(id = "compare_previous_period", name = "Compare previous period", desc = "Compare with the preceding date range.", icon = "compress", default = True),
+            schema.Toggle(id = "include_annual_plans", name = "Include annual plans", desc = "Include annual-plan revenue in MRR.", icon = "calendar", default = True),
+            schema.Toggle(id = "include_usage_charges", name = "Include usage charges", desc = "Include usage revenue in MRR.", icon = "receipt", default = True),
+            schema.Toggle(id = "include_active_trials", name = "Include active trials", desc = "Include trial revenue in MRR.", icon = "flask", default = True),
+            schema.Toggle(id = "hide_totals", name = "Hide totals", desc = "Hide the metric total.", icon = "eyeSlash", default = False),
         ],
     )

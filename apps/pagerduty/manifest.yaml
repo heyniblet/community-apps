@@ -2,7 +2,7 @@
 id: pagerduty
 name: PagerDuty
 summary: Show PagerDuty stats
-desc: Show PagerDuty incident stats and on-call status.
+desc: Show PagerDuty incident stats and on-call status with a read-only user API token.
 author: Nick Penree
 fileName: pagerduty.star
 packageName: pagerduty

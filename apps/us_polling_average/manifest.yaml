@@ -1,14 +1,12 @@
 ---
 id: us-polling-average
 name: US PollingAverage
-summary: Election polls from 538
-desc: Shows current polling averages from FiveThirtyEight.
+summary: Archived 2024 polling averages
+desc: Shows FiveThirtyEight's archived 2024 presidential polling averages from its official public data repository through a commit-pinned jsDelivr mirror.
 author: jwoglom
 fileName: us_polling_average.star
 packageName: us_polling_average
 recommendedInterval: 5
-broken: true
-brokenReason: FiveThirtyEight discontinued its public polling-average JSON downloads; they now return an ABC News HTML shell.
 category: news
 tags:
   - news

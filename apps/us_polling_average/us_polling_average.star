@@ -1,18 +1,20 @@
 """
 Applet: US PollingAverage
 Summary: Election polls from 538
-Description: Shows current polling averages from FiveThirtyEight
+Description: Shows archived 2024 polling averages from FiveThirtyEight
 Author: jwoglom
 """
 
 load("animation.star", "animation")
+load("encoding/csv.star", "csv")
 load("http.star", "http")
 load("math.star", "math")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-JSON_URL_TEMPLATE = "https://projects.fivethirtyeight.com/polls/{poll_type}/{poll_cycle}/{poll_state}/{file_name}.json"
+CSV_URL = "https://cdn.jsdelivr.net/gh/fivethirtyeight/data@e6bbbb2d35310b5c63c2995a0d03d582d0c7b2e6/polls/2024-averages/presidential_general_averages_2024-09-12_uncorrected.csv"
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 POLL_TYPES = [
     "president-general",
@@ -108,20 +110,15 @@ def main(config):
     poll_state = config.get(POLL_STATE, DEFAULT_POLL_STATE)
     poll_cycle = config.get(POLL_CYCLE, DEFAULT_POLL_CYCLE)
 
-    url = JSON_URL_TEMPLATE.format(
-        poll_type = poll_type,
-        poll_state = poll_state,
-        poll_cycle = poll_cycle,
-        file_name = "polling-average",
-    )
-
-    results = http.get(url, ttl_seconds = 3600)
-    if results.status_code != 200:
+    results = http.get(CSV_URL, ttl_seconds = 86400)
+    if results.status_code != 200 or len(results.body()) > MAX_RESPONSE_BYTES:
         return render.Root(
             child = render.WrappedText("Error loading " + poll_type + " " + poll_state + " " + poll_cycle),
         )
 
-    data = postprocess(results.json())
+    data = postprocess(csv.read_all(results.body()), poll_state, poll_cycle)
+    if "Harris" not in data or "Trump" not in data:
+        return render.Root(child = render.WrappedText("No archived polling average"))
 
     latest_dem = [data[c][0] for c in data.keys() if data[c][0]["party"] == "DEM"][0]
     latest_rep = [data[c][0] for c in data.keys() if data[c][0]["party"] == "REP"][0]
@@ -166,7 +163,7 @@ def main(config):
             render.Stack(
                 children = [
                     draw_chart(data, int(period)),
-                    draw_title(poll_type, poll_state, poll_cycle),
+                    draw_title(poll_state, poll_cycle),
                 ],
             ),
         ],
@@ -195,16 +192,22 @@ def main(config):
         ),
     )
 
-def postprocess(results):
+def postprocess(rows, poll_state, poll_cycle):
     candidates = {}
-    for result in results:
-        if result["candidate"] == "Kennedy":
+    for row in rows[1:]:
+        if len(row) < 9 or row[4] != poll_cycle or row[3].lower().replace(" ", "-") != poll_state:
             continue
-        if not result["candidate"] in candidates.keys():
-            candidates[result["candidate"]] = []
-        final_result = result
-        final_result["date_parsed"] = time.parse_time(result["date"], "2006-01-02")
-        candidates[result["candidate"]].append(final_result)
+        candidate = row[0]
+        if candidate not in ["Harris", "Trump"] or not row[6]:
+            continue
+        if candidate not in candidates:
+            candidates[candidate] = []
+        candidates[candidate].append({
+            "candidate": candidate,
+            "date_parsed": time.parse_time(row[1], "2006-01-02"),
+            "party": row[5],
+            "pct_estimate": float(row[6]),
+        })
 
     return candidates
 
@@ -218,9 +221,8 @@ def draw_chart(data, days):
 
 # Plot the polling average for a given party over the given time period
 def draw_series(data, party, days):
-    now = time.now()
-    today = time.time(year = now.year, month = now.month, day = now.day)
-    series = sorted([((row["date_parsed"] - today) // (24 * time.hour), row) for row in data if row], reverse = True)
+    newest_date = data[0]["date_parsed"]
+    series = sorted([((row["date_parsed"] - newest_date) // (24 * time.hour), row) for row in data if row], reverse = True)
 
     newest_day = series[0][0]
     oldest_day = max(series[-1][0], -days)
@@ -253,7 +255,7 @@ def pretty_fmt(txt):
     p = p.replace(" General", "")
     return p
 
-def draw_title(poll_type, poll_state, poll_cycle):
+def draw_title(poll_state, poll_cycle):
     return render.Padding(
         pad = (0, 1, 0, 0),
         child = render.Marquee(
@@ -261,9 +263,8 @@ def draw_title(poll_type, poll_state, poll_cycle):
             child = render.Row(
                 children = [
                     render.Text(
-                        content = "{poll_cycle} {poll_type} ({poll_state})  ".format(
+                        content = "{poll_cycle} 538 archive ({poll_state})  ".format(
                             poll_cycle = poll_cycle,
-                            poll_type = pretty_fmt(poll_type),
                             poll_state = pretty_fmt(poll_state),
                         ),
                         font = FONT,
@@ -308,8 +309,8 @@ def get_schema():
                         value = "90",
                     ),
                     schema.Option(
-                        display = "180 days",
-                        value = "180",
+                        display = "Full archive",
+                        value = "365",
                     ),
                 ],
             ),

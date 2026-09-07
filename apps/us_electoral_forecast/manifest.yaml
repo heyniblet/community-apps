@@ -1,14 +1,12 @@
 ---
 id: us-electoral-forecast
-name: ElectoralForecast
-summary: 538 US Presidental forecast
-desc: Shows US President electoral forecast from FiveThirtyEight.
+name: 2024 Presidential Results
+summary: Official 2024 result
+desc: Shows the certified 2024 US presidential result compiled by the FEC and National Archives.
 author: jwoglom
 fileName: us_electoral_forecast.star
 packageName: us_electoral_forecast
 recommendedInterval: 5
-broken: true
-brokenReason: The app is tied to FiveThirtyEight's completed 2024 presidential forecast, whose JSON endpoint was retired.
 category: news
 tags:
   - news

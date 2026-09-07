@@ -2,7 +2,7 @@
 id: coinbase
 name: Coinbase
 summary: Displays Coinbase Balance
-desc: Displays your current Coinbase balance and holdings.
+desc: Values a manually configured crypto portfolio using Coinbase's public exchange-rate API; no Coinbase account connection is required.
 author: harrywynn
 fileName: coinbase.star
 packageName: coinbase

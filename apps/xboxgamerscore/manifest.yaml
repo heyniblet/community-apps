@@ -2,7 +2,7 @@
 id: xbox-gamerscore
 name: Xbox Gamerscore
 summary: Display XBL gamerscore
-desc: Display your Xbox Live Gamerscore on your Tidbyt.
+desc: Display an Xbox Live Gamerscore by gamertag through OpenXBL using your own API key.
 author: Nick Penree
 fileName: xbox_gamerscore.star
 packageName: xboxgamerscore

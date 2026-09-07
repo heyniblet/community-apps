@@ -2,7 +2,7 @@
 id: office-status
 name: Office Status
 summary: Show coworkers your status
-desc: Show coworkers whether you're free, busy, remote, or away.
+desc: Show coworkers a manually configured availability, message, color, and icon without sharing a calendar or chat account.
 author: Brian Bell
 fileName: office_status.star
 packageName: officestatus

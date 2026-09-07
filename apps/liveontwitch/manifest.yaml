@@ -2,7 +2,7 @@
 id: live-on-twitch
 name: Live on Twitch
 summary: See who's live on Twitch
-desc: This app fetches and displays the streamers you follow who are live.
+desc: Displays which configured Twitch channels are live through the community-run DecAPI gateway; no Twitch login is required.
 author: daltonclaybrook
 fileName: live_on_twitch.star
 packageName: liveontwitch
