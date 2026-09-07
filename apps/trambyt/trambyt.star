@@ -79,7 +79,18 @@ def main(config):
         now = time.now()
 
         location = json.decode(config.get("location", '{"value": "9021014003780000"}'))
-        location_id = location["value"]
+        location_id = location.get("value")
+        if not location_id and location.get("lat") != None and location.get("lng") != None:
+            rep = http.get(
+                STOPS_URL,
+                headers = {"Authorization": "Bearer " + access_token},
+                params = {"originCoordLat": location["lat"], "originCoordLong": location["lng"]},
+            )
+            if rep.status_code == 200:
+                nearby = [stop for stop in rep.json().get("LocationList", {}).get("StopLocation", []) if len(stop.get("id", "")) == 16]
+                location_id = nearby[0]["id"] if nearby else None
+        if not location_id:
+            return render.Root(render.WrappedText("No nearby Västtrafik stop found"))
 
         rep = http.get(
             DEPARTURES_URL,
@@ -196,12 +207,11 @@ def get_schema():
     return schema.Schema(
         version = "1",
         fields = [
-            schema.LocationBased(
+            schema.Location(
                 id = "location",
-                name = "Västtrafik location ID",
-                desc = "The stop for which to show departures",
-                icon = "locationPin",
-                handler = get_stops,
+                name = "Västtrafik location",
+                desc = "Choose a place near the stop for which to show departures",
+                icon = "locationDot",
             ),
             schema.Text(
                 id = "vasttrafik_api_secret",

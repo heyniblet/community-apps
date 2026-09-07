@@ -145,19 +145,19 @@ def get_schema():
                 icon = "key",
                 secret = True,
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "stop_code",
-                name = "Bus Stop",
-                desc = "Search by stop name (e.g., 'Powell', 'Castro') or stop ID (e.g., '16995').",
+                name = "Bus Stop ID",
+                desc = "Enter the 511 stop ID shown on the stop sign (for example, 16995).",
                 icon = "bus",
-                handler = get_stops,
+                default = "16995",
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "route_filter",
                 name = "Route Filter",
-                desc = "Search by route number (e.g., '38', 'N', 'KT') or route name (e.g., 'Geary').",
+                desc = "Enter a route number such as 38, N, or KT; leave all-routes for every route.",
                 icon = "route",
-                handler = get_route_filter_typeahead,
+                default = "all-routes",
             ),
             schema.Toggle(
                 id = "show_title",
