@@ -122,7 +122,7 @@ def main(config):
         Render tree displaying sign message and name.
     """
     scale = 2 if canvas.is2x() else 1
-    full_id = config.str("sign_id")
+    full_id = config.str("sign_id") or config.str("roadway")
     show_info_bar = config.bool("show_info_bar", True)
 
     if not full_id or full_id == "none":
@@ -150,24 +150,29 @@ def main(config):
         return render.Root(child = render.Text("Invalid sign", color = "#F09F00"))
 
     # Parse roadway and ID
+    search = ""
     parts = full_id.split("|")
     if len(parts) == 2:
         roadway = parts[0]
         sign_id = parts[1]
+    elif full_id.isdigit():
+        roadway = "ALL"
+        sign_id = full_id
     else:
         # Fallback for old configs
         roadway = "ALL"
-        sign_id = full_id
+        sign_id = ""
+        search = full_id
 
     # Fetch sign data
     # We fetch only the relevant roadway to be efficient
     fetch_roadway = roadway if roadway != "ALL" else None
     fetch_limit = 100 if roadway == "ALL" else 0
-    signs = fetch_signs(roadway = fetch_roadway, limit = fetch_limit)
+    signs = fetch_signs(roadway = fetch_roadway, search = search, limit = fetch_limit)
 
     selected_sign = None
     for sign in signs:
-        if sign.get("DT_RowId") == sign_id:
+        if not sign_id or sign.get("DT_RowId") == sign_id:
             selected_sign = sign
             break
 
@@ -349,39 +354,21 @@ def main(config):
     )
 
 def get_schema():
-    """Build schema with dropdown of all available PennDOT signs.
-
-    Returns:
-        Schema with sign selection dropdown.
-    """
-    roadway_options = [schema.Option(display = "All Roads", value = "ALL")]
-
-    # Fetch unique roadways
-    query = get_query(length = 100)
-    params = {"query": query, "lang": "en-US"}
-    rep = http.get(FILTERS_URL, params = params, headers = {"X-Requested-With": "XMLHttpRequest"}, ttl_seconds = CACHE_TTL)
-    filter_data = response_json(rep)
-    if filter_data:
-        roadways = filter_data.get("roadwayName", [])
-        for road in sorted(roadways) if type(roadways) == "list" else []:
-            if type(road) == "string" and road:
-                roadway_options.append(schema.Option(display = road, value = road))
-
     return schema.Schema(
         version = "1",
         fields = [
-            schema.Dropdown(
+            schema.Text(
                 id = "roadway",
-                name = "Roadway",
-                desc = "Filter signs by roadway",
+                name = "Road or area",
+                desc = "Search by road or area, such as I-81.",
                 icon = "road",
-                default = roadway_options[0].value,
-                options = roadway_options,
             ),
-            schema.Generated(
+            schema.Text(
                 id = "sign_id",
-                source = "roadway",
-                handler = get_signs,
+                name = "Sign ID or search",
+                desc = "Enter a PennDOT sign ID, road, area, or part of a sign name.",
+                icon = "magnifyingGlass",
+                default = "I-81",
             ),
             schema.Toggle(
                 id = "show_info_bar",

@@ -118,6 +118,7 @@ def entity_options(destination):
     ]
 
 destinations = get_destination_options()
+featured_entities = [entity_to_option(entity) for entity in MAIN_ENTITIES if entity["entityType"] == "PARK"]
 
 def get_schema():
     return schema.Schema(
@@ -131,10 +132,13 @@ def get_schema():
                 default = destinations[0].value,
                 options = destinations,
             ),
-            schema.Generated(
-                id = "generated_entities",
-                source = "destination",
-                handler = entity_options,
+            schema.Dropdown(
+                id = "entity",
+                name = "Park",
+                desc = "Display today's hours for a featured park.",
+                icon = "star",
+                default = DEFAULT_ENTITY,
+                options = featured_entities,
             ),
         ],
     )
