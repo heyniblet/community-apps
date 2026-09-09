@@ -7,6 +7,7 @@ Author: rs7q5
 #espn_news.star
 #Created 20211231 RIS
 #Last Modified 20230516 RIS
+# Modified by Niblet: keep vertical text measurement consistent with its display width.
 
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -70,7 +71,8 @@ def main(config):
         for title_tmp in title:
             title_tmp2 = split_sentence(title_tmp.rstrip(), 9, join_word = True).rstrip()
 
-            title_format.append(render.Padding(child = render.WrappedText(content = title_tmp2, font = font, linespacing = 1), pad = (0, 0, 0, 6)))
+            # This font advances 5 pixels; reserve the ESPN/sport label width.
+            title_format.append(render.Padding(child = render.WrappedText(content = title_tmp2, font = font, width = 64 - 5 * max(4, len(sport_txt)), linespacing = 1), pad = (0, 0, 0, 6)))
 
         title_format2 = render.Marquee(
             height = 32,
