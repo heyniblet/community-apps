@@ -15,52 +15,50 @@ load("render.star", "render")
 load("schema.star", "schema")
 
 #this list are any of the sports that have a "Top headlines" section and can be done with the following base ESPN_URL
-ESPN_URL = "https://www.espn.com/"
+ESPN_URL = "https://now.core.api.espn.com/v1/sports/news"
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_HEADLINES = 50
+
+# The Now API filters broad sports; league query parameters are ignored.
+# Match ESPN's league categories locally to preserve the user's selection.
 ESPN_SPORTS_LIST = {
-    "All": ["All", ""],  #default
-    "NFL": ["NFL", "nfl"],
-    "NBA": ["NBA", "nba"],
-    "NHL": ["NHL", "nhl"],
-    "Soccer": ["SOCC", "soccer"],
-    "Golf": ["Golf", "golf"],
-    "NCAAF": ["NCAAF", "college-football"],
-    "College Sports": ["COL.", "college-sports"],
-    "F1": ["F1", "f1"],
-    "MLB": ["MLB", "mlb"],
-    "MMA": ["MMA", "mma"],
-    "NASCAR": ["NASC", "racing/nascar"],
-    "NCAAM": ["NCAAM", "mens-college-basketball"],
-    "NCAAW": ["NCAAW", "womens-college-basketball"],
-    "Olympic Sports": ["OLY", "olympics"],
-    "Racing": ["RCNG", "racing"],
-    "Tennis": ["TENNS", "tennis"],
-    "WNBA": ["WNBA", "wnba"],
+    "All": ["All", "", []],
+    "NFL": ["NFL", "football", [28]],
+    "NBA": ["NBA", "basketball", [46]],
+    "NHL": ["NHL", "hockey", [90]],
+    "Soccer": ["SOCC", "soccer", [600]],
+    "Golf": ["Golf", "golf", [1100]],
+    "NCAAF": ["NCAAF", "football", [23]],
+    "College Sports": ["COL.", "", []],
+    "F1": ["F1", "racing", [2030]],
+    "MLB": ["MLB", "baseball", [10]],
+    "MMA": ["MMA", "mma", [3301]],
+    "NASCAR": ["NASC", "racing", [2020]],
+    "NCAAM": ["NCAAM", "basketball", [41]],
+    "NCAAW": ["NCAAW", "basketball", [54]],
+    "Olympic Sports": ["OLY", "olympics", [3700]],
+    "Racing": ["RCNG", "racing", [2000]],
+    "Tennis": ["TENNS", "tennis", [850]],
+    "WNBA": ["WNBA", "basketball", [59]],
 }
 
 def main(config):
     sport = config.get("sport") or "All"
     if sport not in ESPN_SPORTS_LIST:
         sport = "All"
-    sport_txt, sport_ext = ESPN_SPORTS_LIST[sport]
+    sport_txt, feed, _ = ESPN_SPORTS_LIST[sport]
+    url = ESPN_URL + "?limit=" + str(MAX_HEADLINES)
+    if feed:
+        url += "&sport=" + feed
+    font = "CG-pixel-4x5-mono"
 
-    #create full URL
-    ESPN_API_URL = ESPN_URL + sport_ext
-    if sport != "All":
-        ESPN_API_URL += "/?xhr=1"
-    else:
-        ESPN_API_URL += "?xhr=1"
-
-    font = "CG-pixel-4x5-mono"  #set font
-
-    #get data
-    rep = http.get(url = ESPN_API_URL, ttl_seconds = 600)
+    rep = http.get(url = url, ttl_seconds = 600)
     body = rep.body()
     payload = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
-    title = normalized_headlines(payload)
+    title = normalized_headlines(payload, sport)
     if not title:
-        title = ["Headlines unavailable", "", ""]
+        fail("ESPN headlines unavailable for " + sport + " (HTTP " + str(rep.status_code) + ")")
+    title += [""] * (3 - len(title))
     max_len = max([len(x) for x in title])
     title = [x + " " * (max_len - len(x)) for x in title]
 
@@ -119,18 +117,35 @@ def main(config):
         ),
     )
 
-def normalized_headlines(payload):
+def normalized_headlines(payload, sport = "All"):
     headlines = payload.get("headlines") if type(payload) == "dict" else None
     if type(headlines) != "list":
         return []
     result = []
     for item in headlines[:MAX_HEADLINES]:
         headline = item.get("headline") if type(item) == "dict" else None
-        if type(headline) == "string" and headline.strip():
+        if type(headline) == "string" and headline.strip() and matches_sport(item, sport):
             result.append(headline.strip()[:200])
         if len(result) == 3:
             break
     return result
+
+def matches_sport(item, sport):
+    if sport == "All":
+        return True
+    categories = item.get("categories")
+    if type(categories) != "list":
+        return False
+    for category in categories:
+        if type(category) != "dict" or category.get("type") != "league":
+            continue
+        if sport == "College Sports":
+            description = category.get("description")
+            if type(description) == "string" and description.startswith("NCAA"):
+                return True
+        elif category.get("sportId") in ESPN_SPORTS_LIST[sport][2]:
+            return True
+    return False
 
 def safe_speed(value):
     return value if value in ["30", "50", "70", "100"] else "30"
