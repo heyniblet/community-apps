@@ -97,10 +97,7 @@ def main(config):
     loc = json.decode(location)
     timezone = loc["timezone"]
     now = time.now().in_location(timezone)
-    datePast = now - time.parse_duration("%dh" % 1 * 24)
-    dateFuture = now + time.parse_duration("%dh" % 6 * 24)
-    league = {LEAGUE: API + "?limit=100" + (selectedTeam == "all" and " " or "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
-    scores = get_scores(league, selectedTeam)
+    scores = get_scores(now, selectedTeam)
     if len(scores) > 0:
         rotationSpeed = str(max(3, min(int(rotationSpeed), 60 // len(scores))))
         for i, s in enumerate(scores):
@@ -836,14 +833,15 @@ def get_schema():
         ],
     )
 
-def get_scores(urls, team):
+def get_scores(now, team):
+    urls = [API + "?limit=100"]
+    if team != "all" and team != "":
+        # ESPN rejects date ranges. Use local calendar dates, without DST shifts.
+        today = time.parse_time(now.format("20060102"), format = "20060102")
+        urls = [API + "?limit=100&dates=" + (today + time.parse_duration("%dh" % (day * 24))).format("20060102") for day in range(-1, 7)]
     allscores = []
-    for i, s in urls.items():
-        print(s)
-        data = get_cachable_data(s)
-        decodedata = json.decode(data)
-        allscores.extend(decodedata["events"])
-        all([i, allscores])
+    for url in urls:
+        allscores.extend(json.decode(get_cachable_data(url))["events"])
     return select_team_scores(allscores, team)
 
 def select_team_scores(scores, team):
