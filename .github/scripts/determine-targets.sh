@@ -1,20 +1,5 @@
 #!/bin/bash
-
-set -e
-
-# Determine base commit.
-OLD_COMMIT=$(git merge-base ${BASE_SHA} ${HEAD_SHA})
-NEW_COMMIT=${HEAD_SHA}
-echo "OLD_COMMIT=${OLD_COMMIT}"
-echo "NEW_COMMIT=${NEW_COMMIT}"
-
-# Determine targets.
-# Get a list of changed files, extract the unique directory names under 'apps/'
-TARGETS=$(git diff --name-only $OLD_COMMIT $NEW_COMMIT | grep '^apps/' | cut -d'/' -f1-2 | sort -u)
-echo "Modified targets: ${TARGETS}"
-
-# Format TARGETS as a space-separated list
-TARGETS=$(echo $TARGETS | tr '\n' ' ')
-
-# Record output to GitHub variable.
-echo "targets=${TARGETS% }" >> "${GITHUB_OUTPUT}"
+set -euo pipefail
+old_commit=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+targets=$(git diff --name-only "$old_commit" "$HEAD_SHA" -- apps/ | awk -F/ 'NF >= 3 {print $1 "/" $2}' | sort -u | paste -sd ' ' -)
+printf 'targets=%s\n' "$targets" >> "$GITHUB_OUTPUT"

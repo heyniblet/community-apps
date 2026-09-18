@@ -59,3 +59,8 @@ First off, we're over the moon that you're here and want to share what you've be
 [4]: https://github.com/tronbyt/pixlet#hello-world
 [5]: https://github.com/mtimkovich
 [6]: https://tidbyt.dev/docs/publish/publishing-apps
+
+
+## CI and delivery
+
+The Niblet fork checks changed apps on PRs and main with pinned upstream Pixlet. Main publishes a checksummed `source-<commit>` snapshot after validation; Catalog Apps must explicitly pin and review it before activation. Upstream metadata mutation and Pages publication remain restricted to the upstream owner. No private-source or deployment credentials are supplied to this public app-check workflow.

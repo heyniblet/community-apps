@@ -6,37 +6,60 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - run: python3 .github/scripts/test-targets.py
 
       - name: Setup build agent
         run: ./.github/scripts/setup.sh
 
-      - name: Find last successful build
-        id: lastsuccess
-        uses: SamhammerAG/last-successful-build-action@v7
-        with:
-          branch: "main"
-          workflow: "Build and Test"
-          verify: true
-          token: "${{ secrets.GITHUB_TOKEN }}"
-
+      - name: Choose comparison base
+        id: base
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ -z "$BEFORE" || "$BEFORE" == 0000000000000000000000000000000000000000 ]]; then
+            BEFORE=$(git rev-parse HEAD^)
+          fi
+          echo "sha=$BEFORE" >> "$GITHUB_OUTPUT"
       - name: Determine targets
         id: targets
         run: ./.github/scripts/determine-targets.sh
         env:
-          BASE_SHA: ${{ steps.lastsuccess.outputs.sha }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
           HEAD_SHA: ${{ github.sha }}
 
       - name: Check modified apps
         run: ./.github/scripts/check-apps.sh
         env:
           TARGETS: "${{ steps.targets.outputs.targets }}"
+
+  publish:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Publish validated source revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git archive --format=tar.gz --output="source-$GITHUB_SHA.tar.gz" HEAD apps LICENSE
+          sha256sum "source-$GITHUB_SHA.tar.gz" > checksums.txt
+          gh release create "source-$GITHUB_SHA" --target "$GITHUB_SHA" --title "Source $GITHUB_SHA" --notes 'Source snapshot for explicit catalog pinning and review; does not activate apps or change existing installations.' --prerelease "source-$GITHUB_SHA.tar.gz" checksums.txt
