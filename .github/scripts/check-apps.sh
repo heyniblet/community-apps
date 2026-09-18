@@ -3,7 +3,7 @@
 set -e
 
 # Trim quotes in case any were introduced and populate an array.
-readarray -t targets_array < <(echo "${TARGETS}" | tr -d '"' | awk '{$1=$1};1')
+read -r -a targets_array <<< "${TARGETS}"
 
 # Override the max runtime for specific apps. This is useful for apps
 # that have a longer runtime on cold cache, but perform well when it's
