@@ -201,10 +201,7 @@ def main(config):
     loc = json.decode(location)
     timezone = loc["timezone"]
     now = time.now().in_location(timezone)
-    datePast = now - time.parse_duration("%dh" % 1 * 24)
-    dateFuture = now + time.parse_duration("%dh" % 6 * 24)
-    league = {LEAGUE: apiURL + ("" if selectedTeam == "all" else "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
-    scores = get_scores(league, selectedTeam)
+    scores = get_scores(apiURL, now, selectedTeam)
 
     # Rotate through the games without exceeding the render time budget.
     page_size = max(1, min(3, 15 // max(1, int(rotationSpeed))))
@@ -3986,28 +3983,30 @@ def get_schema():
         ],
     )
 
-def get_scores(urls, team):
+def get_scores(api_url, now, team):
+    urls = [api_url]
+    if team != "all" and team != "":
+        # ESPN rejects ranges. Advance calendar dates in UTC to avoid DST shifts.
+        today = time.parse_time(now.format("20060102"), format = "20060102")
+        urls = [api_url + "&dates=" + (today + time.parse_duration("%dh" % (day * 24))).format("20060102") for day in range(-1, 7)]
     allscores = []
+    for url in urls:
+        allscores.extend(json.decode(get_cachable_data(url))["events"])
     gameCount = 0
-    for i, s in urls.items():
-        data = get_cachable_data(s)
-        decodedata = json.decode(data)
-        allscores.extend(decodedata["events"])
-        if team != "all" and team != "":
-            newScores = []
-            for _, s in enumerate(allscores):
-                home = s["competitions"][0]["competitors"][0]["team"]["id"]
-                away = s["competitions"][0]["competitors"][1]["team"]["id"]
-                gameStatus = s["status"]["type"]["state"]
-                if (home == team or away == team) and gameStatus == "post":
-                    newScores.append(s)
-                elif (home == team or away == team) and gameCount == 0:
-                    if gameStatus == "in":
-                        newScores.clear()
-                    newScores.append(s)
-                    gameCount = gameCount + 1
-            allscores = newScores
-        all([i, allscores])
+    if team != "all" and team != "":
+        newScores = []
+        for s in allscores:
+            home = s["competitions"][0]["competitors"][0]["team"]["id"]
+            away = s["competitions"][0]["competitors"][1]["team"]["id"]
+            gameStatus = s["status"]["type"]["state"]
+            if (home == team or away == team) and gameStatus == "post":
+                newScores.append(s)
+            elif (home == team or away == team) and gameCount == 0:
+                if gameStatus == "in":
+                    newScores.clear()
+                newScores.append(s)
+                gameCount = gameCount + 1
+        allscores = newScores
     return allscores
 
 def empty_scores(allscores):
