@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+# Niblet's reviewed runtime adds frame_keys; upstream Pixlet cannot evaluate it.
 version=$(cat PIXLET_VERSION)
-test "$version" = v0.53.1 || { echo 'Update the reviewed Pixlet checksum with PIXLET_VERSION.' >&2; exit 1; }
-archive="pixlet_${version}_linux-amd64.tar.gz"
-curl --fail --location --silent --show-error "https://github.com/tronbyt/pixlet/releases/download/$version/$archive" -o "$RUNNER_TEMP/$archive"
-printf '%s  %s\n' 8585ae29652bec004c31c1c5af2d9aa682ae86a87e037db6597a86e52fa2cfac "$RUNNER_TEMP/$archive" | sha256sum --check
-sudo tar -C /usr/local/bin -xzf "$RUNNER_TEMP/$archive" pixlet
+test "$version" = v0.54.12 || { echo 'Update the reviewed runtime checksum with PIXLET_VERSION.' >&2; exit 1; }
+archive="niblet_${version}_linux_amd64.tar.gz"
+curl --fail --location --silent --show-error "https://cdn.heyniblet.com/web-assets/releases/niblet-cli/$version/$archive" -o "$RUNNER_TEMP/$archive"
+printf '%s  %s\n' ed142e5c029748ce7e2e3914e9ce8c39700d3581c95ef352ddc814331ae33fe8 "$RUNNER_TEMP/$archive" | sha256sum --check
+sudo tar -C /usr/local/bin -xzf "$RUNNER_TEMP/$archive" niblet pixlet
