@@ -201,10 +201,7 @@ def main(config):
     loc = json.decode(location)
     timezone = loc["timezone"]
     now = time.now().in_location(timezone)
-    datePast = time.parse_time(now.format("20060102"), format = "20060102") - time.parse_duration("%dh" % 1 * 24)
-    dateFuture = time.parse_time(now.format("20060102"), format = "20060102") + time.parse_duration("%dh" % 6 * 24)
-    league = {LEAGUE: apiURL + ("" if selectedTeam == "all" else "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
-    scores = get_scores(league, selectedTeam)
+    scores = get_scores(apiURL, now, selectedTeam)
 
     if len(scores) > 0:
         for i, s in enumerate(scores):
@@ -3980,16 +3977,20 @@ def get_schema():
         ],
     )
 
-def get_scores(urls, team):
+def get_scores(api_url, now, team):
+    urls = [api_url]
+    if team != "all" and team != "":
+        # ESPN rejects ranges. Advance calendar dates in UTC to avoid DST shifts.
+        today = time.parse_time(now.format("20060102"), format = "20060102")
+        urls = [api_url + "&dates=" + (today + time.parse_duration("%dh" % (day * 24))).format("20060102") for day in range(-1, 7)]
     allscores = []
+    for url in urls:
+        allscores.extend(json.decode(get_cachable_data(url))["events"])
     gameCount = 0
-    for url in urls.values():
-        for daily_url in scoreboard_urls(url):
-            allscores.extend(json.decode(get_cachable_data(daily_url))["events"])
     allscores = ordered_scores(allscores)
     if team != "all" and team != "":
         newScores = []
-        for _, s in enumerate(allscores):
+        for s in allscores:
             home = s["competitions"][0]["competitors"][0]["team"]["id"]
             away = s["competitions"][0]["competitors"][1]["team"]["id"]
             gameStatus = s["status"]["type"]["state"]
@@ -4167,22 +4168,6 @@ def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
 # derp
 
 # Niblet: complete, stable score sequences; ESPN accepts individual dates.
-def scoreboard_urls(url):
-    if "dates=" not in url:
-        return [url.strip()]
-    before, after = url.split("dates=", 1)
-    parts = after.split("&", 1)
-    dates = parts[0].split("-")
-    if len(dates) == 1:
-        return [url]
-    start = time.parse_time(dates[0], format = "20060102")
-    end = time.parse_time(dates[1], format = "20060102")
-    days = (end.unix - start.unix) // 86400 + 1
-    if days < 1 or days > 32:
-        fail("Scoreboard date window must be between 1 and 32 days")
-    suffix = "&" + parts[1] if len(parts) > 1 else ""
-    return [before + "dates=" + (start + time.parse_duration("%dh" % (day * 24))).format("20060102") + suffix for day in range(days)]
-
 def ordered_scores(scores):
     unique = {}
     for score in scores:

@@ -29,6 +29,9 @@ with tempfile.TemporaryDirectory() as directory:
         if name in ['mlbscores','nbascores','wnbascores']:
             invocation = 'get_scores(time.now(), "all")'
             calendar = ''
+        elif name == 'ncaafscores':
+            invocation = 'get_scores("https://example.com/scoreboard?limit=300", time.now(), "all")'
+            calendar = ''
         else:
             invocation = 'get_scores({"league": "https://example.com/scoreboard?dates=20260920-20260927"}'+(')' if name in ['soccermens','soccerwomens'] else ', "all")')
             calendar = '''
