@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 Applet: Splat3 Challenges
 Summary: Splatoon 3 Challenges

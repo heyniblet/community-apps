@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/clouds_icon_36301c5e.png", CLOUDS_ICON_36301c5e_ASSET = "file")

@@ -1,6 +1,7 @@
-This project and everyone participating in it is governed by the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to community@tidbyt.com via email.
+> Updated for this community fork. Original upstream authorship and applicable notices are preserved.
 
-In addition, we have a [Contributor License Agreement](CLA.md) that you'll be asked to sign a part of the pull request process through an automated tool. This agreement offers protections to both you, the contributor and us, Tidbyt, Inc. It is based on the [Apache Software Foundation's CLAs](https://www.apache.org/licenses/contributor-agreements.html).
+# Contribution guide
 
+The active guide for this fork is [CONTRIBUTING.md](../CONTRIBUTING.md). Original authors can follow [Updating your app](UPDATING_YOUR_APP.md).
 
-OK! Now that we're past the boring part, check out our [README on how to contribute various changes](../README.md#contributing-changes).
+The retained Tidbyt CLA is historical and does not describe the process for new submissions to Niblet's fork.

@@ -1,2 +1,9 @@
+> Updated for this community fork. Original upstream authorship and applicable notices are preserved.
+
 # Support
-Looking for help on how to get started beyond the documentation in this repo? Create a discussion post on the [Tidbyt Forum](https://discuss.tidbyt.com/c/developers/) and a member of our team or the broader community will get back to you.
+
+For an app bug, open an issue in this repository with the app directory, expected and actual behavior, Pixlet version, and sanitized reproduction steps. Do not include secrets or private configuration.
+
+Original authors and prospective maintainers should read [Updating your app](UPDATING_YOUR_APP.md). For attribution or asset-rights corrections, identify the relevant files and evidence. Private contact: support@heyniblet.com.
+
+Report sensitive vulnerabilities through [SECURITY.md](SECURITY.md). For Tronbyt platform issues unrelated to this fork, use the upstream project's support process.

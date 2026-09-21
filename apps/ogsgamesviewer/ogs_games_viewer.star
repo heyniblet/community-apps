@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 Applet: OGS Games Viewer
 Summary: Shows OGS Games

@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("http.star", "http")
 load("images/thingspeak_icon.png", THINGSPEAK_ICON_ASSET = "file")
 load("re.star", "re")

@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See readme.md for maintenance and compatibility notes.
+
 """
 Applet: On The Air
 Summary: Notify of "On [The] Air" status

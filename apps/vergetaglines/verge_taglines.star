@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See ReadMe.md for maintenance and compatibility notes.
+
 """
 Applet: Verge Taglines
 Summary: The Verge's latest tagline

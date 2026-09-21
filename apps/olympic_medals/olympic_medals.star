@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """Final medal standings for the Milano Cortina 2026 Winter Olympics."""
 
 load("images/rings_logo.png", RINGS_LOGO_ASSET = "file")

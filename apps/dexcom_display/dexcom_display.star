@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 Dexcom G7 Display for Tidbyt
 Based on pydexcom implementation patterns

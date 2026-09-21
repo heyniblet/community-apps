@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("0764.01.gif", GLYPH_1 = "file")
 load("1031.03.gif", GLYPH_2 = "file")
 load("1086.00.gif", GLYPH_3 = "file")

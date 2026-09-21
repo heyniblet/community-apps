@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 Icecast Now Playing - A Tidbyt app showing the currently playing song from an Icecast server
 """

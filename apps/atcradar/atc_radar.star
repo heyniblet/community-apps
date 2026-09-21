@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See readme.md for maintenance and compatibility notes.
+
 """
 Applet: ATC Radar
 Summary: Display local air traffic

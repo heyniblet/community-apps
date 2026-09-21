@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 Pool Chemistry Display for Tronbyt (64×32 LED)
 Fetches Water Guru pool sensor data from Home Assistant.

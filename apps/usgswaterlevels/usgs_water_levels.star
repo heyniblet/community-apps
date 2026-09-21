@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 USGS Water Levels Tidbyt App
 Displays local lake and river water levels as a graph using USGS data

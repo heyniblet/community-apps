@@ -1,3 +1,7 @@
+# Modified for the Niblet community fork.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 # Muni Departures — 2 lines only, single page display
 # Styles: bus = red box w/ white outline (centered + 1px right shift), rail = colored circle
 
