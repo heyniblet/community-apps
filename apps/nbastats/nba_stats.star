@@ -17,6 +17,7 @@ def main():
 
     return render.Root(
         delay = 1000,
+        show_full_animation = True,
         child = render.Row(
             children = [
                 render.Animation(

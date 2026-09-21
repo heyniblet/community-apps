@@ -22,12 +22,14 @@ with tempfile.TemporaryDirectory() as temporary:
         source = source.replace("def main(config):", "def app_main(config):", 1)
         start = source.index("def get_cachable_data(")
         # Replace only HTTP access; execute the actual app's date and selection logic.
+        end = source.find("\ndef ", start + 1)
+        tail = source[end:] if end >= 0 else ""
         source = source[:start] + '''def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
     query = url.split("?", 1)[1]
     if query not in FIXTURES:
         fail("unexpected scoreboard query: " + query)
     return json.encode({"events": FIXTURES[query]})
-'''
+''' + tail
         # Year rollover and both US DST transitions, near local midnight.
         for day, instant in (
             (date(2026, 1, 1), "2026-01-01T05:30:00Z"),
@@ -43,6 +45,8 @@ with tempfile.TemporaryDirectory() as temporary:
                     events += [event("next", "pre"), event("live", "in", "LIVE")]
                 if offset == 6:
                     events += [event("later", "pre"), event("late", "pre", "LATE")]
+                for item in events:
+                    item["date"] = (day + timedelta(days=offset)).isoformat() + "T12:00:00Z"
                 fixtures["limit=100&dates=" + (day + timedelta(days=offset)).strftime("%Y%m%d")] = events
             expected = ["next"] if league == "mlb" else ["previous", "next"]
             history = ["6"] if league == "mlb" else [str(n) for n in range(-1, 7)]

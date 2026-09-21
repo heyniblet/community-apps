@@ -118,6 +118,7 @@ def main(config):
     return render.Root(
         child = render.Animation(frames),
         delay = DELAY_MS,
+        show_full_animation = True,
     )
 
 def get_page_frames(quake, timezone):

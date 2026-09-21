@@ -87,8 +87,8 @@ def main(config):
     loc = json.decode(location)
     timezone = loc["timezone"]
     now = time.now().in_location(timezone)
-    datePast = now - time.parse_duration("%dh" % 1 * 24)
-    dateFuture = now + time.parse_duration("%dh" % 30 * 24)
+    datePast = time.parse_time(now.format("20060102"), format = "20060102") - time.parse_duration("%dh" % 1 * 24)
+    dateFuture = time.parse_time(now.format("20060102"), format = "20060102") + time.parse_duration("%dh" % 30 * 24)
     league = {LEAGUE: API + "?limit=100" + (selectedTeam == "all" and " " or "&dates=" + datePast.format("20060102") + "-" + dateFuture.format("20060102"))}
     scores = get_scores(league, selectedTeam)
     if len(scores) > 0:
@@ -732,25 +732,24 @@ def get_schema():
 def get_scores(urls, team):
     allscores = []
     gameCount = 0
-    for i, s in urls.items():
-        data = get_cachable_data(s)
-        decodedata = json.decode(data)
-        allscores.extend(decodedata["events"])
-        if team != "all" and team != "":
-            newScores = []
-            for _, s in enumerate(allscores):
-                home = s["competitions"][0]["competitors"][0]["team"]["abbreviation"]
-                away = s["competitions"][0]["competitors"][1]["team"]["abbreviation"]
-                gameStatus = s["status"]["type"]["state"]
-                if (home == team or away == team) and gameStatus == "post":
-                    newScores.append(s)
-                elif (home == team or away == team) and gameCount == 0:
-                    if gameStatus == "in":
-                        newScores.clear()
-                    newScores.append(s)
-                    gameCount = gameCount + 1
-            allscores = newScores
-        all([i, allscores])
+    for url in urls.values():
+        for daily_url in scoreboard_urls(url):
+            allscores.extend(json.decode(get_cachable_data(daily_url))["events"])
+    allscores = ordered_scores(allscores)
+    if team != "all" and team != "":
+        newScores = []
+        for _, s in enumerate(allscores):
+            home = s["competitions"][0]["competitors"][0]["team"]["abbreviation"]
+            away = s["competitions"][0]["competitors"][1]["team"]["abbreviation"]
+            gameStatus = s["status"]["type"]["state"]
+            if (home == team or away == team) and gameStatus == "post":
+                newScores.append(s)
+            elif (home == team or away == team) and gameCount == 0:
+                if gameStatus == "in":
+                    newScores.clear()
+                newScores.append(s)
+                gameCount = gameCount + 1
+        allscores = newScores
     return allscores
 
 def get_odds(theOdds, theOU, team, homeaway):
@@ -871,3 +870,29 @@ def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
         fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
 
     return res.body()
+
+# Niblet: complete, stable score sequences; ESPN accepts individual dates.
+def scoreboard_urls(url):
+    if "dates=" not in url:
+        return [url.strip()]
+    before, after = url.split("dates=", 1)
+    parts = after.split("&", 1)
+    dates = parts[0].split("-")
+    if len(dates) == 1:
+        return [url]
+    start = time.parse_time(dates[0], format = "20060102")
+    end = time.parse_time(dates[1], format = "20060102")
+    days = (end.unix - start.unix) // 86400 + 1
+    if days < 1 or days > 32:
+        fail("Scoreboard date window must be between 1 and 32 days")
+    suffix = "&" + parts[1] if len(parts) > 1 else ""
+    return [before + "dates=" + (start + time.parse_duration("%dh" % (day * 24))).format("20060102") + suffix for day in range(days)]
+
+def ordered_scores(scores):
+    unique = {}
+    for score in scores:
+        unique[score["id"]] = score
+    return sorted(unique.values(), key = score_order)
+
+def score_order(score):
+    return (score.get("date", ""), score["id"])

@@ -183,7 +183,6 @@ def main(config):
         )
 
     # Create animation frames of the category balances
-    animation_children = []
     frames = []
     if len(displayed_items) == 0:
         if display_mode == "transaction":
@@ -228,23 +227,11 @@ def main(config):
                     ),
                 )
 
-    split = 160 / len(frames)
-    for i in range(0, 160):
-        animation_children.append(frames[math.floor(i / split)])
-
+    # Keep a stable per-page reading time as the category count grows.
     return render.Root(
-        delay = delay,
-        child = render.Column(
-            children = [
-                render.Sequence(
-                    children = [
-                        render.Animation(
-                            children = animation_children,
-                        ),
-                    ],
-                ),
-            ],
-        ),
+        delay = 30 * max(20, min(2000, delay)),
+        show_full_animation = len(frames) > 1,
+        child = render.Animation(children = frames),
     )
 
 def currency_string(full_number, currency_format):
@@ -318,7 +305,7 @@ def get_schema():
             schema.Text(
                 id = "delay",
                 name = "Page delay for multi-page displays",
-                desc = "Number in milliseconds to show each page when multiple pages are rendered",
+                desc = "Use 100 for 3 seconds per page; larger values show each page longer.",
                 icon = "clock",
                 default = "100",
             ),

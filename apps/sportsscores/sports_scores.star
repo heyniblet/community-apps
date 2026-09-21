@@ -500,7 +500,6 @@ def adjust_gametime(gametime_raw, config):
 
 def get_mlbgames(today_str):
     start_date = today_str
-    end_date = today_str
 
     #start_date = "2021-06-10"   #tested using 2021-06-06 and 2021-06-10
     #end_date = "2021-06-10"     #tested using 2021-06-06 and 2021-06-10
@@ -510,7 +509,7 @@ def get_mlbgames(today_str):
     #print(full_URL)
     rep = http.get(url = full_URL, ttl_seconds = 60)
     if rep.status_code != 200:
-        return ["Error getting data"]
+        fail("Scoreboard request failed: %d" % rep.status_code)
     else:
         data = rep.json()["dates"]
 
@@ -575,7 +574,7 @@ def get_nhlgames(today_str):
     #print(full_URL)
     rep = http.get(url = full_URL, ttl_seconds = 60)
     if rep.status_code != 200:
-        return ["Error getting data"]
+        fail("Scoreboard request failed: %d" % rep.status_code)
     else:
         #data = rep.json()["dates"]
         data = rep.json()  #["gameWeek"]
@@ -668,16 +667,15 @@ def get_nhlgames(today_str):
 
 def get_basketballgames(today_str, league):
     start_date = today_str
-    end_date = today_str
     base_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/%s/scoreboard" % league
-    full_URL = base_URL + "?dates=" + start_date.replace("-", "") + "-" + end_date.replace("-", "")
+    full_URL = base_URL + "?dates=" + start_date.replace("-", "")
 
     #print(full_URL)
     rep = http.get(url = full_URL, ttl_seconds = 60)
     if rep.status_code != 200:
-        return ["Error getting data"]
+        fail("Scoreboard request failed: %d" % rep.status_code)
     else:
-        data = rep.json()["events"]
+        data = ordered_scores(rep.json()["events"])
 
     if data == []:
         return no_games_text
@@ -734,16 +732,15 @@ def get_basketballgames(today_str, league):
 
 def get_footballgames(today_str, league):
     start_date = today_str
-    end_date = today_str
     base_URL = "https://site.api.espn.com/apis/site/v2/sports/football/%s/scoreboard" % league
-    full_URL = base_URL + "?dates=" + start_date.replace("-", "") + "-" + end_date.replace("-", "")
+    full_URL = base_URL + "?dates=" + start_date.replace("-", "")
 
     #print(full_URL)
     rep = http.get(url = full_URL, ttl_seconds = 60)
     if rep.status_code != 200:
-        return ["Error getting data"]
+        fail("Scoreboard request failed: %d" % rep.status_code)
     else:
-        data = rep.json()["events"]
+        data = ordered_scores(rep.json()["events"])
 
     if data == []:
         return no_games_text
@@ -798,16 +795,15 @@ def get_footballgames(today_str, league):
 
 def get_soccergames(today_str, league):
     start_date = today_str
-    end_date = today_str
     base_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/%s/scoreboard" % league
-    full_URL = base_URL + "?dates=" + start_date.replace("-", "") + "-" + end_date.replace("-", "")
+    full_URL = base_URL + "?dates=" + start_date.replace("-", "")
 
     #print(full_URL)
     rep = http.get(url = full_URL, ttl_seconds = 60)
     if rep.status_code != 200:
-        return ["Error getting data"]
+        fail("Scoreboard request failed: %d" % rep.status_code)
     else:
-        data = rep.json()["events"]
+        data = ordered_scores(rep.json()["events"])
 
     if data == []:
         return no_games_text
@@ -852,3 +848,13 @@ def get_soccergames(today_str, league):
         stats_tmp["status"] = status_txt
         stats.append(stats_tmp)
     return (stats)
+
+# Niblet: preserve complete chronological game coverage across provider updates.
+def ordered_scores(scores):
+    unique = {}
+    for score in scores:
+        unique[score["id"]] = score
+    return sorted(unique.values(), key = score_order)
+
+def score_order(score):
+    return (score.get("date", ""), score["id"])

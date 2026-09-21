@@ -134,6 +134,7 @@ def main(config):
 
     return render.Root(
         delay = int(3 * 1000),
+        show_full_animation = True,
         child = render.Box(
             render.Column(
                 expanded = True,

@@ -110,16 +110,18 @@ def main(config):
     timezone = time.tz()
     now = time.now().in_location(timezone)
 
+    calendar_day = time.parse_time(now.format("20060102"), format = "20060102")
+
     # calculate start and end date if we are set to use range of days
     date_range_search = ""
     if config.bool("day_range", False):
-        back_time = now - time.parse_duration("%dh" % (int(config.get("days_back", 1)) * 24))
-        fwd_time = now + time.parse_duration("%dh" % (int(config.get("days_forward", 1)) * 24))
+        back_time = calendar_day - time.parse_duration("%dh" % (int(config.get("days_back", 1)) * 24))
+        fwd_time = calendar_day + time.parse_duration("%dh" % (int(config.get("days_forward", 1)) * 24))
         date_range_search = "?dates=%s-%s" % (back_time.format("20060102"), (fwd_time.format("20060102")))
     elif selectedLeague == "aus.w.1":
         # fix for feed - Aus Women's league - by default shows no scheduled matches - have to force a date range, if you have not already selected one
-        back_time = now - time.parse_duration("%dh" % (0 * 24))
-        fwd_time = now + time.parse_duration("%dh" % (6 * 24))
+        back_time = calendar_day - time.parse_duration("%dh" % (0 * 24))
+        fwd_time = calendar_day + time.parse_duration("%dh" % (6 * 24))
         date_range_search = "?dates=%s-%s" % (back_time.format("20060102"), (fwd_time.format("20060102")))
 
     scoreboard_url = API + selectedLeague + "/scoreboard" + date_range_search
@@ -750,12 +752,10 @@ def show_day_range(day_range):
 
 def get_scores(urls):
     allscores = []
-    for i, s in urls.items():
-        data = get_cachable_data(s)
-        decodedata = json.decode(data)
-        allscores.extend(decodedata["events"])
-        all([i, allscores])
-
+    for url in urls.values():
+        for daily_url in scoreboard_urls(url):
+            allscores.extend(json.decode(get_cachable_data(daily_url))["events"])
+    allscores = ordered_scores(allscores)
     return allscores
 
 def get_detail(gamedate):
@@ -899,7 +899,7 @@ def get_comp_label(scoreboard_url, leagueAbbr):
     # Cache-hit reuse of the scoreboard fetch just to read the competition name
     # (leagues[0].abbreviation, e.g. "FIFA World Cup") for the header. Works for
     # every league/tournament the app offers; falls back to the short league code.
-    data = json.decode(get_cachable_data(scoreboard_url))
+    data = json.decode(get_cachable_data(scoreboard_urls(scoreboard_url)[0]))
     leagues = data.get("leagues") or []
     if len(leagues) > 0:
         abbr = leagues[0].get("abbreviation")
@@ -1307,3 +1307,30 @@ def wide4_status(g, w, h):
         color = W_BG,
         child = render.Row(expanded = True, main_align = "center", cross_align = "center", children = kids),
     )
+
+# Niblet: complete, stable score sequences; ESPN accepts individual dates.
+
+def scoreboard_urls(url):
+    if "dates=" not in url:
+        return [url.strip()]
+    before, after = url.split("dates=", 1)
+    parts = after.split("&", 1)
+    dates = parts[0].split("-")
+    if len(dates) == 1:
+        return [url]
+    start = time.parse_time(dates[0], format = "20060102")
+    end = time.parse_time(dates[1], format = "20060102")
+    days = (end.unix - start.unix) // 86400 + 1
+    if days < 1 or days > 32:
+        fail("Scoreboard date window must be between 1 and 32 days")
+    suffix = "&" + parts[1] if len(parts) > 1 else ""
+    return [before + "dates=" + (start + time.parse_duration("%dh" % (day * 24))).format("20060102") + suffix for day in range(days)]
+
+def ordered_scores(scores):
+    unique = {}
+    for score in scores:
+        unique[score["id"]] = score
+    return sorted(unique.values(), key = score_order)
+
+def score_order(score):
+    return (score.get("date", ""), score["id"])

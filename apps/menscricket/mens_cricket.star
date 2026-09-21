@@ -181,6 +181,7 @@ def render_current_match(match, tz):
         )
     return render.Root(
         delay = int(4000),
+        show_full_animation = True,
         child = render.Animation(
             children = render_columns,
         ),
@@ -229,6 +230,7 @@ def render_next_match(match_data, tz):
     match_state_status_row = render_status_row(match_state_status)
     return render.Root(
         delay = 4000,
+        show_full_animation = True,
         child = render.Animation(
             children = [
                 render.Column(
@@ -367,6 +369,7 @@ def render_past_match(match, tz):
         )
     return render.Root(
         delay = int(4000),
+        show_full_animation = True,
         child = render.Animation(
             children = columns,
         ),

@@ -174,6 +174,7 @@ def get_calendar_render_data(now, usersTz, event, show_expanded_time_window, sho
 def render_calendar_base_object(top, bottom):
     return render.Root(
         delay = FRAME_DELAY,
+        show_full_animation = True,
         child = render.Box(
             padding = 2,
             color = "#111",
@@ -239,8 +240,8 @@ def get_calendar_bottom(data):
 
     elif data["shouldAnimateText"]:
         children = [
-            render.Animation(
-                children,
+            render.Sequence(
+                children = [render.Animation(children = [child] * max(30, child.frame_count())) for child in children],
             ),
         ]
 

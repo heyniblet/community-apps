@@ -79,10 +79,11 @@ def render_calendar(events, header_color, now, scale):
     rows = [event_row(start, summary, header_color, scale) for start, summary in events]
     if not rows:
         rows = [event_row("", "No more events today", header_color, scale)]
-    delay = int(10000 / len(rows))
+    delay = 5000  # Keep each event readable regardless of the event count.
     date_font = "tb-8" if scale == 1 else "terminus-18"
     return render.Root(
         delay = delay,
+        show_full_animation = True,
         child = render.Column(children = [
             render.Padding(child = render.Text(content = now.format("Mon, Jan 02"), font = date_font), pad = (1 * scale, 0, 0, 0)),
             render.Animation(children = rows),

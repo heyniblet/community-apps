@@ -128,7 +128,6 @@ def main(config):
     scores = get_scores(now, selectedTeam)
 
     if len(scores) > 0:
-        rotationSpeed = str(max(3, min(int(rotationSpeed), 60 // len(scores))))
         for i, s in enumerate(scores):
             gameStatus = s["status"]["type"]["state"]
             competition = s["competitions"][0]
@@ -521,7 +520,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
-            max_age = 180,
+            max_age = max(180, len(renderCategory) * int(rotationSpeed) + 60),
             show_full_animation = len(renderCategory) > 1,
             child = render.Column(
                 children = [
@@ -871,6 +870,7 @@ def get_scores(now, team):
     for url in urls:
         allscores.extend(json.decode(get_cachable_data(url))["events"])
     gameCount = 0
+    allscores = ordered_scores(allscores)
     if team != "all" and team != "":
         newScores = []
         for _, s in enumerate(allscores):
@@ -1010,3 +1010,13 @@ def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
         fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
 
     return res.body()
+
+# Niblet: complete, stable score sequences; ESPN accepts individual dates.
+def ordered_scores(scores):
+    unique = {}
+    for score in scores:
+        unique[score["id"]] = score
+    return sorted(unique.values(), key = score_order)
+
+def score_order(score):
+    return (score.get("date", ""), score["id"])

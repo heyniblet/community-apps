@@ -1,0 +1,863 @@
+{
+  "id": "401856693",
+  "uid": "s:20~l:23~e:401856693",
+  "date": "2026-09-20T00:00Z",
+  "name": "UTSA Roadrunners at Texas Longhorns",
+  "shortName": "UTSA @ TEX",
+  "season": {
+    "year": 2026,
+    "type": 2,
+    "slug": "regular-season"
+  },
+  "week": {
+    "number": 3
+  },
+  "competitions": [
+    {
+      "id": "401856693",
+      "uid": "s:20~l:23~e:401856693~c:401856693",
+      "date": "2026-09-20T00:00Z",
+      "attendance": 103753,
+      "type": {
+        "id": "1",
+        "abbreviation": "STD"
+      },
+      "timeValid": true,
+      "dateValid": true,
+      "neutralSite": false,
+      "conferenceCompetition": false,
+      "playByPlayAvailable": true,
+      "recent": false,
+      "venue": {
+        "id": "3910",
+        "fullName": "DKR-Texas Memorial Stadium",
+        "address": {
+          "city": "Austin",
+          "state": "TX",
+          "country": "USA"
+        },
+        "indoor": false
+      },
+      "competitors": [
+        {
+          "id": "251",
+          "uid": "s:20~l:23~t:251",
+          "type": "team",
+          "order": 0,
+          "homeAway": "home",
+          "winner": true,
+          "team": {
+            "id": "251",
+            "uid": "s:20~l:23~t:251",
+            "location": "Texas",
+            "name": "Longhorns",
+            "abbreviation": "TEX",
+            "displayName": "Texas Longhorns",
+            "shortDisplayName": "Texas",
+            "color": "af5c37",
+            "alternateColor": "ffffff",
+            "isActive": true,
+            "venue": {
+              "id": "3910"
+            },
+            "links": [
+              {
+                "rel": [
+                  "clubhouse",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/_/id/251/texas-longhorns",
+                "text": "Clubhouse",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "clubhouse",
+                  "mobile",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/_/id/251/texas-longhorns",
+                "text": "Clubhouse",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "roster",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/roster/_/id/251",
+                "text": "Roster",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "roster",
+                  "sportscenter",
+                  "app",
+                  "team"
+                ],
+                "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:23~t:251&section=roster",
+                "text": "Roster",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "stats",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/stats/_/id/251",
+                "text": "Statistics",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "stats",
+                  "sportscenter",
+                  "app",
+                  "team"
+                ],
+                "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:23~t:251&section=stats",
+                "text": "Statistics",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "schedule",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/schedule/_/id/251",
+                "text": "Schedule",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "schedule",
+                  "sportscenter",
+                  "app",
+                  "team"
+                ],
+                "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:23~t:251&section=scores",
+                "text": "Schedule",
+                "isExternal": false,
+                "isPremium": false
+              }
+            ],
+            "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/251.png",
+            "conferenceId": "8"
+          },
+          "score": "30",
+          "linescores": [
+            {
+              "value": 10.0,
+              "displayValue": "10",
+              "period": 1
+            },
+            {
+              "value": 10.0,
+              "displayValue": "10",
+              "period": 2
+            },
+            {
+              "value": 3.0,
+              "displayValue": "3",
+              "period": 3
+            },
+            {
+              "value": 7.0,
+              "displayValue": "7",
+              "period": 4
+            }
+          ],
+          "statistics": [],
+          "curatedRank": {
+            "current": 1
+          },
+          "records": [
+            {
+              "name": "overall",
+              "abbreviation": "Game",
+              "type": "total",
+              "summary": "3-0"
+            },
+            {
+              "name": "Home",
+              "type": "home",
+              "summary": "3-0"
+            },
+            {
+              "name": "Road",
+              "type": "road",
+              "summary": "0-0"
+            },
+            {
+              "name": "vs. Conf.",
+              "type": "vsconf",
+              "summary": "0-0"
+            }
+          ]
+        },
+        {
+          "id": "2636",
+          "uid": "s:20~l:23~t:2636",
+          "type": "team",
+          "order": 1,
+          "homeAway": "away",
+          "winner": false,
+          "team": {
+            "id": "2636",
+            "uid": "s:20~l:23~t:2636",
+            "location": "UTSA",
+            "name": "Roadrunners",
+            "abbreviation": "UTSA",
+            "displayName": "UTSA Roadrunners",
+            "shortDisplayName": "UTSA",
+            "color": "0c2340",
+            "alternateColor": "f15a22",
+            "isActive": true,
+            "venue": {
+              "id": "3604"
+            },
+            "links": [
+              {
+                "rel": [
+                  "clubhouse",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/_/id/2636/utsa-roadrunners",
+                "text": "Clubhouse",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "clubhouse",
+                  "mobile",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/_/id/2636/utsa-roadrunners",
+                "text": "Clubhouse",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "roster",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/roster/_/id/2636",
+                "text": "Roster",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "roster",
+                  "sportscenter",
+                  "app",
+                  "team"
+                ],
+                "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:23~t:2636&section=roster",
+                "text": "Roster",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "stats",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/stats/_/id/2636",
+                "text": "Statistics",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "stats",
+                  "sportscenter",
+                  "app",
+                  "team"
+                ],
+                "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:23~t:2636&section=stats",
+                "text": "Statistics",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "schedule",
+                  "desktop",
+                  "team"
+                ],
+                "href": "https://www.espn.com/college-football/team/schedule/_/id/2636",
+                "text": "Schedule",
+                "isExternal": false,
+                "isPremium": false
+              },
+              {
+                "rel": [
+                  "schedule",
+                  "sportscenter",
+                  "app",
+                  "team"
+                ],
+                "href": "sportscenter://x-callback-url/showClubhouse?uid=s:20~l:23~t:2636&section=scores",
+                "text": "Schedule",
+                "isExternal": false,
+                "isPremium": false
+              }
+            ],
+            "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2636.png",
+            "conferenceId": "151"
+          },
+          "score": "6",
+          "linescores": [
+            {
+              "value": 3.0,
+              "displayValue": "3",
+              "period": 1
+            },
+            {
+              "value": 0.0,
+              "displayValue": "0",
+              "period": 2
+            },
+            {
+              "value": 3.0,
+              "displayValue": "3",
+              "period": 3
+            },
+            {
+              "value": 0.0,
+              "displayValue": "0",
+              "period": 4
+            }
+          ],
+          "statistics": [],
+          "curatedRank": {
+            "current": 99
+          },
+          "records": [
+            {
+              "name": "overall",
+              "abbreviation": "Game",
+              "type": "total",
+              "summary": "2-1"
+            },
+            {
+              "name": "Home",
+              "type": "home",
+              "summary": "1-0"
+            },
+            {
+              "name": "Road",
+              "type": "road",
+              "summary": "1-1"
+            },
+            {
+              "name": "vs. Conf.",
+              "type": "vsconf",
+              "summary": "0-0"
+            }
+          ]
+        }
+      ],
+      "notes": [],
+      "status": {
+        "clock": 0.0,
+        "displayClock": "0:00",
+        "period": 4,
+        "type": {
+          "id": "3",
+          "name": "STATUS_FINAL",
+          "state": "post",
+          "completed": true,
+          "description": "Final",
+          "detail": "Final",
+          "shortDetail": "Final"
+        }
+      },
+      "broadcasts": [
+        {
+          "market": "national",
+          "names": [
+            "SECN+"
+          ]
+        }
+      ],
+      "leaders": [
+        {
+          "name": "passingYards",
+          "displayName": "Passing Leader",
+          "shortDisplayName": "PASS",
+          "abbreviation": "PYDS",
+          "leaders": [
+            {
+              "displayValue": "17/33, 164 YDS, 2 TD",
+              "value": 164.0,
+              "athlete": {
+                "id": "4870906",
+                "fullName": "Arch Manning",
+                "displayName": "Arch Manning",
+                "shortName": "A. Manning",
+                "links": [
+                  {
+                    "rel": [
+                      "playercard",
+                      "desktop",
+                      "athlete"
+                    ],
+                    "href": "https://www.espn.com/college-football/player/_/id/4870906/arch-manning"
+                  }
+                ],
+                "headshot": "https://a.espncdn.com/i/headshots/college-football/players/full/4870906.png",
+                "jersey": "16",
+                "position": {
+                  "abbreviation": "QB"
+                },
+                "team": {
+                  "id": "251"
+                },
+                "active": true
+              },
+              "team": {
+                "id": "251"
+              }
+            }
+          ]
+        },
+        {
+          "name": "rushingYards",
+          "displayName": "Rushing Leader",
+          "shortDisplayName": "RUSH",
+          "abbreviation": "RYDS",
+          "leaders": [
+            {
+              "displayValue": "10 CAR, 54 YDS",
+              "value": 54.0,
+              "athlete": {
+                "id": "4871053",
+                "fullName": "Hollywood Smothers",
+                "displayName": "Hollywood Smothers",
+                "shortName": "H. Smothers",
+                "links": [
+                  {
+                    "rel": [
+                      "playercard",
+                      "desktop",
+                      "athlete"
+                    ],
+                    "href": "https://www.espn.com/college-football/player/_/id/4871053/hollywood-smothers"
+                  }
+                ],
+                "headshot": "https://a.espncdn.com/i/headshots/college-football/players/full/4871053.png",
+                "jersey": "2",
+                "position": {
+                  "abbreviation": "RB"
+                },
+                "team": {
+                  "id": "251"
+                },
+                "active": true
+              },
+              "team": {
+                "id": "251"
+              }
+            }
+          ]
+        },
+        {
+          "name": "receivingYards",
+          "displayName": "Receiving Leader",
+          "shortDisplayName": "REC",
+          "abbreviation": "RECYDS",
+          "leaders": [
+            {
+              "displayValue": "4 REC, 59 YDS, 2 TD",
+              "value": 59.0,
+              "athlete": {
+                "id": "5079376",
+                "fullName": "Cam Coleman",
+                "displayName": "Cam Coleman",
+                "shortName": "C. Coleman",
+                "links": [
+                  {
+                    "rel": [
+                      "playercard",
+                      "desktop",
+                      "athlete"
+                    ],
+                    "href": "https://www.espn.com/college-football/player/_/id/5079376/cam-coleman"
+                  }
+                ],
+                "headshot": "https://a.espncdn.com/i/headshots/college-football/players/full/5079376.png",
+                "jersey": "8",
+                "position": {
+                  "abbreviation": "WR"
+                },
+                "team": {
+                  "id": "251"
+                },
+                "active": true
+              },
+              "team": {
+                "id": "251"
+              }
+            }
+          ]
+        }
+      ],
+      "format": {
+        "regulation": {
+          "periods": 4
+        }
+      },
+      "startDate": "2026-09-20T00:00Z",
+      "broadcast": "SECN+",
+      "geoBroadcasts": [
+        {
+          "type": {
+            "id": "4",
+            "shortName": "Streaming"
+          },
+          "market": {
+            "id": "1",
+            "type": "National"
+          },
+          "media": {
+            "shortName": "SECN+",
+            "logo": "https://a.espncdn.com/guid/d1e3d7c4-8e72-37f3-b9b9-515573fd5526/logos/default.png",
+            "darkLogo": ""
+          },
+          "lang": "en",
+          "region": "us"
+        }
+      ],
+      "highlights": [
+        {
+          "id": 49985834,
+          "cerebroId": "6aaf51875208ce4d1b515f18",
+          "source": "espn",
+          "headline": "UTSA Roadrunners vs. Texas Longhorns: Full Highlights",
+          "description": "UTSA Roadrunners vs. Texas Longhorns: Full Highlights",
+          "lastModified": "2026-09-20T03:23:01Z",
+          "originalPublishDate": "2026-09-20T03:22:48Z",
+          "duration": 78,
+          "timeRestrictions": {
+            "embargoDate": "2026-09-20T03:22:45Z",
+            "expirationDate": "2038-01-01T04:59:59Z"
+          },
+          "deviceRestrictions": {
+            "devices": [
+              "settop",
+              "tablet",
+              "handset",
+              "ipad",
+              "desktop"
+            ],
+            "type": "whitelist"
+          },
+          "thumbnail": "https://espnmedia-cdn.akamaized.net/espn/media/common/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.jpg",
+          "links": {
+            "api": {
+              "artwork": {
+                "href": "https://artwork.api.espn.com/artwork/collections/media/24dd5179-549a-4445-8106-54fe5504bd30"
+              },
+              "self": {
+                "href": "https://content.core.api.espn.com/v1/video/clips/49985834"
+              }
+            },
+            "mobile": {
+              "href": "https://watch.auth.api.espn.com/video/auth/brightcove/24dd5179-549a-4445-8106-54fe5504bd30/asset?UMADPARAMreferer=https://www.espn.com/video/clip/_/id/49985834/full-highlights",
+              "alert": {
+                "href": "https://m.espn.com/general/video/videoAlert?vid=49985834"
+              },
+              "progressiveDownload": {
+                "href": "https://watch.auth.api.espn.com/video/auth/brightcove/24dd5179-549a-4445-8106-54fe5504bd30/asset?UMADPARAMreferer=https://www.espn.com/video/clip/_/id/49985834/full-highlights"
+              },
+              "source": {
+                "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+              },
+              "streaming": {
+                "href": "https://watch.auth.api.espn.com/video/auth/brightcove/24dd5179-549a-4445-8106-54fe5504bd30/asset?UMADPARAMreferer=https://www.espn.com/video/clip/_/id/49985834/full-highlights"
+              }
+            },
+            "source": {
+              "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4",
+              "HD": {
+                "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+              },
+              "HLS": {
+                "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8",
+                "9x16": {
+                  "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/9x16/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                },
+                "HD": {
+                  "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                },
+                "cmaf": {
+                  "href": "https://cmp-espn.media.dssott.com/opp/cmaf/espn/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8",
+                  "9x16": {
+                    "href": "https://cmp-espn.media.dssott.com/opp/cmaf/espn/9x16/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                  },
+                  "cmb": {
+                    "href": "https://cmp-espn.media.dssott.com/opp/cmaf/espn/cmb/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                  }
+                },
+                "cmb": {
+                  "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/cmb/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                },
+                "shield": {
+                  "href": "https://watch.auth.api.espn.com/video/auth/media/24dd5179-549a-4445-8106-54fe5504bd30/asset"
+                }
+              },
+              "flash": {
+                "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+              },
+              "full": {
+                "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+              },
+              "hds": {
+                "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+              },
+              "mezzanine": {
+                "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+              }
+            },
+            "sportscenter": {
+              "href": "sportscenter://x-callback-url/showVideo?videoID=49985834&videoDSI=b061ea794bf00"
+            },
+            "web": {
+              "href": "https://www.espn.com/video/clip/_/id/49985834/full-highlights",
+              "self": {
+                "href": "https://www.espn.com/video/clip/_/id/49985834/full-highlights",
+                "dsi": {
+                  "href": "https://www.espn.com/video/clip?id=b061ea794bf00"
+                }
+              }
+            }
+          },
+          "ad": {
+            "bundle": "ncf_highlights",
+            "sport": "ncf"
+          },
+          "tracking": {
+            "coverageType": "Final Game Highlight",
+            "leagueName": "NCAA Football",
+            "program": "NCAA Football",
+            "sportName": "football",
+            "trackingId": "dm_20260920_NCF_utsa_roadrunners_vs_texas_longhorns_full_highlights",
+            "trackingName": "NCF_One-Play (UTSA Roadrunners vs. Texas Longhorns: Full Highlights) 2026/09/20 ESHEET"
+          }
+        }
+      ],
+      "headlines": [
+        {
+          "type": "Recap",
+          "description": "\u2014 Arch Manning threw two early touchdown passes to Cam Coleman on a night he mostly struggled, and No. 1 Texas beat UTSA 30-6 in the Longhorns'...",
+          "shortLinkText": "Manning throws 2 early TD passes to Coleman to help No. 1 Texas beat UTSA 30-6",
+          "video": [
+            {
+              "id": 49985834,
+              "source": "espn",
+              "headline": "UTSA Roadrunners vs. Texas Longhorns: Full Highlights",
+              "thumbnail": "https://espnmedia-cdn.akamaized.net/espn/media/common/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.jpg",
+              "duration": 78,
+              "tracking": {
+                "coverageType": "Final Game Highlight",
+                "leagueName": "NCAA Football",
+                "program": "NCAA Football",
+                "sportName": "football",
+                "trackingId": "dm_20260920_NCF_utsa_roadrunners_vs_texas_longhorns_full_highlights",
+                "trackingName": "NCF_One-Play (UTSA Roadrunners vs. Texas Longhorns: Full Highlights) 2026/09/20 ESHEET"
+              },
+              "deviceRestrictions": {
+                "devices": [
+                  "settop",
+                  "tablet",
+                  "handset",
+                  "ipad",
+                  "desktop"
+                ],
+                "type": "whitelist"
+              },
+              "links": {
+                "api": {
+                  "artwork": {
+                    "href": "https://artwork.api.espn.com/artwork/collections/media/24dd5179-549a-4445-8106-54fe5504bd30"
+                  },
+                  "self": {
+                    "href": "https://content.core.api.espn.com/v1/video/clips/49985834"
+                  }
+                },
+                "mobile": {
+                  "href": "https://watch.auth.api.espn.com/video/auth/brightcove/24dd5179-549a-4445-8106-54fe5504bd30/asset?UMADPARAMreferer=https://www.espn.com/video/clip/_/id/49985834/full-highlights",
+                  "alert": {
+                    "href": "https://m.espn.com/general/video/videoAlert?vid=49985834"
+                  },
+                  "progressiveDownload": {
+                    "href": "https://watch.auth.api.espn.com/video/auth/brightcove/24dd5179-549a-4445-8106-54fe5504bd30/asset?UMADPARAMreferer=https://www.espn.com/video/clip/_/id/49985834/full-highlights"
+                  },
+                  "source": {
+                    "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+                  },
+                  "streaming": {
+                    "href": "https://watch.auth.api.espn.com/video/auth/brightcove/24dd5179-549a-4445-8106-54fe5504bd30/asset?UMADPARAMreferer=https://www.espn.com/video/clip/_/id/49985834/full-highlights"
+                  }
+                },
+                "source": {
+                  "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4",
+                  "HD": {
+                    "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+                  },
+                  "HLS": {
+                    "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8",
+                    "9x16": {
+                      "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/9x16/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                    },
+                    "HD": {
+                      "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                    },
+                    "cmaf": {
+                      "href": "https://cmp-espn.media.dssott.com/opp/cmaf/espn/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8",
+                      "9x16": {
+                        "href": "https://cmp-espn.media.dssott.com/opp/cmaf/espn/9x16/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                      },
+                      "cmb": {
+                        "href": "https://cmp-espn.media.dssott.com/opp/cmaf/espn/cmb/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                      }
+                    },
+                    "cmb": {
+                      "href": "https://cmp-espn.media.dssott.com/opp/hls/espn/cmb/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f/playlist.m3u8"
+                    },
+                    "shield": {
+                      "href": "https://watch.auth.api.espn.com/video/auth/media/24dd5179-549a-4445-8106-54fe5504bd30/asset"
+                    }
+                  },
+                  "flash": {
+                    "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+                  },
+                  "full": {
+                    "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+                  },
+                  "hds": {
+                    "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+                  },
+                  "mezzanine": {
+                    "href": "https://espnmedia-cdn.akamaized.net/espn/media/16x9/wsc/2026/0920/b9c33d8b-5985-476b-b6e4-82919b7cf27f/b9c33d8b-5985-476b-b6e4-82919b7cf27f.mp4"
+                  }
+                },
+                "sportscenter": {
+                  "href": "sportscenter://x-callback-url/showVideo?videoID=49985834&videoDSI=b061ea794bf00"
+                },
+                "web": {
+                  "href": "https://www.espn.com/video/clip/_/id/49985834/full-highlights",
+                  "self": {
+                    "href": "https://www.espn.com/video/clip/_/id/49985834/full-highlights",
+                    "dsi": {
+                      "href": "https://www.espn.com/video/clip?id=b061ea794bf00"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "language": "en-US",
+      "rel": [
+        "summary",
+        "desktop",
+        "event"
+      ],
+      "href": "https://www.espn.com/college-football/game/_/gameId/401856693/utsa-texas",
+      "text": "Gamecast",
+      "shortText": "Gamecast",
+      "isExternal": false,
+      "isPremium": false
+    },
+    {
+      "language": "en-US",
+      "rel": [
+        "boxscore",
+        "desktop",
+        "event"
+      ],
+      "href": "https://www.espn.com/college-football/boxscore/_/gameId/401856693",
+      "text": "Box Score",
+      "shortText": "Box Score",
+      "isExternal": false,
+      "isPremium": false
+    },
+    {
+      "language": "en-US",
+      "rel": [
+        "highlights",
+        "desktop"
+      ],
+      "href": "https://www.espn.com/college-football/video?gameId=401856693",
+      "text": "Highlights",
+      "shortText": "Highlights",
+      "isExternal": false,
+      "isPremium": false
+    },
+    {
+      "language": "en-US",
+      "rel": [
+        "pbp",
+        "desktop",
+        "event"
+      ],
+      "href": "https://www.espn.com/college-football/playbyplay/_/gameId/401856693",
+      "text": "Play-by-Play",
+      "shortText": "Play-by-Play",
+      "isExternal": false,
+      "isPremium": false
+    },
+    {
+      "language": "en-US",
+      "rel": [
+        "recap",
+        "desktop",
+        "event"
+      ],
+      "href": "https://www.espn.com/college-football/recap?gameId=401856693",
+      "text": "Recap",
+      "shortText": "Recap",
+      "isExternal": false,
+      "isPremium": false
+    }
+  ],
+  "status": {
+    "clock": 0.0,
+    "displayClock": "0:00",
+    "period": 4,
+    "type": {
+      "id": "3",
+      "name": "STATUS_FINAL",
+      "state": "post",
+      "completed": true,
+      "description": "Final",
+      "detail": "Final",
+      "shortDetail": "Final"
+    }
+  }
+}

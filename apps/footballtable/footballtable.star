@@ -96,7 +96,8 @@ def main(config):
         i += 4
 
     return render.Root(
-        delay = int(15000 / (clubCount / 4)),
+        delay = 3000,
+        show_full_animation = True,
         child =
             render.Animation(
                 children = (
@@ -133,7 +134,8 @@ def renderSquareTable(table, clubCount, relCount, playCount, proCount):
         stackList.append(render.Stack(children = textList))
 
     return render.Root(
-        delay = int(15000 / (clubCount / 8)),
+        delay = 3000,
+        show_full_animation = True,
         child =
             render.Animation(
                 children = (

@@ -116,6 +116,7 @@ def main(config):
             children = coinlines,
         ),
         delay = int(config.get("delay", DEFAULTDELAY)),
+        show_full_animation = True,
     )
 
 # FUNCTIONS

@@ -131,6 +131,7 @@ def main(config):
 
     return render.Root(
         delay = 2000,
+        show_full_animation = True,
         child = render.Animation(
             children = [
                 readinessView(readiness_scores, activity_scores, sleep_scores),

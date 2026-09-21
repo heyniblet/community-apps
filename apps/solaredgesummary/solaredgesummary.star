@@ -261,6 +261,7 @@ def main(config):
     # Return animation with frames
     return render.Root(
         delay = 3000,  # 3 seconds per frame
+        show_full_animation = True,
         child = render.Animation(children = frames),
     )
 

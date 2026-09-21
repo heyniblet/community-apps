@@ -270,6 +270,7 @@ def main(config):
 
     return render.Root(
         delay = rotation_speed * 1000,
+        show_full_animation = True,
         child = render.Animation(children = slides),
     )
 

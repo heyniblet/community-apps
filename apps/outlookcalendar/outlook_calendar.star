@@ -34,8 +34,8 @@ def main(config):
     if config.bool("full_day", False):
         today = [event for event in upcoming if same_day(event["start"], now)][:8]
         if today:
-            return render.Root(child = render.Sequence(children = [meeting_card(event, timezone) for event in today]))
-    return render.Root(child = meeting_card(upcoming[0], timezone))
+            return render.Root(delay = 100, show_full_animation = True, child = render.Sequence(children = [meeting_card(event, timezone) for event in today]))
+    return render.Root(delay = 100, show_full_animation = True, child = meeting_card(upcoming[0], timezone))
 
 def valid_url(value):
     parts = value.split("/", 3) if type(value) == "string" and value.startswith("https://") and len(value) <= 4096 else []
@@ -123,7 +123,7 @@ def same_day(left, right):
     return left.year == right.year and left.month == right.month and left.day == right.day
 
 def meeting_card(event, timezone):
-    return render.Column(
+    card = render.Column(
         children = [
             render.Row(children = [render.Image(src = CAL_ICON, width = 12), render.Text(event["start"].in_location(timezone).format("Jan 2"), color = "#ffea00")], expanded = True, main_align = "space_evenly", cross_align = "center"),
             render.Marquee(child = render.Text(event["title"], font = "tb-8"), width = 64, align = "center"),
@@ -133,6 +133,8 @@ def meeting_card(event, timezone):
         main_align = "space_evenly",
         cross_align = "center",
     )
+
+    return render.Animation(children = [card] * max(30, card.frame_count()))
 
 def problem(content):
     return render.Root(child = render.WrappedText(content, font = "tom-thumb", width = 62, align = "center", color = "#ffea00"))

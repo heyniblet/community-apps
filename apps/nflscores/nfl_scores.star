@@ -96,10 +96,6 @@ def main(config):
 
     # Keep cold downloads within the render budget and rotate through every
     # game across refreshes instead of rendering frames beyond the 15s cap.
-    page_size = max(1, min(3, 15 // max(1, int(rotationSpeed))))
-    if len(scores) > page_size:
-        start = (now.unix // 60 * page_size) % len(scores)
-        scores = (scores + scores)[start:start + page_size]
     if len(scores) > 0:
         for i, s in enumerate(scores):
             gameStatus = s["status"]["type"]["state"]
@@ -493,7 +489,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
-            max_age = 180,
+            max_age = max(180, len(renderCategory) * int(rotationSpeed) + 60),
             show_full_animation = len(renderCategory) > 1,
             child = render.Column(
                 children = [
@@ -843,19 +839,18 @@ def get_schema():
 
 def get_scores(urls, team):
     allscores = []
-    for i, s in urls.items():
-        data = get_cachable_data(s)
-        decodedata = json.decode(data)
-        allscores.extend(decodedata["events"])
-        if team != "all" and team != "":
-            newScores = []
-            for _, s in enumerate(allscores):
-                home = s["competitions"][0]["competitors"][0]["team"]["abbreviation"]
-                away = s["competitions"][0]["competitors"][1]["team"]["abbreviation"]
-                if home == team or away == team:
-                    newScores.append(s)
-            allscores = newScores
-        all([i, allscores])
+    for url in urls.values():
+        for daily_url in scoreboard_urls(url):
+            allscores.extend(json.decode(get_cachable_data(daily_url))["events"])
+    allscores = ordered_scores(allscores)
+    if team != "all" and team != "":
+        newScores = []
+        for _, s in enumerate(allscores):
+            home = s["competitions"][0]["competitors"][0]["team"]["abbreviation"]
+            away = s["competitions"][0]["competitors"][1]["team"]["abbreviation"]
+            if home == team or away == team:
+                newScores.append(s)
+        allscores = newScores
     return allscores
 
 def get_odds(theOdds, theOU, team, homeaway):
@@ -980,3 +975,29 @@ def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
         fail("request to %s failed with status code: %d - %s" % (url, res.status_code, res.body()))
 
     return res.body()
+
+# Niblet: complete, stable score sequences; ESPN accepts individual dates.
+def scoreboard_urls(url):
+    if "dates=" not in url:
+        return [url.strip()]
+    before, after = url.split("dates=", 1)
+    parts = after.split("&", 1)
+    dates = parts[0].split("-")
+    if len(dates) == 1:
+        return [url]
+    start = time.parse_time(dates[0], format = "20060102")
+    end = time.parse_time(dates[1], format = "20060102")
+    days = (end.unix - start.unix) // 86400 + 1
+    if days < 1 or days > 32:
+        fail("Scoreboard date window must be between 1 and 32 days")
+    suffix = "&" + parts[1] if len(parts) > 1 else ""
+    return [before + "dates=" + (start + time.parse_duration("%dh" % (day * 24))).format("20060102") + suffix for day in range(days)]
+
+def ordered_scores(scores):
+    unique = {}
+    for score in scores:
+        unique[score["id"]] = score
+    return sorted(unique.values(), key = score_order)
+
+def score_order(score):
+    return (score.get("date", ""), score["id"])
