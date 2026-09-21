@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Support
 
 For an app bug, open an issue in this repository with the app directory, expected and actual behavior, Pixlet version, and sanitized reproduction steps. Do not include secrets or private configuration.

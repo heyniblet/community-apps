@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Contribution guide
 
 The active guide for this fork is [CONTRIBUTING.md](../CONTRIBUTING.md). Original authors can follow [Updating your app](UPDATING_YOUR_APP.md).

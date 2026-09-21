@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Updating your app
 
 Find your app under `apps/`. Read its current source and maintenance notes before applying an older upstream version: this fork may contain fixes or changes to configuration and providers.

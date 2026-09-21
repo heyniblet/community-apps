@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Niblet Community Apps
 
 A downstream collection of Pixlet apps from [Tronbyt Apps](https://github.com/tronbyt/apps), which originated in Tidbyt's community repository. Original developers retain their authorship and applicable rights. Niblet maintenance is credited separately to [edwin-page](https://github.com/edwin-page).

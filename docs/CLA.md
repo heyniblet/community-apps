@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 > Historical document retained from upstream. This agreement names Tidbyt and is not the agreement for new submissions to this fork. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the active process. The historical text below is unchanged.
 
 # Tidbyt Individual Contributor License Agreement

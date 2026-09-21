@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Contributing to Niblet Community Apps
 
 App authors and other contributors are welcome. Original authorship and downstream maintenance are separate: updating an app does not make you the author of its original code.

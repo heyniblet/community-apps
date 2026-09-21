@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Security reports
 
 Send sensitive reports to support@heyniblet.com with subject "Community Apps security report". Include affected files or commits, impact, and a minimal reproduction using synthetic data where possible.

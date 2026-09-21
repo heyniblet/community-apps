@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Downstream history and maintenance
 
 ## What changed
@@ -37,3 +39,5 @@ Future upstream imports should preserve upstream-authored commits, identify down
 After the initial local migration, remote main advanced to `9570da452f26098351f18243b4b499991e91c69a`. Its two new commits, covering sports playback and the Niblet CLI v0.54.12 CI pin, were preserved and reattributed to Edwin with identical trees and messages. The documentation was reapplied on top. The mapping now records 106 rewritten downstream commits. The pre-publication remote head is backed up locally as `local/pre-publish-main-20260921`.
 
 The user authorized publishing this history replacement to main. Publication uses an explicit lease against the inspected remote head so that a concurrent update cannot be overwritten. The earlier local-only statement above describes the initial migration stage. Existing commit pins and collaborators' branches still need to be reconciled with the published history when used.
+
+Publication completed at `e6ec4571dda843a441cf1aebf0c3114fd4c42f9b`. The guarded replacement succeeded and the remote head was verified. GitHub CI subsequently failed on the existing AC:NH Villager render-time check; see the [follow-up review](UPSTREAM_REVIEW_2026-09-21.md).

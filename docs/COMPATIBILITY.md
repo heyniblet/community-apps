@@ -1,3 +1,5 @@
+> Niblet documentation changes maintained by [edwin-page](https://github.com/edwin-page). Original upstream authorship and applicable notices are preserved.
+
 # Compatibility and known differences
 
 The aim is portable Pixlet app source with platform-specific deployment policy kept separately. The current fork has known behavior and configuration differences. Do not replace an installed upstream app assuming its saved configuration will work unchanged.
