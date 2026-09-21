@@ -9,16 +9,16 @@ import time
 root = Path(__file__).resolve().parents[1]
 runtime = str(Path(sys.argv[1]).resolve())
 event = json.loads((root / 'tests/ncaaf_event.json').read_text())
-source = (root / 'apps/ncaafscores/ncaaf_scores.star').read_text()
-source = source.replace('def get_cachable_data(', 'def original_get_cachable_data(')
-source += '''
+fixture = '''
 load("pixel.png", TEST_LOGO = "file")
 FIXTURE = json.decode(%s)
+def get_logoType(team, logo = None):
+    return TEST_LOGO.readall()
 def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
     if "/scoreboard" not in url:
         return TEST_LOGO.readall()
     games = []
-    for i in range(300):
+    for i in range(GAME_COUNT):
         game = dict(FIXTURE)
         game["id"] = str(1000 + i)
         competition = dict(game["competitions"][0])
@@ -32,16 +32,37 @@ def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
     (tmp/'pixel.png').write_bytes((root/'apps/nhlnextgame/images/ana.png').read_bytes())
-    (tmp/'scores.star').write_text(source)
-    for speed, style in ((5, "colors"), (15, "colors"), (15, "retro"), (15, "stadium")):
-        started = time.monotonic()
-        subprocess.run([runtime, 'render', str(tmp/'scores.star'), f'rotationSpeed={speed}', f'displayType={style}',
-                        '--output', str(tmp/'scores.webp'), '--metadata-output', str(tmp/'metadata.json'),
-                        '--timeout', '20s', '--silent'], check=True)
-        metadata = json.loads((tmp/'metadata.json').read_text())
-        assert metadata['show_full_animation']
-        assert metadata['frame_count'] == 300, metadata
-        assert metadata['animation_duration_millis'] == 300 * speed * 1000, metadata
-        size = (tmp/'scores.webp').stat().st_size
-        assert size <= 2 * 1024 * 1024, size
-        print(f'300 games x {speed}s ({style}): {size} bytes, {time.monotonic()-started:.2f}s render; complete')
+    for app, count in (
+        ("nflscores", 16), ("ncaafscores", 300),
+        *((name, 16) for name in (
+            "mlbscores", "nbascores", "wnbascores", "nhlscores",
+            "ncaamscores", "ncaawscores", "ncaabscores", "mlsscores",
+            "eplscores", "cflscores", "mhkyscores", "wbcscores",
+            "uflscores", "xflscores", "soccermens", "soccerwomens",
+        )),
+    ):
+        source = next((root / 'apps' / app).glob('*.star')).read_text()
+        source = source.replace('def get_cachable_data(', 'def original_get_cachable_data(')
+        source = source.replace('def get_logoType(', 'def original_get_logoType(')
+        if app in ("soccermens", "soccerwomens"):
+            # Competition labels are external metadata, not part of playback.
+            source = source.replace('json.decode(http.get(url = ABBR_URL, ttl_seconds = COMPS_TTL).body())',
+                                    '{DEFAULT_LEAGUE: "TEST"}')
+            source = source.replace('def get_schema(', 'def original_get_schema(')
+        source += "\nGAME_COUNT = " + str(count) + "\n" + fixture
+        (tmp/'scores.star').write_text(source)
+        cases = ((5, "colors"), (15, "colors"), (15, "retro"), (15, "stadium"))
+        if app in ("soccermens", "soccerwomens"):
+            cases = ((1, "colors"), (3, "colors"))
+        for speed, style in cases:
+            started = time.monotonic()
+            subprocess.run([runtime, 'render', str(tmp/'scores.star'), f'rotationSpeed={speed}', f'displaySpeed={speed * 1000}', f'displayType={style}',
+                            '--output', str(tmp/'scores.webp'), '--metadata-output', str(tmp/'metadata.json'),
+                            '--timeout', '20s', '--silent'], check=True)
+            metadata = json.loads((tmp/'metadata.json').read_text())
+            assert metadata['show_full_animation']
+            assert metadata['frame_count'] == count, metadata
+            assert metadata['animation_duration_millis'] == count * speed * 1000, metadata
+            size = (tmp/'scores.webp').stat().st_size
+            assert size <= 2 * 1024 * 1024, size
+            print(f'{app}: {count} games x {speed}s ({style}): {size} bytes, {time.monotonic()-started:.2f}s render; complete')

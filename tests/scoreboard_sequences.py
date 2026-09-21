@@ -47,9 +47,11 @@ with tempfile.TemporaryDirectory() as directory:
         focus = ''
         if name not in ['soccermens','soccerwomens']:
             selected_call = invocation.replace('"all"', '"T"')
-            expected = '[str(i) for i in range(1,9)]' if name == 'nflscores' else '["1"]'
+            expected = '[str(i) for i in range(8,0,-1)]' if name == 'nflscores' else '["1"]'
             focus = '\n    if [s["id"] for s in '+selected_call+'] != '+expected+':\n        fail("team focus changed")\n'
-        source += '\ndef main(config):\n    scores = '+invocation+'\n    if [s["id"] for s in scores] != [str(i) for i in range(1,9)] or not scores[-1].get("updated"):\n        fail("games missing, duplicated, out of order, or stale")\n'+calendar+focus+'    return [render.Root(child=render.Text("OK"))]\n'
+        order = '[str(i) for i in range(8,0,-1)]' if name == 'nflscores' else '[str(i) for i in range(1,9)]'
+        updated = '0' if name == 'nflscores' else '-1'
+        source += '\ndef main(config):\n    scores = '+invocation+'\n    if [s["id"] for s in scores] != '+order+' or not scores['+updated+'].get("updated"):\n        fail("games missing, duplicated, out of order, or stale")\n'+calendar+focus+'    return [render.Root(child=render.Text("OK"))]\n'
         path=tmp/(name+'.star'); path.write_text(source)
         subprocess.run([runtime,'render',str(path),'--output',str(tmp/'test.webp'),'--silent'],check=True)
 print('18 score apps: complete ordered games, deduplication and calendar windows passed')

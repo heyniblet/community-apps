@@ -520,6 +520,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
+            frame_keys = json.encode([str(score["id"]) for score in scores]) if len(scores) > 1 else "",
             max_age = max(180, len(renderCategory) * int(rotationSpeed) + 60),
             show_full_animation = len(renderCategory) > 1,
             child = render.Column(

@@ -94,8 +94,7 @@ def main(config):
     selectedTeam = config.get("selectedTeam", "all")
     scores = get_scores(league, selectedTeam)
 
-    # Keep cold downloads within the render budget and rotate through every
-    # game across refreshes instead of rendering frames beyond the 15s cap.
+    # Render the entire feed; card duration does not control refresh cadence.
     if len(scores) > 0:
         for i, s in enumerate(scores):
             gameStatus = s["status"]["type"]["state"]
@@ -489,6 +488,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
+            frame_keys = json.encode([str(score["id"]) for score in scores]) if len(scores) > 1 else "",
             max_age = max(180, len(renderCategory) * int(rotationSpeed) + 60),
             show_full_animation = len(renderCategory) > 1,
             child = render.Column(
@@ -997,7 +997,6 @@ def ordered_scores(scores):
     unique = {}
     for score in scores:
         unique[score["id"]] = score
-    return sorted(unique.values(), key = score_order)
 
-def score_order(score):
-    return (score.get("date", ""), score["id"])
+    # Preserve ESPN feed order, including when a duplicate updates a game.
+    return unique.values()

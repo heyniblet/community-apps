@@ -489,6 +489,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
+            frame_keys = json.encode([str(score["id"]) for score in scores]) if len(scores) > 1 else "",
             show_full_animation = True,
             child = render.Column(
                 children = [

@@ -314,11 +314,11 @@ def main(config):
                 gameTime = s["status"]["type"]["shortDetail"]
                 gameName = s["status"]["type"]["name"]
                 checkSeries = competition.get("series", "NO")
-                checkNotes = competition.get("notes", "NO")
+                checkNotes = competition.get("notes", [])
                 if checkSeries != "NO":
                     seriesSummary = competition["series"]["summary"]
                     gameTime = seriesSummary.replace("series ", "")
-                if checkNotes != "NO" and checkSeries == "NO":
+                if checkNotes and checkSeries == "NO":
                     gameHeadline = competition["notes"][0]["headline"]
                     if gameHeadline.find(" - ") > 0:
                         gameNoteArray = gameHeadline.split(" - ")
@@ -612,6 +612,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
+            frame_keys = json.encode([str(score["id"]) for score in scores]) if len(scores) > 1 else "",
             show_full_animation = True,
             child = render.Column(
                 children = [

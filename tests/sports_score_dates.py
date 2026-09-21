@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 for item in events:
                     item["date"] = (day + timedelta(days=offset)).isoformat() + "T12:00:00Z"
                 fixtures["limit=100&dates=" + (day + timedelta(days=offset)).strftime("%Y%m%d")] = events
-            expected = ["next"] if league == "mlb" else ["previous", "next"]
+            expected = ["previous", "next"]
             history = ["6"] if league == "mlb" else [str(n) for n in range(-1, 7)]
             checks = f'''
 FIXTURES = json.decode({json.dumps(json.dumps(fixtures))})

@@ -491,6 +491,7 @@ def main(config):
 
         return render.Root(
             delay = int(rotationSpeed) * 1000,
+            frame_keys = json.encode([str(score["id"]) for score in scores]) if len(scores) > 1 else "",
             max_age = max(180, len(renderCategory) * int(rotationSpeed) + 60),
             show_full_animation = len(renderCategory) > 1,
             child = render.Column(
@@ -866,9 +867,7 @@ def select_team_scores(scores, team):
 
     if live:
         return live[:1]
-    if upcoming:
-        return upcoming[:1]
-    return completed[-1:]
+    return completed[-1:] + upcoming[:1]
 
 def get_odds(theOdds, theOU, team, homeaway):
     theOddsarray = theOdds.split(" ")
