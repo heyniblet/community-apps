@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("http.star", "http")
 load("images/canvas_logo.png", CANVAS_LOGO_ASSET = "file")
 load("random.star", "random")

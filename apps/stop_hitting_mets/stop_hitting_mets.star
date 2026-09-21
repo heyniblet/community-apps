@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 # Copyright 2023 Google LLC
 
 # Licensed under the Apache License, Version 2.0 (the "License");

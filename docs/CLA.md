@@ -1,3 +1,5 @@
+> Historical document retained from upstream. This agreement names Tidbyt and is not the agreement for new submissions to this fork. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the active process. The historical text below is unchanged.
+
 # Tidbyt Individual Contributor License Agreement
 
 To clarify the intellectual property license granted with Contributions from

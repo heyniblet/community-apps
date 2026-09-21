@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See readme.md for maintenance and compatibility notes.
+
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("images/img_bike_src.jpg", IMG_BIKE_SRC_ASSET = "file")

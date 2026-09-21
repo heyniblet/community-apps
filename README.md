@@ -1,66 +1,25 @@
-# Tronbyt-Apps (formerly Tidbyt's Community repo)
+# Niblet Community Apps
 
-> Niblet downstream note (2026-09-05): this checkout is the
-> `heyniblet/community-apps` source fork; `tronbyt/apps` remains upstream.
-> Niblet catalog policy, source pins, credentials review, and installability
-> belong to the separate `catalog-apps` repository. Upstream publishing guides
-> below do not describe automatic Niblet approval. Original app READMEs,
-> attribution, and historical screenshots are retained; some upstream media
-> targets are missing and are not evidence of current app functionality.
+A downstream collection of Pixlet apps from [Tronbyt Apps](https://github.com/tronbyt/apps), which originated in Tidbyt's community repository. Original developers retain their authorship and applicable rights. Niblet maintenance is credited separately to [edwin-page](https://github.com/edwin-page).
 
-[![Docs](https://img.shields.io/badge/docs-tidbyt.dev-blue?style=flat-square)](https://tidbyt.dev)
-[![Discourse](https://img.shields.io/discourse/status?server=https%3A%2F%2Fdiscuss.tidbyt.com&style=flat-square)](https://discuss.tidbyt.com/)
-[![Discord Server](https://img.shields.io/discord/928484660785336380?style=flat-square)](https://discord.gg/rsCvHFsGfX)
+## Update or contribute an app
 
----
+Original app authors are welcome to update their apps here. Find your directory in `apps/`, read its README and current source, and submit a focused pull request against `main`. Link your original contribution if your account has changed. See [CONTRIBUTING.md](CONTRIBUTING.md) and [Updating your app](docs/UPDATING_YOUR_APP.md).
 
-### **Discover, explore, and install hundreds of apps!**
+For new apps, use `pixlet create apps/<appname>`. Develop with `pixlet serve apps/<appname>/<appname>.star`, using the generated filename. Preserve app IDs, configuration meanings, original credits, and license notices when updating existing apps.
 
-**[🎯 View the Current Apps →](https://tronbyt.github.io/apps/)**
+## Maintenance and compatibility
 
----
+Our downstream changes include API repairs, rendering and animation improvements, preview and manifest updates, and configuration changes for Niblet Cloud. Some configuration changes require migration or restoration of compatibility. This fork is not yet verified as interchangeable with upstream for every app.
 
-Tronbyt-Apps is a hard fork of the Tidbyt's Community repo. These apps have been developed by the [Tidbyt community][3] 🚀
-This exists because the Tidbyt folks have stopped merging pull requests since their acquisition by Modal. Since the fork, many apps have been improved, fixed, and added. For example, many apps now support 2x displays (128x64) or take advantage of new pixlet features like internationalization.
+Read the [change summary](docs/MAINTENANCE.md), [known compatibility differences](docs/COMPATIBILITY.md), and the maintenance section in each changed app's README before replacing an installed version. A sample image or successful schema check does not establish working live integration.
 
-This repo is for publishing apps to all Tronbyt (formerly Tidbyt) users. Interested in developing apps? Check out [Pixlet][2] and follow the [Hello, World!][4] tutorial. When your app is ready to publish, follow our guide below.
+This repository contains app source. Niblet catalog policy, source pins, credentials review, and rollout belong to the separate `catalog-apps` repository. CI checks changed apps on pull requests and main using the pinned Niblet CLI runtime. Main publishes a checksummed `source-<commit>` snapshot after validation; the catalog must explicitly pin and review it before activation. Merging source here does not automatically deploy it. Portable improvements can also be submitted to Tronbyt through its own contribution process.
 
-![Banner Image](docs/assets/banner.jpg)
+## Credits, licenses, and help
 
-📸 [Fuzzy Clock](apps/fuzzyclock/fuzzy_clock.star) by [Max Timkovich][5], photographed by [Tidbyt][1].
+The root [Apache License 2.0](LICENSE) applies subject to app-specific licenses and notices. Check individual app directories and asset provenance before reuse. Retain original copyright, license, and attribution notices; mark modified files. Inactivity does not transfer an author's rights or grant control of their repository.
 
-## Quick Start
+See [support](docs/SUPPORT.md), [private security reporting](docs/SECURITY.md), and the [code of conduct](docs/CODE_OF_CONDUCT.md). The historical Tidbyt CLA is retained for context, not presented as the agreement for new submissions to this fork.
 
-You should really read our [contributions guide](docs/CONTRIBUTING.md), our guide on [Publishing Apps][6], and the section below before diving in. But if you just want to go for it, run the following to generate all the code you need:
-
-```
-pixlet create
-```
-
-Before submission, run the following to ensure your app is ready to publish:
-
-```
-pixlet check <your app>.star
-```
-
-## Frequently Asked Questions
-
-Confused by the linter? Want to know where your app is in the release process? Checkout our [FAQ](https://tidbyt.dev/docs/publish/FAQ).
-
-## Contributing Changes
-
-First off, we're over the moon that you're here and want to share what you've been working on with the broader Tronbyt user base 🎉.
-
-## Thanks
-
-[1]: https://tidbyt.com
-[2]: https://github.com/tronbyt/pixlet
-[3]: https://discuss.tidbyt.com/
-[4]: https://github.com/tronbyt/pixlet#hello-world
-[5]: https://github.com/mtimkovich
-[6]: https://tidbyt.dev/docs/publish/publishing-apps
-
-
-## CI and delivery
-
-The Niblet fork checks changed apps on PRs and main with pinned upstream Pixlet. Main publishes a checksummed `source-<commit>` snapshot after validation; Catalog Apps must explicitly pin and review it before activation. Upstream metadata mutation and Pages publication remain restricted to the upstream owner. No private-source or deployment credentials are supplied to this public app-check workflow.
+The retained `docs/assets/banner.jpg` depicts Fuzzy Clock by [Max Timkovich](https://github.com/mtimkovich), photographed by [Tidbyt](https://tidbyt.com).

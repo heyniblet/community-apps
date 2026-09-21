@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("api.star", "fetch_icon", "fetch_server_data")
 load("games.star", "GAME_ICONS", "GAME_MIDDLE_RENDERERS")
 load("render.star", "render")

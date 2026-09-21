@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("color.star", "color")
 load("encoding/json.star", "json")
 load("http.star", "http")

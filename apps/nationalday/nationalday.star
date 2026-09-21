@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 Applet: National Day/Week/Month
 Summary: Day, Week & Month Calendar

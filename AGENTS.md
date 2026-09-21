@@ -55,4 +55,7 @@ pixlet render apps/<appname>/<app_name>.star key=value
 - [Modules](https://raw.githubusercontent.com/tronbyt/pixlet/refs/heads/main/docs/modules.md) | [Widgets](https://raw.githubusercontent.com/tronbyt/pixlet/refs/heads/main/docs/widgets.md) | [Animation](https://raw.githubusercontent.com/tronbyt/pixlet/refs/heads/main/docs/animation.md) | [Schema](https://raw.githubusercontent.com/tronbyt/pixlet/refs/heads/main/docs/schema/schema.md) | [Filters](https://raw.githubusercontent.com/tronbyt/pixlet/refs/heads/main/docs/filters.md)
 - **Fonts**: Run `pixlet community list-fonts` or view the [Fonts Reference](https://raw.githubusercontent.com/tronbyt/pixlet/refs/heads/main/docs/fonts.md).
 - **Icons**: Run `pixlet community list-icons`.
-```
+
+## Downstream maintenance responsibilities
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before editing apps. Retain original authors, licenses, and asset provenance. Identify downstream modifications in source and update the app README with behavior, migration requirements, and actual validation. Keep app IDs and existing settings compatible or document an explicit migration. Do not claim compatibility from schema checks or sample output alone. Do not invent owner approval or replace upstream authorship with a maintenance identity. Preserve upstream commits when importing fixes. Publishing rewritten history requires explicit authorization; this maintenance work stays local.

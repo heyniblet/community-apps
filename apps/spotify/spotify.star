@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """\r
 Spotify Now Playing - Ultimate Edition for Tronbyt/Tidbyt\r
 =========================================================\r

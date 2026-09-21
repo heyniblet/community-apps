@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """
 VBB Transport — live departures from any stop in the VBB (Berlin/Brandenburg)
 public-transport network. Data: https://v6.vbb.transport.rest

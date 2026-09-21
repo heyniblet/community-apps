@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("bsoup.star", "bsoup")
 load("http.star", "http")
 load("render.star", "render")

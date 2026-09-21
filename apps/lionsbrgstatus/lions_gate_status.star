@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("http.star", "http")
 load("images/lane_back.png", LANE_BACK_ASSET = "file")
 load("images/lane_closed.png", LANE_CLOSED_ASSET = "file")

@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 # Show the 3 most recent machines in your area
 
 # https://pinballmap.com/api/v1/locations/closest_by_lat_lon.json?lat=40.6781784;lon=-73.9441579;max_distance=10;send_all_within_distance=1;no_details=1

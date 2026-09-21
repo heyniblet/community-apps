@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See ReadMe.md for maintenance and compatibility notes.
+
 """
 Applet: Calendar Visualizer
 Summary: Spatial Calendar Visualizer

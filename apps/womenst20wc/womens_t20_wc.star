@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See readme.md for maintenance and compatibility notes.
+
 """
 Applet: Womens T20 WC
 Summary: Current scores and match status

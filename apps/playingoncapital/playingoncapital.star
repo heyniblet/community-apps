@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 #Shows current song being played on Capital Radio 604.
 #
 #by Craig J. Johnston

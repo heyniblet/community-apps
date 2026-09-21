@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 load("encoding/base64.star", "base64")
 load("http.star", "http")
 load("images/home_assistant.svg", HA_ICON_ASSET = "file")

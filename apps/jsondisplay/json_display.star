@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.MD for maintenance and compatibility notes.
+
 """
 Applet: Json Display
 Summary: Displays simple json data

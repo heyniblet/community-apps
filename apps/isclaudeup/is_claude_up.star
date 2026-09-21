@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """IsClaudeUp — Live Anthropic/Claude.ai service status on your Tidbyt."""
 
 load("encoding/json.star", "json")

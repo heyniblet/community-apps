@@ -1,3 +1,7 @@
+# Niblet downstream modifications; maintained by @edwin-page.
+# Original author and license notices are retained below.
+# See README.md for maintenance and compatibility notes.
+
 """OK Mesonet - current conditions for one Oklahoma Mesonet station.
 
 Pure parse/format logic lives in mesonet.star (loaded by the tests too);
