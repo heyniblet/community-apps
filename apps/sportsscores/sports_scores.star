@@ -500,6 +500,7 @@ def adjust_gametime(gametime_raw, config):
 
 def get_mlbgames(today_str):
     start_date = today_str
+    end_date = today_str
 
     #start_date = "2021-06-10"   #tested using 2021-06-06 and 2021-06-10
     #end_date = "2021-06-10"     #tested using 2021-06-06 and 2021-06-10
