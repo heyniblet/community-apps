@@ -9,6 +9,17 @@ import time
 root = Path(__file__).resolve().parents[1]
 runtime = str(Path(sys.argv[1]).resolve())
 event = json.loads((root / 'tests/ncaaf_event.json').read_text())
+
+def chunks(path):
+    data = path.read_bytes()
+    offset = 12
+    found = set()
+    while offset + 8 <= len(data):
+        found.add(data[offset:offset+4])
+        size = int.from_bytes(data[offset+4:offset+8], 'little')
+        offset += 8 + size + size % 2
+    return found
+
 fixture = '''
 load("pixel.png", TEST_LOGO = "file")
 FIXTURE = json.decode(%s)
@@ -63,9 +74,18 @@ with tempfile.TemporaryDirectory() as directory:
             assert metadata['show_full_animation']
             assert metadata['frame_count'] == count, metadata
             assert metadata['animation_duration_millis'] == count * speed * 1000, metadata
+            assert (b"NBFC" in chunks(tmp/"scores.webp")) == ("frame_keys =" in source), app
             size = (tmp/'scores.webp').stat().st_size
             assert size <= 2 * 1024 * 1024, size
             print(f'{app}: {count} games x {speed}s ({style}): {size} bytes, {time.monotonic()-started:.2f}s render; complete')
+
+        if "frame_keys =" in source:
+            subprocess.run([runtime, 'render', str(tmp/'scores.star'), 'displayTop=time',
+                            '--output', str(tmp/'scores.webp'), '--metadata-output', str(tmp/'metadata.json'),
+                            '--timeout', '20s', '--silent'], check=True, capture_output=True)
+            metadata = json.loads((tmp/'metadata.json').read_text())
+            assert metadata['frame_count'] == count and metadata['show_full_animation'], app
+            assert b"NBFC" not in chunks(tmp/'scores.webp'), app
 
         # ESPN can omit optional fields or return null list entries.
         for state, odds in (("pre", None), ("pre", []), ("pre", [None]),
