@@ -17,3 +17,8 @@ Plays every game returned by ESPN in feed order, matching the original Lunchbox 
 Scoreboard responses are cached for 60 seconds. The hosting scheduler controls refresh frequency independently of card speed and total playback duration. Content expiry allows enough time to finish the sequence.
 
 ![NFL Scores for Tidbyt](screenshot.png)
+
+
+### September 21 score-data resilience
+
+Edwin adapted the missing-odds and series-summary fixes from [Luke Solomon’s upstream change](https://github.com/tronbyt/apps/commit/edf5e1f5cb7ff319e8d805ae6a6f7325b1a51cf2) across the score apps. Missing optional odds, series summaries, or notes no longer abort playback. Unavailable odds stay blank; scores and final status remain visible. Existing settings, game ordering, and card timing are preserved. Offline missing-field and full-sequence renders are covered by `tests/sports_playback.py`; this does not certify provider availability or physical display playback.

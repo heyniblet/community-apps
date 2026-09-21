@@ -275,22 +275,15 @@ def main(config):
                 else:
                     gameTime = convertedTime.format("3:04 PM")
                 if pregameDisplay == "odds":
-                    checkOdds = competition.get("odds", "NO")
-                    if checkOdds != "NO":
-                        checkOU = competition["odds"][0].get("overUnder", "NO")
-                        if checkOdds != "NO":
-                            theOdds = competition["odds"][0]["details"]
-                            if checkOU == "NO":
-                                theOU = ""
-                            else:
-                                theOU = competition["odds"][0]["overUnder"]
-                            homeScore = get_odds(theOdds, str(theOU), home, "home")
-                            awayScore = get_odds(theOdds, str(theOU), away, "away")
-                    else:
-                        homeScore = ""
-                        awayScore = ""
+                    oddsList = competition.get("odds") or []
+                    theOdds = (oddsList[0] or {}) if oddsList else {}
+                    if theOdds.get("details"):
+                        total = theOdds.get("overUnder")
+                        total = "" if total == None else str(total)
+                        homeScore = get_odds(theOdds["details"], total, home, "home")
+                        awayScore = get_odds(theOdds["details"], total, away, "away")
                 elif pregameDisplay == "record":
-                    checkSeries = competition.get("series", "NO")
+                    checkSeries = competition.get("series") or "NO"
                     if checkSeries == "NO":
                         homeCompetitor = competition["competitors"][0]
                         checkRecord = homeCompetitor.get("records", "NO")
@@ -318,13 +311,13 @@ def main(config):
             if gameStatus == "post":
                 gameTime = s["status"]["type"]["shortDetail"]
                 gameName = s["status"]["type"]["name"]
-                checkSeries = competition.get("series", "NO")
-                checkNotes = len(competition["notes"])
+                checkSeries = competition.get("series") or "NO"
+                checkNotes = len(competition.get("notes") or [])
                 if checkSeries != "NO":
-                    seriesSummary = competition["series"]["summary"]
+                    seriesSummary = competition["series"].get("summary") or gameTime
                     gameTime = seriesSummary.replace("series ", "")
                 if checkNotes > 0 and checkSeries == "NO":
-                    gameHeadline = competition["notes"][0]["headline"]
+                    gameHeadline = (competition["notes"][0] or {}).get("headline", "")
                     if gameHeadline.find(" - ") > 0:
                         gameNoteArray = gameHeadline.split(" - ")
                         gameTime = str(gameNoteArray[1]) + " / " + gameTime
