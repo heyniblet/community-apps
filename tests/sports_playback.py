@@ -66,3 +66,20 @@ with tempfile.TemporaryDirectory() as directory:
             size = (tmp/'scores.webp').stat().st_size
             assert size <= 2 * 1024 * 1024, size
             print(f'{app}: {count} games x {speed}s ({style}): {size} bytes, {time.monotonic()-started:.2f}s render; complete')
+
+        # ESPN can omit optional fields or return null list entries.
+        for state, odds in (("pre", None), ("pre", []), ("pre", [None]),
+                            ("pre", [{"homeTeamOdds": {}, "awayTeamOdds": {}}]),
+                            ("post", None)):
+            incomplete = json.loads(json.dumps(event))
+            incomplete["status"]["type"].update(state=state, name="STATUS_FINAL" if state == "post" else "STATUS_SCHEDULED", shortDetail="Final" if state == "post" else "Scheduled")
+            competition = incomplete["competitions"][0]
+            competition.update(odds=odds, notes=None, series={"title": "Playoffs"} if state == "post" else None)
+            broken_source = source.replace(repr(json.dumps(event)), repr(json.dumps(incomplete)))
+            (tmp/'scores.star').write_text(broken_source)
+            subprocess.run([runtime, 'render', str(tmp/'scores.star'), 'pregameDisplay=odds',
+                            '--output', str(tmp/'scores.webp'), '--metadata-output', str(tmp/'metadata.json'),
+                            '--timeout', '20s', '--silent'], check=True, capture_output=True)
+            metadata = json.loads((tmp/'metadata.json').read_text())
+            assert metadata['frame_count'] == count, (app, state, odds, metadata)
+        print(f'{app}: null/empty odds, absent money lines, and missing series notes rendered')

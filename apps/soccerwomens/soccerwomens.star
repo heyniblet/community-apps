@@ -213,7 +213,7 @@ def main(config):
                     else:
                         gameTimeFmt = convertedTime.format("3:04PM")[:-1]
                     gameTime = gameTimeFmt
-                checkSeries = competition.get("series", "NO")
+                checkSeries = competition.get("series") or "NO"
                 checkRecord = homeCompetitor.get("records", "NO")
                 if checkRecord == "NO":
                     homeScore = ""
@@ -241,13 +241,13 @@ def main(config):
                     else:
                         gameTime = convertedTime.format("2 Jan ") + gameTime
                 gameName = s["status"]["type"]["name"]
-                checkSeries = competition.get("series", "NO")
-                checkNotes = len(competition["notes"])
-                if checkSeries != "NO":
-                    seriesNote = competition["notes"][0]["headline"].split(" - ")[0]
+                checkSeries = competition.get("series") or "NO"
+                checkNotes = len(competition.get("notes") or [])
+                if checkSeries != "NO" and checkNotes > 0:
+                    seriesNote = (competition["notes"][0] or {}).get("headline", "").split(" - ")[0]
                     gameTime = seriesNote
                 if checkNotes > 0 and checkSeries == "NO":
-                    gameHeadline = competition["notes"][0]["headline"]
+                    gameHeadline = (competition["notes"][0] or {}).get("headline", "")
                     if gameHeadline.find(" - ") > 0:
                         gameNoteArray = gameHeadline.split(" - ")
                         gameTime = str(gameNoteArray[1]) + " / " + gameTime
