@@ -3,10 +3,12 @@ permissions:
   contents: read
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a validated immutable candidate from main
+        type: boolean
+        default: false
 
 jobs:
   check:
@@ -46,7 +48,7 @@ jobs:
 
   publish:
     needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

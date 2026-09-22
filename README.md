@@ -18,7 +18,7 @@ Contributions to this version include API repairs, rendering and animation impro
 
 Read the [change summary](docs/MAINTENANCE.md), [known compatibility differences](docs/COMPATIBILITY.md), and the maintenance section in each changed app's README before replacing an installed version. A sample image or successful schema check does not establish working live integration.
 
-This repository contains app source. Niblet catalog policy, source pins, credentials review, and rollout belong to the separate `catalog-apps` repository. CI checks changed apps on pull requests and main using the pinned Niblet CLI runtime. Main publishes a checksummed `source-<commit>` snapshot after validation; the catalog must explicitly pin and review it before activation. Merging source here does not automatically deploy it. Portable improvements can also be submitted to Tronbyt through its own contribution process.
+This repository contains app source. Niblet catalog policy, source pins, credentials review, and rollout belong to the separate `catalog-apps` repository. Manually dispatched CI checks changed apps using the pinned Niblet CLI runtime. Dispatch `main.yml` on main with `-F publish=true` to publish a checksummed `source-<commit>` snapshot after validation; the catalog must explicitly pin and review it before activation. Merging source here does not automatically deploy it. Portable improvements can also be submitted to Tronbyt through its own contribution process.
 
 ## Credits, licenses, and help
 
