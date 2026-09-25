@@ -1,0 +1,8 @@
+id: national-championships
+name: National Championships
+summary: School logo, sport, and national title count
+desc: >
+  Shows a school's logo next to its name, with the sport at the top
+  and the number of national championships on the right. All fields
+  are configurable so it works for any school or sport.
+author: Mark
