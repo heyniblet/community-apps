@@ -1,6 +1,10 @@
 # mlb_score_patched.star
 # title: MLB Scoreboard (Photo Style • Bases Right • White-outlined filled bases • Centered counts)
 # description: Left = two team tiles (away/home). Right = bases + count. Pixlet 0.34.0
+#
+# Niblet downstream modification (2026-09-30): show a "No game" screen instead of
+# the built-in sample game, keep scheduled regular-season and postseason games
+# before their linescore is populated, and fix the Arizona Diamondbacks team ID.
 
 load("encoding/json.star", "json")
 load("http.star", "http")
@@ -178,7 +182,7 @@ TEAM_ID_BY_CODE = {
     "MIA": 146,
     "NYY": 147,
     "MIL": 158,
-    "ARI": 159,
+    "ARI": 109,
 }
 
 TEAM_BG = {
@@ -616,20 +620,29 @@ def has_only_mlb_opponents(game, mlb_team_ids):
     home_team = home_info.get("team")
     return is_mlb_team(away_team, mlb_team_ids) and is_mlb_team(home_team, mlb_team_ids)
 
-def game_has_team_code(game, team_code):
+def game_has_team_id(game, team_id):
     if type(game) != "dict":
         return False
-    code = as_str(team_code, "")
-    if code == "":
-        return True
     teams = game.get("teams")
     if type(teams) != "dict":
         return False
-    away_info = teams.get("away")
-    home_info = teams.get("home")
-    away_team = away_info.get("team") if type(away_info) == "dict" else None
-    home_team = home_info.get("team") if type(home_info) == "dict" else None
-    return lookup_team_code(away_team) == code or lookup_team_code(home_team) == code
+    for side in ["away", "home"]:
+        info = teams.get(side)
+        team = info.get("team") if type(info) == "dict" else None
+        if type(team) == "dict" and as_int(team.get("id"), 0) == team_id:
+            return True
+    return False
+
+# Regular season and postseason games are always tracked, so keep them before
+# their linescore is populated. Spring training and exhibitions still need one.
+TRACKED_GAME_TYPES = ["R", "F", "D", "L", "W"]
+
+def is_tracked_game(game):
+    if type(game) != "dict":
+        return False
+    if as_str(game.get("gameType"), "") in TRACKED_GAME_TYPES:
+        return True
+    return has_tracked_linescore(game)
 
 def game_sort_key(game):
     if type(game) != "dict":
@@ -677,7 +690,7 @@ def is_better_game(candidate, best):
         return c_key > b_key
     return c_key < b_key
 
-def select_game_info(games, include_exhibition_opponents, mlb_team_ids, selected_team_code):
+def select_game_info(games, include_exhibition_opponents, mlb_team_ids, selected_team_id):
     if type(games) != "list" or len(games) == 0:
         return None
 
@@ -687,11 +700,11 @@ def select_game_info(games, include_exhibition_opponents, mlb_team_ids, selected
             continue
         if not is_public_facing_game(g):
             continue
-        if not has_tracked_linescore(g):
+        if not is_tracked_game(g):
             continue
         if not include_exhibition_opponents and not has_only_mlb_opponents(g, mlb_team_ids):
             continue
-        if not game_has_team_code(g, selected_team_code):
+        if not game_has_team_id(g, selected_team_id):
             continue
         insert_at = len(ordered)
         g_key = game_sort_key(g)
@@ -989,6 +1002,7 @@ def right_panel(on1, on2, on3, inning, top_half, balls, strikes, outs, is_final,
 # ----------------------- Fetch + cache (no try/except) ------------------------
 def get_game_data(config):
     d = default_game()
+    d["team_code"] = TEAM_BY_ID[111]
     espn_teams = get_espn_team_map()
     mlb_team_ids = get_mlb_team_ids()
     include_exhibition_opponents = config.bool("include_exhibition_opponents", False)
@@ -997,6 +1011,7 @@ def get_game_data(config):
     team_code = as_str(config.get("team"), "")
     if team_code in TEAM_ID_BY_CODE:
         team_id = TEAM_ID_BY_CODE[team_code]
+        d["team_code"] = team_code
 
     schedule_url = "https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=" + str(team_id) + "&hydrate=linescore"
 
@@ -1025,7 +1040,7 @@ def get_game_data(config):
     if type(day0) != "dict":
         return d
 
-    game_info = select_game_info(day0.get("games"), include_exhibition_opponents, mlb_team_ids, team_code)
+    game_info = select_game_info(day0.get("games"), include_exhibition_opponents, mlb_team_ids, team_id)
     if type(game_info) != "dict":
         return d
 
@@ -1101,6 +1116,12 @@ def main(config):
         print("--- APPLET HIDDEN FROM ROTATION (NO GAME TODAY) ---")
         return []
 
+    # Never show the sample game as if it were live data.
+    if not d["fetch_ok"]:
+        return []
+    if not d["has_game"]:
+        return no_game_root(d["team_code"])
+
     # Optional manual overrides
     for k in ["away", "home", "away_mark", "home_mark", "inning", "away_bg", "home_bg"]:
         v = config.get(k)
@@ -1148,6 +1169,40 @@ def main(config):
                 main_align = "start",
                 cross_align = "start",
             ),
+        ),
+    )
+
+def no_game_root(team_code):
+    bg = team_bg_for(team_code, "")
+    fg = team_font_color(bg)
+    return render.Root(
+        child = render.Row(
+            children = [
+                render.Box(
+                    width = 36,
+                    color = bg,
+                    child = render.Column(
+                        children = [
+                            team_logo_sprite(team_code, fg, ""),
+                            spacer_h(2),
+                            render.Text(team_code, font = "CG-pixel-3x5-mono", color = fg),
+                        ],
+                        main_align = "center",
+                        cross_align = "center",
+                    ),
+                ),
+                render.Box(
+                    width = 28,
+                    child = render.Column(
+                        children = [
+                            render.Text("No", font = "6x10-rounded"),
+                            render.Text("game", font = "6x10-rounded"),
+                        ],
+                        main_align = "center",
+                        cross_align = "center",
+                    ),
+                ),
+            ],
         ),
     )
 
