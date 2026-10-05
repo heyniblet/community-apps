@@ -18,9 +18,22 @@ class InputsOnly(ast.NodeTransformer):
             return self.visit(node.args[1])
         return self.generic_visit(node)
 
+def timezone_helper(source):
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_timezone_location":
+            return ast.dump(node)
+    return None
+
 for app in json.loads((root / "tests/timezone-migrations.json").read_text()):
     before = subprocess.check_output(["git", "show", BASE + ":" + app["source_path"]], cwd=root, text=True)
     after = (root / app["source_path"]).read_text()
+    # Apps whose logic was deliberately changed after the migration name the
+    # last revision that still matched; compare the migration against that
+    # revision and require the timezone helper to be unchanged since.
+    if "equivalence_ref" in app:
+        reviewed = subprocess.check_output(["git", "show", app["equivalence_ref"] + ":" + app["source_path"]], cwd=root, text=True)
+        assert timezone_helper(reviewed) == timezone_helper(after), app["app_id"] + " timezone helper changed"
+        after = reviewed
     if app["app_id"] in {"evcc", "shouldideploy"}:
         after = after.replace('load("time.star", "time")\n', '')
     if app["app_id"] == "retrograde-planet":
