@@ -889,9 +889,15 @@ def parse_trip(body, d, start, end):
             i = skip(d, i, wire)
     return route, assigned
 
-def parse_trip_update(body, d, start, end, target):
-    """Arrival at `target` for one trip, plus the trip's terminal stop."""
-    route, assigned, when, last_stop = "", False, 0, ""
+def parse_trip_update(body, d, start, end, target, needle):
+    """Arrival at `target` for one trip, plus the trip's terminal stop.
+
+    Niblet downstream modification (2026-10-05): only the StopTimeUpdates that
+    can name `target` (they contain `needle`, its encoded stop_id field) and the
+    trailing ones needed for the terminal are decoded; the rest are skipped by
+    length. The result is the same as decoding every update in order."""
+    route, assigned, when = "", False, 0
+    updates = []
     i = start
     for _ in range(400):
         if i >= end:
@@ -904,46 +910,79 @@ def parse_trip_update(body, d, start, end, target):
             i = k
         elif field == 2 and wire == 2:
             i, k = rd_len(d, i)
-            stop, arrive, depart = parse_stop_time_update(body, d, i, k)
-            if stop:
-                last_stop = stop
-            if stop == target:
-                when = arrive if arrive > 0 else depart
+            updates.append((i, k))
+            if body.find(needle, i, k) >= 0:
+                stop, arrive, depart = parse_stop_time_update(body, d, i, k)
+                if stop == target:
+                    when = arrive if arrive > 0 else depart
             i = k
         else:
             i = skip(d, i, wire)
     if when <= 0:
         return None
+
+    # The terminal is the stop of the last update that names one.
+    last_stop = ""
+    for j in range(len(updates) - 1, -1, -1):
+        stop, _, _ = parse_stop_time_update(body, d, updates[j][0], updates[j][1])
+        if stop:
+            last_stop = stop
+            break
     return {"route": route, "t": when, "dest": last_stop, "assigned": assigned}
 
-def feed_arrivals(body, target):
-    """Every arrival at `target` in one feed, plus the feed's own timestamp.
+def rd_varint_at(body, i):
+    """rd_varint over the raw body without materialising it as a list."""
+    v, j = rd_varint(list(body[i:i + 10].elem_ords()), 0)
+    return v, i + j
+
+def skip_at(body, i, wire):
+    if wire == 0:
+        _, i = rd_varint_at(body, i)
+        return i
+    if wire == 2:
+        n, i = rd_varint_at(body, i)
+        return i + n
+    if wire == 5:
+        return i + 4
+    if wire == 1:
+        return i + 8
+    return i
+
+def feed_arrivals(body, targets):
+    """Every arrival at each of `targets` in one feed, plus the feed's own timestamp.
 
     Entities are prefiltered with a byte search for the encoded stop_id field
     (tag 0x22, length, id) so we only descend into the handful of trips that
-    actually call at this stop."""
-    d = list(body.elem_ords())
-    n = len(d)
+    actually call at this stop.
+
+    Niblet downstream modification (2026-10-05): the feed is walked once for
+    all targets, and only the header and matching entities are converted to
+    byte lists; the rest of the 0.2-1 MB body is never materialised. Results
+    are the same, in the same order, as one full pass per target."""
+    n = len(body)
 
     # chr() is only byte-safe below 128; 0x22 is the stop_id field tag and the
     # length is always 4-5, so both encode as single bytes. (ord() is NOT safe
-    # here - it UTF-8-decodes - which is why the reader uses elem_ords above.)
-    needle = chr(0x22) + chr(len(target)) + target
-    out = []
+    # here - it UTF-8-decodes - which is why the reader uses elem_ords.)
+    needles = [chr(0x22) + chr(len(target)) + target for target in targets]
+    out = [[] for _ in targets]
     feed_ts = 0
     i = 0
     for _ in range(4000):
         if i >= n:
             break
-        tag, i = rd_varint(d, i)
+        tag, i = rd_varint_at(body, i)
         field, wire = tag >> 3, tag & 7
         if field == 1 and wire == 2:
-            i, k = rd_len(d, i)
+            ln, i = rd_varint_at(body, i)
+            k = i + ln
             if k > n:
                 break
-            h = i
+            sub = body[i:k]
+            d = list(sub.elem_ords())
+            h = 0
             for _ in range(8):
-                if h >= k:
+                if h >= len(d):
                     break
                 htag, h = rd_varint(d, h)
                 if htag >> 3 == 3 and htag & 7 == 0:
@@ -952,27 +991,35 @@ def feed_arrivals(body, target):
                     h = skip(d, h, htag & 7)
             i = k
         elif field == 2 and wire == 2:
-            i, k = rd_len(d, i)
+            ln, i = rd_varint_at(body, i)
+            k = i + ln
             if k > n:
                 # Truncated response: stop rather than index past the end.
                 break
-            if body.find(needle, i, k) >= 0:
-                e = i
+            sub = None
+            d = None
+            for t in range(len(targets)):
+                if body.find(needles[t], i, k) < 0:
+                    continue
+                if d == None:
+                    sub = body[i:k]
+                    d = list(sub.elem_ords())
+                e = 0
                 for _ in range(12):
-                    if e >= k:
+                    if e >= len(d):
                         break
                     etag, e = rd_varint(d, e)
                     if etag >> 3 == 3 and etag & 7 == 2:
                         e, m = rd_len(d, e)
-                        got = parse_trip_update(body, d, e, m, target)
+                        got = parse_trip_update(sub, d, e, m, targets[t], needles[t])
                         if got:
-                            out.append(got)
+                            out[t].append(got)
                         e = m
                     else:
                         e = skip(d, e, etag & 7)
             i = k
         else:
-            i = skip(d, i, wire)
+            i = skip_at(body, i, wire)
     return out, feed_ts
 
 # ------------------------------------------------------------------ alerts
@@ -1419,12 +1466,13 @@ def main(config):
         body = resp.body()
         if not body or len(body) > 2 * 1024 * 1024:
             continue
-        for letter in letters:
-            found, ts = feed_arrivals(body, stop_id + letter)
+        found_by_letter, ts = feed_arrivals(body, [stop_id + letter for letter in letters])
+        for j in range(len(letters)):
+            found = found_by_letter[j]
             for f in found:
-                f["dir"] = letter
+                f["dir"] = letters[j]
             trains.extend(found)
-            feed_ts = max(feed_ts, ts)
+        feed_ts = max(feed_ts, ts)
 
     now = int(time.now().unix)
 

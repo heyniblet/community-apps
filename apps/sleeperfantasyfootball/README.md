@@ -9,3 +9,14 @@ Original authors and other contributors can follow [Updating your app](../../doc
 
 See [known compatibility differences](../../docs/COMPATIBILITY.md) and [maintenance history](../../docs/MAINTENANCE.md). These notes do not certify live integration or compatibility with every runtime. Earlier setup instructions below may describe the upstream version.
 <!-- community-maintenance:end -->
+
+## Niblet downstream changes (2026-10-05)
+
+The app no longer caches the selected user's id under a key made from the
+league id alone. `cache.*` entries are shared by every display running the
+app, so with a shared cache two members of one league would have seen the
+same member's matchup. The id is now read from the cached league users on each
+render, which needs no request. Output is unchanged without a shared cache: on
+2026-10-05, 15 renders (standings, scores for two members, ties, three teams
+per view, demo data) were byte-identical before and after. With a shared
+cache, the second member now sees their own matchup. No settings changed.

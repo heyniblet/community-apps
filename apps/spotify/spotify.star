@@ -687,17 +687,19 @@ def get_playback_info(access_token, token_cache_key, include_recent):
     # Try currently playing
     now_playing = fetch_currently_playing(access_token, token_cache_key)
 
+    # Niblet downstream modification (2026-10-05): do not also fetch /me/player.
+    # Its shuffle, repeat, device and volume fields are not drawn by any layout
+    # (render_status_icons is unused), so the extra Spotify call on every render
+    # cost quota without changing the image. fetch_player_state is kept for a
+    # layout that shows them.
     if now_playing and now_playing.get("is_playing"):
-        # Get additional player state for device/shuffle/repeat info
-        player = fetch_player_state(access_token, token_cache_key)
-        state = parse_playback_state(now_playing, player)
+        state = parse_playback_state(now_playing)
         if state:
             return state, True, None
 
     # Not playing - try paused state
     if now_playing and now_playing.get("item"):
-        player = fetch_player_state(access_token, token_cache_key)
-        state = parse_playback_state(now_playing, player)
+        state = parse_playback_state(now_playing)
         if state:
             state["is_playing"] = False
             return state, True, None

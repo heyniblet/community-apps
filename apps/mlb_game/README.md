@@ -20,7 +20,28 @@ colors and logos.
 
 No settings keys or saved values changed.
 
+## Niblet downstream changes (2026-10-05)
+
+- Team colours and scoreboard logos come from a constant table generated from
+  ESPN's MLB teams endpoint, and the active MLB team ids from the existing
+  `TEAM_BY_ID` table. The app no longer fetches and decodes the league-wide
+  ESPN scoreboard and the statsapi team list on every render; it makes the
+  schedule request plus the two logo requests.
+- Output is unchanged whenever the game's teams are on ESPN's current
+  scoreboard. When ESPN's scoreboard is still on the previous day (it rolled
+  over later than MLB's schedule on 2026-10-05), the old app fell back to the
+  built-in colour and the plain dark logo for those teams; it now always uses
+  the ESPN colour and scoreboard logo. Regenerate the table if ESPN changes a
+  team's colour or logo.
+
 ## Validation
+
+On 2026-10-05, all 30 team settings rendered byte-identical WebPs before and
+after the change from recorded MLB and ESPN responses for 2026-08-01 and
+2026-09-20 (30 games each) and for 2026-10-05 once ESPN's scoreboard covers
+that day. Against the live ESPN scoreboard, which still showed 2026-10-04, the
+four teams playing on 2026-10-05 changed as described above and the other 26
+were identical. Physical devices were not tested.
 
 On 2026-09-30 (Wild Card day, four games), `niblet check`, `niblet lint`, and
 `niblet format` passed with Niblet CLI v0.54.0. All 30 team settings rendered
