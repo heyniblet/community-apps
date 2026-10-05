@@ -3,10 +3,14 @@ Applet: Tetris Clock
 Summary: Falling block clock
 Description: Shows the current time by animating falling blocks. Highly customizable.
 Author: MarkGamed7794
+
+Niblet downstream modification (2026-10-05): piece paths come from a
+deterministic generator seeded from the displayed local time and settings
+instead of the random module, and frames past the 15 second animation limit
+are no longer built.
 """
 
 load("encoding/json.star", "json")
-load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -316,7 +320,16 @@ SUBSHAPES = {
     ],
 }
 
-def generateFinalPieces(subshape, offset, temp_grid):
+# Niblet: small linear congruential generator so the animation is a pure
+# function of the displayed local time and settings (no random module).
+RNG_MODULUS = 2147483648
+
+def rng_number(rng, lo, hi):
+    """Returns a deterministic integer in [lo, hi] and advances rng[0]."""
+    rng[0] = (rng[0] * 1103515245 + 12345) % RNG_MODULUS
+    return lo + (rng[0] >> 8) % (hi - lo + 1)
+
+def generateFinalPieces(subshape, offset, temp_grid, rng):
     # get final pieces and positions
     final_pieces = []
     for piece in subshape:
@@ -336,11 +349,11 @@ def generateFinalPieces(subshape, offset, temp_grid):
             place(temp_grid, temp_piece)
         else:
             new_subshape = SUBSHAPES[piece[0]]
-            final_pieces.extend(generateFinalPieces(new_subshape[random.number(0, len(new_subshape) - 1)], offset + piece[1], temp_grid))
+            final_pieces.extend(generateFinalPieces(new_subshape[rng_number(rng, 0, len(new_subshape) - 1)], offset + piece[1], temp_grid, rng))
     return final_pieces
 
-def generatePieceSequence(subshape, dropOffset, length, moveOdds):
-    final_pieces = generateFinalPieces(SUBSHAPES[subshape], 2, new_grid())
+def generatePieceSequence(subshape, dropOffset, length, moveOdds, rng):
+    final_pieces = generateFinalPieces(SUBSHAPES[subshape], 2, new_grid(), rng)
     temp_grid = new_grid()
     piece_sequences = []
     for piece in final_pieces:
@@ -348,24 +361,24 @@ def generatePieceSequence(subshape, dropOffset, length, moveOdds):
     for idx in range(0, len(final_pieces)):
         i = len(final_pieces) - idx - 1
         piece = final_pieces[i]
-        bias = random.number(1, 2)  # to mitigate movements that immediately get cancelled, the odds are weighted to 66/33 towards a random direction
+        bias = rng_number(rng, 1, 2)  # to mitigate movements that immediately get cancelled, the odds are weighted to 66/33 towards a random direction
         movements = []  # 0 = nothing, 1 = move left, 2 = move right, 3 = counterclockwise, 4 = clockwise
         unplace(temp_grid, piece)
         for movementNum in range((i + 1) * (length // len(final_pieces)) + dropOffset + INITIAL_DELAY):
             movementNum = movementNum
-            if (random.number(0, 99) < moveOdds):
+            if (rng_number(rng, 0, 99) < moveOdds):
                 # do a movement
                 # movements happen just after gravity, but since we're doing it backwards the gravity happens afterwards
                 movement = 0
-                movement_type = random.number(0, 1)  # 0 = movement, 1 = rotation
+                movement_type = rng_number(rng, 0, 1)  # 0 = movement, 1 = rotation
                 if (movement_type == 0):
                     # only mildly cursed
-                    if (random.number(0, 3) != 0):
+                    if (rng_number(rng, 0, 3) != 0):
                         movement = bias
                     else:
                         movement = 3 - bias
                 else:
-                    movement = random.number(3, 4)
+                    movement = rng_number(rng, 3, 4)
 
                 # we're "undoing" the movement, so this looks backwards
                 if (movement == 1):
@@ -474,21 +487,31 @@ def main(config):
 
     adjusted_hours = now.hour if TWENTY_FOUR_HOUR else ((now.hour - 1) % 12 + 1)
 
+    # Niblet: the same displayed minute and settings always give the same
+    # animation, so a render can be reused within the minute.
+    rng = [hash("|".join([
+        now.format("15:04"),
+        str(TWENTY_FOUR_HOUR),
+        str(LEADING_ZERO),
+        str(DIGIT_LENGTH),
+        str(MOVEMENT_ODDS),
+    ])) % RNG_MODULUS]
+
     #digits = [time_string[0], time_string[1], time_string[3], time_string[4]]
     if ((not LEADING_ZERO) and adjusted_hours < 10):
         DIGIT_OFFSETS = [8, 18, 25]
         sequences = [
-            generatePieceSequence(DIGIT_SHAPES[adjusted_hours % 10], (DIGIT_LENGTH * 1 // 20), DIGIT_LENGTH, MOVEMENT_ODDS),
-            generatePieceSequence(DIGIT_SHAPES[now.minute // 10], 0, DIGIT_LENGTH, MOVEMENT_ODDS),
-            generatePieceSequence(DIGIT_SHAPES[now.minute % 10], (DIGIT_LENGTH * 2 // 20), DIGIT_LENGTH, MOVEMENT_ODDS),
+            generatePieceSequence(DIGIT_SHAPES[adjusted_hours % 10], (DIGIT_LENGTH * 1 // 20), DIGIT_LENGTH, MOVEMENT_ODDS, rng),
+            generatePieceSequence(DIGIT_SHAPES[now.minute // 10], 0, DIGIT_LENGTH, MOVEMENT_ODDS, rng),
+            generatePieceSequence(DIGIT_SHAPES[now.minute % 10], (DIGIT_LENGTH * 2 // 20), DIGIT_LENGTH, MOVEMENT_ODDS, rng),
         ]
     else:
         DIGIT_OFFSETS = [1, 8, 18, 25]
         sequences = [
-            generatePieceSequence(DIGIT_SHAPES[adjusted_hours // 10], (DIGIT_LENGTH * 3 // 20), DIGIT_LENGTH, MOVEMENT_ODDS),
-            generatePieceSequence(DIGIT_SHAPES[adjusted_hours % 10], (DIGIT_LENGTH * 1 // 20), DIGIT_LENGTH, MOVEMENT_ODDS),
-            generatePieceSequence(DIGIT_SHAPES[now.minute // 10], 0, DIGIT_LENGTH, MOVEMENT_ODDS),
-            generatePieceSequence(DIGIT_SHAPES[now.minute % 10], (DIGIT_LENGTH * 2 // 20), DIGIT_LENGTH, MOVEMENT_ODDS),
+            generatePieceSequence(DIGIT_SHAPES[adjusted_hours // 10], (DIGIT_LENGTH * 3 // 20), DIGIT_LENGTH, MOVEMENT_ODDS, rng),
+            generatePieceSequence(DIGIT_SHAPES[adjusted_hours % 10], (DIGIT_LENGTH * 1 // 20), DIGIT_LENGTH, MOVEMENT_ODDS, rng),
+            generatePieceSequence(DIGIT_SHAPES[now.minute // 10], 0, DIGIT_LENGTH, MOVEMENT_ODDS, rng),
+            generatePieceSequence(DIGIT_SHAPES[now.minute % 10], (DIGIT_LENGTH * 2 // 20), DIGIT_LENGTH, MOVEMENT_ODDS, rng),
         ]
     frames = []
 
@@ -505,7 +528,9 @@ def main(config):
             )
             FADE_TABLE[i].append(rgb2hex(mixedCol))
 
-    for FRAME in range(FRAME_COUNT):
+    # Niblet: the runtime stops the animation at 15 seconds, so frames past
+    # that point were built and then dropped.
+    for FRAME in range(min(FRAME_COUNT, 15000 // (1000 // FRAME_RATE))):
         # prepare a temporary grid for rendering
         colourGrid = []
         for y in range(GRID_HEIGHT):
