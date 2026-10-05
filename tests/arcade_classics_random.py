@@ -1,18 +1,26 @@
-"""Run with: python3 tests/arcade_classics_random.py /path/to/niblet"""
+"""Run with: python3 tests/arcade_classics_random.py /path/to/niblet
+
+Random mode picks from a deterministic generator seeded by the five-minute
+slot, so the test walks several slots instead of seeding the random module.
+It also checks that two renders in one slot are byte-identical.
+"""
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 
+source = Path(__file__).resolve().parents[1] / "apps/arcadeclassics/arcade_classics.star"
+
 with tempfile.TemporaryDirectory() as temporary:
-    app = Path(temporary) / "arcade"
-    shutil.copytree(Path(__file__).resolve().parents[1] / "apps/arcadeclassics", app)
-    source = app / "arcade_classics.star"
-    source.write_text(source.read_text().replace("def main(config):", "def arcade_main(config):", 1))
-    entry = app / "random_test.star"
-    entry.write_text('load("arcade_classics.star", app_main="arcade_main")\nload("random.star", "random")\ndef main(config):\n    random.seed(int(config.str("test_seed", "0")))\n    return app_main(config)\n')
-    for seed in range(4):
+    out = Path(temporary)
+    for slot in range(8):
+        minute = slot * 5
         for scale in ([], ["--2x"]):
-            subprocess.run([sys.argv[1], "render", str(entry), "animation=random", "speed=50", f"test_seed={seed}", "--output", str(app / "test.webp"), "--silent", *scale], check=True)
+            outputs = []
+            for second in ("00", "59"):
+                output = out / f"test-{slot}-{second}.webp"
+                now = f"2026-10-05T12:{minute + 4 if second == '59' else minute:02d}:{second}Z"
+                subprocess.run([sys.argv[1], "render", str(source), "animation=random", "speed=-1", "--now", now, "--output", str(output), "--silent", *scale], check=True)
+                outputs.append(output.read_bytes())
+            assert outputs[0] == outputs[1], f"slot {slot} renders differ"
 print("Arcade random-mode regression passed at 1x and 2x")
