@@ -1,6 +1,9 @@
 # Modified in this community-maintained version; see Git history for contributors.
 # Original author and license notices are retained below.
 # See README.md for maintenance and compatibility notes.
+#
+# Niblet downstream modification (2026-10-05): build only the first 20 seconds
+# of the one-minute animation; Niblet encodes at most 15 seconds of it.
 
 load("cache.star", "cache")
 load("encoding/json.star", "json")
@@ -384,6 +387,11 @@ def main(config):
         delay = 250
     frames = (int)((1000 / delay) * 60 + 1)
 
+    # Niblet: the animation spans a minute, but Niblet encodes at most 15
+    # seconds, so build 20 seconds of frames (the dial still sweeps at the
+    # one-minute rate set by `frames`).
+    builtframes = min(frames, (int)(20000 / delay))
+
     def getctx(unow):
         #CONFIG
 
@@ -536,7 +544,7 @@ def main(config):
                 starttheta = starttheta + math.pi * 2
             deltatheta = 2 * math.pi / (frames - 1)
             cornertheta = 0.463647609
-            for i in range(frames):
+            for i in range(builtframes):
                 t = starttheta - i * deltatheta
                 if t < 0:
                     t = t + math.pi * 2
@@ -737,7 +745,7 @@ def main(config):
         seasonbgcolors = ctx["seasonbgcolors"]
         seasonfgcolors = ctx["seasonfgcolors"]
 
-        frames = (int)((1000 / delay) * 60 + 1)
+        frames = builtframes
         frameinterval = time.millisecond * delay
 
         #month
