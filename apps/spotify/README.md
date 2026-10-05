@@ -10,6 +10,17 @@ Original authors and other contributors can follow [Updating your app](../../doc
 See [known compatibility differences](../../docs/COMPATIBILITY.md) and [maintenance history](../../docs/MAINTENANCE.md). These notes do not certify live integration or compatibility with every runtime. Earlier setup instructions below may describe the upstream version.
 <!-- community-maintenance:end -->
 
+## Niblet downstream changes (2026-10-05)
+
+The app no longer requests `/v1/me/player` after the currently-playing call.
+Its shuffle, repeat, device and volume fields are not drawn by any layout, so
+each playing or paused render now makes one Spotify call fewer. The
+credential model is unchanged. On 2026-10-05, 60 renders (playing track,
+paused track, podcast episode and idle with recently played; all five display
+modes; 1x and 2x) against a local server returning synthetic Spotify
+responses were byte-identical before and after. Real Spotify accounts were not
+tested. No settings changed.
+
 # Spotify Now Playing - Ultimate Edition for Tronbyt/Tidbyt
 
 A feature-rich Spotify display app that shows your currently playing music with album art, progress bar, and playback information on your Tronbyt or locally-run Tidbyt display.

@@ -49,7 +49,7 @@ def main(config):
         league_name = get_league_name(league_id)
         league_users = get_league_users(league_id)
         league_rosters = get_league_rosters(league_id)
-        user_id = get_current_user_user_id(league_id, username, league_users)
+        user_id = get_current_user_user_id(username, league_users)
         roster_id = get_current_user_roster_id(user_id, league_rosters)
         user_and_roster_map = build_user_and_roster_mapping(league_rosters, league_users)
 
@@ -196,19 +196,18 @@ def get_league_rosters(league_id):
         else:
             return []
 
-def get_current_user_user_id(league_id, username, league_users):
+def get_current_user_user_id(username, league_users):
+    # Niblet downstream modification (2026-10-05): resolve the user id from the
+    # (cached) league users on every render instead of caching it. cache.* keys
+    # are shared by every installation of this app, and the old key was the
+    # league id alone, so with a shared cache two league members on different
+    # displays would have seen one another's matchup. No request is involved.
     user_id = ""
-    user_id_cached = cache.get(league_id + "_user_id")
-    if user_id_cached != None:
-        print("    Cache Hit! Used cached user id")
-        return user_id_cached
-    else:
-        for user in league_users:
-            if user["display_name"] == username:
-                user_id = user["user_id"]
-                cache.set(league_id + "_user_id", str(user_id), ttl_seconds = USER_ID_CACHE_TTL)
+    for user in league_users:
+        if user["display_name"] == username:
+            user_id = user["user_id"]
 
-        return user_id
+    return user_id
 
 def get_current_user_roster_id(user_id, league_rosters):
     roster_id = ""

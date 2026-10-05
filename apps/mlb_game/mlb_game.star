@@ -353,70 +353,53 @@ def team_bg_for(code, espn_color):
         return "#222222"
     return col
 
+# Niblet downstream modification (2026-10-05): team colours and scoreboard logos
+# used to come from a league-wide ESPN scoreboard decode on every render, and
+# the active MLB team ids from a statsapi /teams decode. Both are static, so
+# they are now constant tables. ESPN_TEAM_META was generated on 2026-10-05 from
+# https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams (team.color
+# and the ["full", "scoreboard"] logo href, the same values the scoreboard
+# returns); it is keyed by ESPN abbreviation exactly as the scoreboard map was.
+ESPN_TEAM_META = {
+    "ARI": {"color": "#aa182c", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/ari.png"},
+    "ATH": {"color": "#003831", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/ath.png"},
+    "ATL": {"color": "#0c2340", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/atl.png"},
+    "BAL": {"color": "#df4601", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/bal.png"},
+    "BOS": {"color": "#0d2b56", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/bos.png"},
+    "CHC": {"color": "#0e3386", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/chc.png"},
+    "CHW": {"color": "#000000", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/chw.png"},
+    "CIN": {"color": "#c6011f", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/cin.png"},
+    "CLE": {"color": "#002b5c", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/cle.png"},
+    "COL": {"color": "#33006f", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/col.png"},
+    "DET": {"color": "#0a2240", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/det.png"},
+    "HOU": {"color": "#002d62", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/hou.png"},
+    "KC": {"color": "#004687", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/kc.png"},
+    "LAA": {"color": "#ba0021", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/laa.png"},
+    "LAD": {"color": "#005a9c", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/lad.png"},
+    "MIA": {"color": "#00a3e0", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/mia.png"},
+    "MIL": {"color": "#13294b", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/mil.png"},
+    "MIN": {"color": "#031f40", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/min.png"},
+    "NYM": {"color": "#002d72", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/nym.png"},
+    "NYY": {"color": "#132448", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/nyy.png"},
+    "PHI": {"color": "#e81828", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/phi.png"},
+    "PIT": {"color": "#000000", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/pit.png"},
+    "SD": {"color": "#2f241d", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/sd.png"},
+    "SEA": {"color": "#005c5c", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/sea.png"},
+    "SF": {"color": "#000000", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/sf.png"},
+    "STL": {"color": "#be0a14", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/stl.png"},
+    "TB": {"color": "#092c5c", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/tb.png"},
+    "TEX": {"color": "#003278", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/tex.png"},
+    "TOR": {"color": "#134a8e", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/tor.png"},
+    "WSH": {"color": "#ab0003", "logo": "https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/wsh.png"},
+}
+
 def get_espn_team_map():
-    out = {}
-    url = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?limit=100"
-    resp = http.get(url = url, ttl_seconds = 120)
-    if resp.status_code != 200:
-        return out
-    body = resp.body()
-    if body == None or len(body) == 0 or body[0] != "{":
-        return out
-    parsed = json.decode(body)
-    if type(parsed) != "dict":
-        return out
-    events = parsed.get("events")
-    if type(events) != "list":
-        return out
-    for ev in events:
-        if type(ev) != "dict":
-            continue
-        comps = ev.get("competitions")
-        if type(comps) != "list" or len(comps) == 0:
-            continue
-        comp = comps[0]
-        if type(comp) != "dict":
-            continue
-        competitors = comp.get("competitors")
-        if type(competitors) != "list":
-            continue
-        for ct in competitors:
-            if type(ct) != "dict":
-                continue
-            t = ct.get("team")
-            if type(t) != "dict":
-                continue
-            abbr = as_str(t.get("abbreviation"), "")
-            if abbr == "":
-                continue
-            color = normalize_hex_color(t.get("color"))
-            logo = as_str(t.get("logo"), "")
-            out[abbr] = {
-                "color": color,
-                "logo": logo,
-            }
-    return out
+    return ESPN_TEAM_META
 
 def get_mlb_team_ids():
+    # statsapi /teams?sportId=1&activeStatus=Y lists the same ids as TEAM_BY_ID
+    # (which was already the fallback when that request failed).
     out = {}
-    url = "https://statsapi.mlb.com/api/v1/teams?sportId=1&activeStatus=Y"
-    resp = http.get(url = url, ttl_seconds = 86400)
-    if resp.status_code == 200:
-        body = resp.body()
-        if body != None and len(body) > 0 and body[0] == "{":
-            parsed = json.decode(body)
-            if type(parsed) == "dict":
-                teams = parsed.get("teams")
-                if type(teams) == "list":
-                    for team in teams:
-                        if type(team) != "dict":
-                            continue
-                        team_id = as_int(team.get("id"), 0)
-                        if team_id > 0:
-                            out[team_id] = True
-    if len(out) > 0:
-        return out
-
     for team_id in TEAM_BY_ID:
         out[team_id] = True
     return out
