@@ -21,12 +21,11 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 # --- Animation budget -------------------------------------------------------
-# One frame per second for a minute, which matches how often the server is
-# asked to come back. Encoding stops at whatever slot length the device has, so
-# only the head of this is ever written to the file; the rest is there so a
-# board with a long dwell does not run out of clock and start the minute again.
+# One frame per second. Niblet downstream modification (2026-10-05): Niblet
+# encodes at most 15 seconds of animation, so only the first 15 frames were
+# ever written; build 20 (a little headroom) instead of a full minute of 60.
 DELAY_MS = 1000
-FRAME_COUNT = 60
+FRAME_COUNT = 20
 MAX_AGE = 60
 
 # --- The date ---------------------------------------------------------------
@@ -542,7 +541,7 @@ def main(config):
         return render.Root(child = build_frame(base, remaining, scale))
 
     # Once it has launched nothing moves any more, so one frame is the whole
-    # animation and the encoder is spared fifty-nine copies of it.
+    # animation and the encoder is spared the other copies of it.
     if remaining <= 0:
         return render.Root(child = build_frame(base, remaining, scale))
 

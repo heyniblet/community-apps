@@ -17,6 +17,9 @@ situation is absent on pre/post games; mid-stoppage it can be degenerate
 (down -1, possession null, stale isRedZone) - treat that as "no active down".
 possession is a team ID, not an abbreviation. team.color has no '#'.
 period 5+ is OT. state stays "in" at halftime (status.type.name says HALFTIME).
+
+Niblet downstream modification (2026-10-05): read time.now() only in the
+final and pregame branches that need it. Output is unchanged.
 """
 
 load("cache.star", "cache")
@@ -97,8 +100,10 @@ def main(config):
     base = config.str("api", API_BASE)  # test hook: point at a local stub
 
     game = get_game(team, base)
-    now = time.now().in_location(tz)
 
+    # Niblet: read the clock (time.now) only in the final/pregame branches
+    # whose output depends on it, so live and idle renders record
+    # reads.time=false and Cloud can skip them when their inputs are unchanged.
     if game != None:
         kick = time.parse_time(game["date"], format = "2006-01-02T15:04Z").in_location(tz)
         if game["state"] == "in":
@@ -107,9 +112,9 @@ def main(config):
             # Genuinely final (postponed/canceled also report state "post" —
             # those fall through to idle rather than faking a 0-0 FIN).
             # Show the final for a day, then fall back to idle.
-            if now - kick < time.parse_duration("24h"):
+            if time.now().in_location(tz) - kick < time.parse_duration("24h"):
                 return render.Root(child = live_view(game, final = True))
-        if game["state"] == "pre" and same_day(kick, now):
+        if game["state"] == "pre" and same_day(kick, time.now().in_location(tz)):
             return pregame_root(game, team, kick, base)
 
     if config.bool("gameday_only", False):

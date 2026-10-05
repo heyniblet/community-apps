@@ -1,6 +1,11 @@
 # Modified in this community-maintained version; see Git history for contributors.
 # Original author and license notices are retained below.
 # See README.md for maintenance and compatibility notes.
+#
+# Niblet downstream modification (2026-10-05): animation choices come from a
+# deterministic generator seeded from the five-minute time slot and settings
+# instead of the random module, and frames past the 15 second animation limit
+# are no longer built.
 
 """
 Applet: Arcade Classics
@@ -45,7 +50,6 @@ load("images/red_l2.png", RED_L2_ASSET = "file")
 load("images/red_r1.png", RED_R1_ASSET = "file")
 load("images/red_r2.png", RED_R2_ASSET = "file")
 load("math.star", "math")
-load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -76,15 +80,33 @@ SPEED_ADJUST = {
     CENTIPEDE_ANIMATION: 3,
 }
 
+# Niblet: small linear congruential generator so a render is a pure function
+# of the five-minute slot (the app's refresh interval) and settings. The clock
+# is read only on first use, so animations without random choices (Space
+# Invaders at a fixed speed) stay independent of time.
+RNG_MODULUS = 2147483648
+RNG_SLOT_SECONDS = 300
+
+def rng_number(rng, lo, hi):
+    """Returns a deterministic integer in [lo, hi] and advances rng[0].
+
+    rng is [state or None, settings key]."""
+    if rng[0] == None:
+        rng[0] = hash(str(time.now().unix // RNG_SLOT_SECONDS) + "|" + rng[1]) % RNG_MODULUS
+    rng[0] = (rng[0] * 1103515245 + 12345) % RNG_MODULUS
+    return lo + (rng[0] >> 8) % (hi - lo + 1)
+
 def main(config):
+    rng = [None, config.str("animation", PACMAN_ANIMATION) + "|" + config.str("speed", DEFAULT_SPEED)]
+
     animation = config.str("animation", PACMAN_ANIMATION)
     if animation == RANDOM_ANIMATION:
         animations = [value for value in ANIMATION_LIST.values() if value != RANDOM_ANIMATION]
-        animation = animations[random.number(0, len(animations) - 1)]
+        animation = animations[rng_number(rng, 0, len(animations) - 1)]
 
     speed = int(config.str("speed", DEFAULT_SPEED))
     if speed < 0:
-        speed = random.number(MAX_SPEED, MIN_SPEED)
+        speed = rng_number(rng, MAX_SPEED, MIN_SPEED)
 
     speed = speed * SPEED_ADJUST[animation]
     delay = speed * time.millisecond
@@ -95,19 +117,21 @@ def main(config):
     allFrames = []
     for _ in range(1, 1000):
         if animation == PACMAN_ANIMATION:
-            frames = pacman_get_frames()
+            frames = pacman_get_frames(rng)
         elif animation == SPACE_INVADERS_ANIMATION:
             frames = spaceinvaders_get_frames()
         else:
-            frames = centipede_get_frames()
+            frames = centipede_get_frames(rng)
 
         allFrames.extend(frames)
         if len(allFrames) >= num_frames:
             break
 
+    # Niblet: the runtime stops the animation at 15 seconds; frames past that
+    # were built and then dropped.
     return render.Root(
         delay = delay.milliseconds,
-        child = render.Animation(allFrames),
+        child = render.Animation(allFrames[:int(num_frames)]),
     )
 
 DEFAULT_SPEED = "30"
@@ -237,11 +261,11 @@ CHASED_GHOST = 4
 # Make the odds of chasing a ghost a little higher
 CHANCE_FOR_CHASED_GHOST = 2
 
-def pacman_get_frames():
-    yPos = random.number(0, PM_NUM_Y_POSITIONS - 1)
-    mspacman = random.number(0, 1) == 1
-    reverse = random.number(0, 1) == 1
-    whichGhost = random.number(0, CHASING_GHOST_COUNT + CHANCE_FOR_CHASED_GHOST - 1)
+def pacman_get_frames(rng):
+    yPos = rng_number(rng, 0, PM_NUM_Y_POSITIONS - 1)
+    mspacman = rng_number(rng, 0, 1) == 1
+    reverse = rng_number(rng, 0, 1) == 1
+    whichGhost = rng_number(rng, 0, CHASING_GHOST_COUNT + CHANCE_FOR_CHASED_GHOST - 1)
     if whichGhost >= CHASING_GHOST_COUNT:
         whichGhost = CHASED_GHOST
 
@@ -413,13 +437,13 @@ CENT_ORIG_LEG_COLOR = CENT_OFF_WHITE
 CENT_HIST_MOVES_PER_SEGMENT = CENT_SPRITE_WIDTH // CENT_MOVE_PER_STATE
 CENT_MAX_HISTORY_ITEMS = CENT_HIST_MOVES_PER_SEGMENT * CENT_NUM_SEGMENTS
 
-def centipede_get_frames():
-    colorScheme = get_color_scheme()
+def centipede_get_frames(rng):
+    colorScheme = get_color_scheme(rng)
     centSprites = create_all_cent_sprites(colorScheme)
     mushroomSprite = create_mushroom_sprite(colorScheme)
-    mushroomMap = create_mushroom_map(mushroomSprite)
+    mushroomMap = create_mushroom_map(mushroomSprite, rng)
 
-    xDir = random.number(0, 1)
+    xDir = rng_number(rng, 0, 1)
     if xDir == 0:
         xDir = -1
         centStartX = FRAME_WIDTH
@@ -624,9 +648,9 @@ def get_segment_render_child(centSprites, segmentIndex, history):
         ),
     )
 
-def add_mushroom(mushroomMap, mushroomSprite):
-    col = random.number(0, CENT_NUM_COLS - 1)
-    row = random.number(0, CENT_NUM_ROWS - 1)
+def add_mushroom(mushroomMap, mushroomSprite, rng):
+    col = rng_number(rng, 0, CENT_NUM_COLS - 1)
+    row = rng_number(rng, 0, CENT_NUM_ROWS - 1)
 
     x = col * CENT_SPRITE_WIDTH
     y = row * CENT_SPRITE_WIDTH
@@ -666,7 +690,7 @@ def create_mushroom_sprite(colorScheme):
 
     return makeSprite(mushroomPixels, colorReplacements = colorScheme)
 
-def get_color_scheme():
+def get_color_scheme(rng):
     colorSchemes = [
         # Green, red, off white
         {CENT_ORIG_BODY_COLOR: CENT_GREEN, CENT_ORIG_EYE_COLOR: CENT_RED, CENT_ORIG_LEG_COLOR: CENT_OFF_WHITE},
@@ -711,13 +735,13 @@ def get_color_scheme():
         {CENT_ORIG_BODY_COLOR: CENT_GREEN, CENT_ORIG_EYE_COLOR: CENT_MAGENTA, CENT_ORIG_LEG_COLOR: CENT_RED},
     ]
 
-    return colorSchemes[random.number(0, len(colorSchemes) - 1)]
+    return colorSchemes[rng_number(rng, 0, len(colorSchemes) - 1)]
 
-def create_mushroom_map(mushroomSprite):
-    mushroomCount = random.number(CENT_MIN_MUSHROOMS, CENT_MAX_MUSHROOMS)
+def create_mushroom_map(mushroomSprite, rng):
+    mushroomCount = rng_number(rng, CENT_MIN_MUSHROOMS, CENT_MAX_MUSHROOMS)
     mushroomMap = {}
     for _ in range(mushroomCount):
-        add_mushroom(mushroomMap, mushroomSprite)
+        add_mushroom(mushroomMap, mushroomSprite, rng)
 
     return mushroomMap
 

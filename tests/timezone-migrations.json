@@ -317,6 +317,7 @@
   {
     "app_id": "nes-clock",
     "source_path": "apps/nesclock/nes_clock.star",
+    "equivalence_ref": "88b5e7172",
     "previous_sha256": "8ff6176d905d6035f7301ab22a9f30f979efd495c34153e0f15d5ed7adb61761",
     "location_field": "location",
     "kind": "timezone-only"
@@ -471,6 +472,7 @@
   {
     "app_id": "tetris-clock",
     "source_path": "apps/tetrisclock/tetris_clock.star",
+    "equivalence_ref": "88b5e7172",
     "previous_sha256": "5337439f7bb0d2b82ca49e7e09f3bf2e25e5277e29eb30f1b9352232d11aa1f2",
     "location_field": "location",
     "kind": "timezone-only"
