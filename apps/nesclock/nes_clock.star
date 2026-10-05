@@ -1,6 +1,11 @@
 # Modified in this community-maintained version; see Git history for contributors.
 # Original author and license notices are retained below.
 # See README.md for maintenance and compatibility notes.
+#
+# Niblet downstream modification (2026-10-05): choose the game, level, sprite
+# set and "Random" speed with a deterministic generator seeded from the local
+# minute and settings instead of the random module, and stop building frames
+# past the 15 second animation limit.
 
 """
 Applet: NES Clock
@@ -143,7 +148,6 @@ load("images/zelda_bg_3.png", ZELDA_BG_3_ASSET = "file")
 load("images/zelda_link_walk_1.png", ZELDA_LINK_WALK_1_ASSET = "file")
 load("images/zelda_link_walk_2.png", ZELDA_LINK_WALK_2_ASSET = "file")
 load("math.star", "math")
-load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -694,9 +698,19 @@ def main(config):
 
     print_time = current_time
 
+    # Niblet: the same local minute and settings always give the same
+    # animation, so a render can be reused within the minute.
+    rng = [hash("|".join([
+        print_time.format("15:04"),
+        config.str("speed", DEFAULT_SPEED),
+        config.str("game", DEFAULT_GAME),
+        str(is_24_hour_format),
+        str(has_leading_zero),
+    ])) % RNG_MODULUS]
+
     speed = int(config.str("speed", DEFAULT_SPEED))
     if speed < 0:
-        speed = random.number(0, MIN_SPEED + MAX_SPEED) + MAX_SPEED
+        speed = rng_number(rng, 0, MIN_SPEED + MAX_SPEED) + MAX_SPEED
 
     speed = speed * 5
     delay = speed * time.millisecond
@@ -704,9 +718,9 @@ def main(config):
     selected_game = int(config.str("game", DEFAULT_GAME))
     level_number = 1
     if selected_game == 0:
-        selected_game = random.number(1, len(GAME_LIST) - 1)
+        selected_game = rng_number(rng, 1, len(GAME_LIST) - 1)
 
-    level_number = random.number(0, len(GAME_CONFIGS[selected_game]["BACKGROUND_IMGS"]) - 1)
+    level_number = rng_number(rng, 0, len(GAME_CONFIGS[selected_game]["BACKGROUND_IMGS"]) - 1)
     time_box = get_bg_image(selected_game, level_number, print_time, is_24_hour_format = is_24_hour_format, has_leading_zero = has_leading_zero, has_seperator = True)
 
     app_cycle_speed = SECONDS_TO_RENDER * time.second
@@ -716,16 +730,18 @@ def main(config):
     frames = render.Text(content = "")
 
     for _ in range(1, 1000):
-        frames = sprite_get_frames(selected_game, level_number, time_box)
+        frames = sprite_get_frames(selected_game, level_number, time_box, rng)
         all_frames.extend(frames)
 
         if len(all_frames) >= num_frames:
             break
 
+    # Niblet: the runtime stops the animation at 15 seconds; frames past that
+    # were built and then dropped.
     return render.Root(
         max_age = 120,
         delay = delay.milliseconds,
-        child = render.Animation(all_frames),
+        child = render.Animation(all_frames[:int(num_frames)]),
     )
 
 def get_num_image(selected_game, num):
@@ -824,13 +840,23 @@ def get_bg_image(selected_game, level_number, t, is_24_hour_format = True, has_l
         ],
     )
 
-def sprite_get_frames(selected_game, level_number, time_box):
+# Niblet: small linear congruential generator so the animation choices are a
+# pure function of the local minute and settings (no random module).
+RNG_MODULUS = 2147483648
+
+def rng_number(rng, lo, hi):
+    """Returns a deterministic integer in [lo, hi] and advances rng[0]."""
+    rng[0] = (rng[0] * 1103515245 + 12345) % RNG_MODULUS
+    return lo + (rng[0] >> 8) % (hi - lo + 1)
+
+def sprite_get_frames(selected_game, level_number, time_box, rng):
     """Gets an array of sprite animation frames
 
     Args:
         selected_game: Integer corresponding to the selected game
         level_number: Integer corresponding to the selected level within a game
         time_box: A background image to display under the sprite animation frames
+        rng: Deterministic generator state (see rng_number)
 
     Returns:
         An array of sprite animation frames
@@ -839,7 +865,7 @@ def sprite_get_frames(selected_game, level_number, time_box):
     begin_x = GAME_CONFIGS[selected_game]["SPRITE_MIN_X"]
     end_x = FRAME_WIDTH
     step = GAME_CONFIGS[selected_game]["SPRITE_MOVE_SPEED"]
-    sprite_set_index = random.number(0, len(GAME_CONFIGS[selected_game]["SPRITE_SETS"]) - 1)
+    sprite_set_index = rng_number(rng, 0, len(GAME_CONFIGS[selected_game]["SPRITE_SETS"]) - 1)
 
     # Super Mario Bros. 3 is a special case where certain sprite sets must be used with certain levels/backgrounds. Refactor later?
     if selected_game == int(GAME_LIST["Super Mario Bros. 3"]) and level_number != 2:
