@@ -542,11 +542,13 @@ def render_night_mode(now, is_24hour, blink):
 
 def get_weather(config, lat, lng, unit_system):
     service = config.get("weather_service") or "nws"
-    api_key = config.get("api_key") or ""
 
     if service == "nws":
         return fetch_nws(lat, lng, unit_system)
     else:
+        # Niblet: the secret API key is read only on the OpenWeather path, so
+        # the keyless NWS path never touches it.
+        api_key = config.get("api_key") or ""
         if not api_key:
             return no_api_key_weather()
         return fetch_openweather(lat, lng, api_key, unit_system)
@@ -607,7 +609,17 @@ def ow_code_to_condition(code):
 
 # -- NWS (National Weather Service) --
 
+def nws_coordinate(value):
+    # Niblet: NWS grid cells are ~2.5 km, so three decimals (~110 m) select
+    # the same grid point and stations while letting nearby installs send
+    # byte-identical requests (and avoiding NWS's redirect for >4 decimals).
+    # Adding 0.0 turns -0.0 into 0.0.
+    return str(math.round(float(value) * 1000) / 1000 + 0.0)
+
 def fetch_nws(lat, lng, unit_system):
+    lat = nws_coordinate(lat)
+    lng = nws_coordinate(lng)
+
     # Step 1: resolve grid point + observation stations URL
     meta_key = "nws_meta_%s_%s" % (lat, lng)
     meta_cached = cache.get(meta_key)
@@ -645,7 +657,9 @@ def fetch_nws(lat, lng, unit_system):
 
     # Step 3: try each station's latest observation
     for sid in station_ids:
-        obs_key = "nws_obs_%s" % sid
+        # Niblet: the cached result is unit-specific, so the key includes the
+        # unit system (matters once a shared cache is attached).
+        obs_key = "nws_obs_%s_%s" % (sid, unit_system)
         obs_cached = cache.get(obs_key)
         if obs_cached:
             return json.decode(obs_cached)
@@ -678,7 +692,7 @@ def fetch_nws(lat, lng, unit_system):
     return fetch_nws_hourly_fallback(meta["forecast_hourly"], unit_system)
 
 def fetch_nws_hourly_fallback(url, unit_system):
-    cache_key = "nws_hourly_%s" % url
+    cache_key = "nws_hourly_%s_%s" % (url, unit_system)
     cached = cache.get(cache_key)
     if cached:
         return json.decode(cached)

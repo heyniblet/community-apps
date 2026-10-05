@@ -35,3 +35,10 @@ Weather comes from either:
 
 - Built-in `5x8`/`6x13` font digits for `0` and `9` render narrower than other digits at this size, so those two glyphs are hand-drawn replacements spliced in per-character; everything else uses the stock font.
 - When OpenWeather is selected without an API key, the app shows a placeholder instead of blank/incorrect data, and the day/date column is hidden to avoid a cramped layout.
+
+## Niblet efficiency changes (October 2026)
+
+- NWS requests and cache keys use coordinates rounded to three decimals, so nearby installs send identical requests and the NWS redirect for longer coordinates is avoided. NWS grid cells are about 2.5 km; the grid point and stations are unchanged except right on a cell boundary.
+- Cached observation and hourly-fallback results are keyed by unit system as well, so a shared cache cannot hand a Celsius result to a Fahrenheit install.
+- The OpenWeather API key is read only when OpenWeather is selected.
+- Validated by rendering the previous and new source against the same recorded HTTP responses and pinned times with the Niblet runtime: byte-identical output for 18 combinations (3 NWS locations and the default, OpenWeather without a key and night mode, each at 3 times).

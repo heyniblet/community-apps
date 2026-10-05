@@ -11,9 +11,9 @@ Version: 1.1
 
 """
 
+load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
-load("humanize.star", "humanize")
 load("images/cloudy.png", CLOUDY_ASSET = "file")
 load("images/foggy.png", FOGGY_ASSET = "file")
 load("images/haily.png", HAILY_ASSET = "file")
@@ -30,6 +30,7 @@ load("images/sunnyish.png", SUNNYISH_ASSET = "file")
 load("images/thundery.png", THUNDERY_ASSET = "file")
 load("images/tornady.png", TORNADY_ASSET = "file")
 load("images/windy.png", WINDY_ASSET = "file")
+load("math.star", "math")
 load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -56,6 +57,11 @@ AMBIENT_WEATHER_DEVICES_URL = "https://rt.ambientweather.net/v1/devices"
 MAX_RESPONSE_BYTES = 512 * 1024
 NWS_HEADERS = {"User-Agent": "Niblet/1.0 (heyniblet.com)"}
 
+# Niblet: the grid point and its first observation station are effectively
+# static for a location; remember the station URL for 30 days. This takes
+# effect when the runtime attaches a shared cache (data_cache ttl).
+NWS_STATION_CACHE_SECONDS = 30 * 24 * 60 * 60
+
 TEMP_COLOR_DEFAULT = "#FFFFFF"
 TIME_NIGHT_COLOR = "#333333"
 
@@ -80,15 +86,31 @@ WEATHER_ICONS = {
 
 RAINDROP_ICON = RAINDROP_ICON_ASSET.readall()
 
+def nws_coordinate(value):
+    # Niblet: NWS grid cells are ~2.5 km, so three decimals (~110 m) select
+    # the same grid point while letting nearby installs send byte-identical
+    # requests. Adding 0.0 turns -0.0 into 0.0.
+    return str(math.round(value * 1000) / 1000 + 0.0)
+
 # Weather API functions from Time & Weather
+# Niblet: NWS errors return None so the clock still renders (without weather)
+# instead of failing the whole render on a transient 5xx/429.
 def get_nws_observation_station(lat, lon, ttl = 3600):
+    latitude = nws_coordinate(lat)
+    longitude = nws_coordinate(lon)
+    station_key = "nws_station_%s_%s" % (latitude, longitude)
+    cached_station = cache.get(station_key)
+    if cached_station:
+        return cached_station
+
     # Get the grid point data
     res = http.get(NWS_POINTS_URL.format(
-        latitude = humanize.ftoa(lat, 4),
-        longitude = humanize.ftoa(lon, 4),
+        latitude = latitude,
+        longitude = longitude,
     ), headers = NWS_HEADERS, ttl_seconds = ttl)
     if res.status_code != 200:
-        fail("Could not obtain the grid point data.", res.status_code)
+        print("Could not obtain the grid point data.", res.status_code)
+        return None
 
     data = response_json(res)
     properties = data.get("properties", {}) if type(data) == "dict" else {}
@@ -98,7 +120,8 @@ def get_nws_observation_station(lat, lon, ttl = 3600):
         type(properties.get("gridX")) not in ["int", "float"] or
         type(properties.get("gridY")) not in ["int", "float"]
     ):
-        fail("Invalid NWS grid point response.")
+        print("Invalid NWS grid point response.")
+        return None
     grid_id = properties["gridId"]
     grid_x = properties["gridX"]
     grid_y = properties["gridY"]
@@ -111,17 +134,21 @@ def get_nws_observation_station(lat, lon, ttl = 3600):
     )
     stations_res = http.get(stations_url, headers = NWS_HEADERS, ttl_seconds = ttl)
     if stations_res.status_code != 200:
-        fail("Could not obtain stations list.", stations_res.status_code)
+        print("Could not obtain stations list.", stations_res.status_code)
+        return None
 
     # Get the first station from the observationStations list
     stations_data = response_json(stations_res)
     observation_stations = stations_data.get("observationStations", []) if type(stations_data) == "dict" else []
     if type(observation_stations) != "list" or len(observation_stations) == 0:
-        fail("No observation stations found for this location.")
+        print("No observation stations found for this location.")
+        return None
 
     first_station = observation_stations[0]
     if type(first_station) != "string" or not first_station.startswith("https://api.weather.gov/stations/"):
-        fail("Invalid NWS observation station.")
+        print("Invalid NWS observation station.")
+        return None
+    cache.set(station_key, first_station, ttl_seconds = NWS_STATION_CACHE_SECONDS)
     return first_station
 
 def get_nws_latest_observation(station_url, ttl = 300):
@@ -129,13 +156,16 @@ def get_nws_latest_observation(station_url, ttl = 300):
     latest_url = NWS_LATEST_OBSERVATION_URL.format(station_url = station_url)
     res = http.get(latest_url, headers = NWS_HEADERS, ttl_seconds = ttl)
     if res.status_code != 200:
-        fail("Could not obtain latest observation.", res.status_code)
+        print("Could not obtain latest observation.", res.status_code)
+        return None
     return response_json(res)
 
 def get_current_weather_conditions(url, ttl):
     res = http.get(url, ttl_seconds = ttl)
     if res.status_code != 200:
-        fail("Current conditions request failed with status", res.status_code)
+        # Niblet: keep showing the clock on a provider error (see main).
+        print("Current conditions request failed with status", res.status_code)
+        return None
     return response_json(res)
 
 def get_ambient_weather_conditions(application_key, api_key, station_id, display_metric, now):
@@ -150,7 +180,9 @@ def get_ambient_weather_conditions(application_key, api_key, station_id, display
         ttl_seconds = 60,
     )
     if res.status_code != 200:
-        fail("Ambient Weather device request failed with status", res.status_code)
+        # Niblet: keep showing the clock on a provider error (see main).
+        print("Ambient Weather device request failed with status", res.status_code)
+        return None
 
     stations = response_json(res)
     if type(stations) != "list" or len(stations) == 0:
@@ -348,10 +380,19 @@ def main(config):
     api_service = config.get("weatherApiService") or "OpenWeather"
     if api_service not in ["National Weather Service (NWS)", "OpenWeather", "OpenWeatherOneCall", "Ambient Weather"]:
         api_service = "OpenWeather"
-    api_key = config.get("apiKey", "")
-    ambient_application_key = config.get("ambientApplicationKey", "")
-    ambient_api_key = config.get("ambientApiKey", "")
-    ambient_station_id = config.get("ambientStationId", "")
+
+    # Niblet: credentials are read only for the providers that need them, so
+    # the keyless NWS path never touches a secret field.
+    api_key = ""
+    ambient_application_key = ""
+    ambient_api_key = ""
+    ambient_station_id = ""
+    if api_service == "OpenWeather" or api_service == "OpenWeatherOneCall":
+        api_key = config.get("apiKey", "")
+    elif api_service == "Ambient Weather":
+        ambient_application_key = config.get("ambientApplicationKey", "")
+        ambient_api_key = config.get("ambientApiKey", "")
+        ambient_station_id = config.get("ambientStationId", "")
     system_of_measurement = config.get("systemOfMeasurement", "Imperial").lower()
     temp_color = config.get("tempColor", TEMP_COLOR_DEFAULT)
 
@@ -386,9 +427,9 @@ def main(config):
         result_current_conditions["humidity"] = 50
     elif api_service == "National Weather Service (NWS)":
         station_url = get_nws_observation_station(latitude, longitude, 3600)
-        observation_data = get_nws_latest_observation(station_url, 300)
+        observation_data = get_nws_latest_observation(station_url, 300) if station_url else None
 
-        properties = observation_data.get("properties", {})
+        properties = observation_data.get("properties", {}) if type(observation_data) == "dict" else {}
 
         # Get temperature - NWS observations use Celsius by default
         temp_data = properties.get("temperature", {})
@@ -443,6 +484,10 @@ def main(config):
         else:
             icon_ref = "cloudy.png"  # default if no description
 
+        if observation_data == None:
+            # Niblet: NWS unavailable; show the clock with "?" and no icon.
+            icon_ref = None
+
     elif api_service == "OpenWeather":
         request_url = OPENWEATHER_CURRWEATHER_URL.format(
             latitude = latitude,
@@ -451,8 +496,9 @@ def main(config):
             units = system_of_measurement,
         )
         raw_current_conditions = get_current_weather_conditions(request_url, 300)
-        result_current_conditions = openweather_conditions(raw_current_conditions, False)
-        icon_ref = result_current_conditions["icon_ref"]
+        if raw_current_conditions != None:
+            result_current_conditions = openweather_conditions(raw_current_conditions, False)
+            icon_ref = result_current_conditions["icon_ref"]
 
     elif api_service == "OpenWeatherOneCall":
         request_url = OPENWEATHER_ONECALL_URL.format(
@@ -462,8 +508,9 @@ def main(config):
             units = system_of_measurement,
         )
         raw_current_conditions = get_current_weather_conditions(request_url, 300)
-        result_current_conditions = openweather_conditions(raw_current_conditions, True)
-        icon_ref = result_current_conditions["icon_ref"]
+        if raw_current_conditions != None:
+            result_current_conditions = openweather_conditions(raw_current_conditions, True)
+            icon_ref = result_current_conditions["icon_ref"]
 
     elif api_service == "Ambient Weather":
         ambient_conditions = get_ambient_weather_conditions(
@@ -473,9 +520,10 @@ def main(config):
             display_metric = display_metric,
             now = now,
         )
-        result_current_conditions["temp"] = ambient_conditions["temp"]
-        result_current_conditions["humidity"] = ambient_conditions["humidity"]
-        icon_ref = ambient_conditions["icon_ref"]
+        if ambient_conditions != None:
+            result_current_conditions["temp"] = ambient_conditions["temp"]
+            result_current_conditions["humidity"] = ambient_conditions["humidity"]
+            icon_ref = ambient_conditions["icon_ref"]
 
     # Prepare weather display components
     if icon_ref:

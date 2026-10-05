@@ -1,3 +1,6 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
+
 """
 Applet: NWS Daily Forecast
 Summary: NWS three day forecast
@@ -6,6 +9,7 @@ Author: Glen Robertson
 """
 
 load("assets.star", "WEATHER_ICONS", "WIND_ICONS")
+load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
@@ -22,6 +26,15 @@ NWS_HEADERS = {
     "User-Agent": "tronbyt-nws-daily-forecast (https://github.com/tronbyt/apps)",
     "Accept": "application/geo+json",
 }
+
+# Niblet: the /points lookup (grid -> forecast URL) is effectively static for a
+# location, so it is remembered for 30 days instead of being requested on every
+# render. A 404 from the forecast endpoint invalidates it.
+POINTS_CACHE_SECONDS = 30 * 24 * 60 * 60
+
+# Niblet: last good forecast periods, used when NWS has a transient error.
+LAST_GOOD_CACHE_SECONDS = 6 * 60 * 60
+LAST_GOOD_FIELDS = ["startTime", "isDaytime", "temperature", "windDirection", "shortForecast"]
 
 DAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
 
@@ -111,24 +124,65 @@ def render_forecast_column(fc):
         cross_align = "center",
     )
 
-def fetch_forecasts(location, display_celsius):
-    # The points endpoint returns the gridpoint URL for a given lat/lng. It is
-    # effectively static for a fixed location, so cache for a full day.
+def round_coordinate(value):
+    # Niblet: NWS grid cells are ~2.5 km, so three decimals (~110 m) select
+    # the same forecast while letting nearby installs send byte-identical
+    # requests that the shared response cache can serve. Adding 0.0 turns
+    # -0.0 into 0.0.
+    return str(math.round(float(value) * 1000) / 1000 + 0.0)
+
+def forecast_url_for(points_key, lat, lng):
+    cached = cache.get(points_key)
+    if cached:
+        return cached
+
+    # The points endpoint returns the gridpoint URL for a given lat/lng.
     points_resp = http.get(
-        NWS_POINTS_URL.format(lat = location["lat"], lng = location["lng"]),
+        NWS_POINTS_URL.format(lat = lat, lng = lng),
         headers = NWS_HEADERS,
         ttl_seconds = 86400,
     )
     if points_resp.status_code != 200:
-        fail("NWS points request failed with status %d" % points_resp.status_code)
+        print("NWS points request failed with status %d" % points_resp.status_code)
+        return None
 
-    # Forecast updates roughly hourly; cache that long.
     forecast_url = points_resp.json()["properties"]["forecast"]
-    forecast_resp = http.get(forecast_url, headers = NWS_HEADERS, ttl_seconds = 3600)
-    if forecast_resp.status_code != 200:
-        fail("NWS forecast request failed with status %d" % forecast_resp.status_code)
+    cache.set(points_key, forecast_url, ttl_seconds = POINTS_CACHE_SECONDS)
+    return forecast_url
+
+def fetch_periods(lat, lng):
+    points_key = "points:%s,%s" % (lat, lng)
+    last_good_key = "periods:%s,%s" % (lat, lng)
+
+    forecast_url = forecast_url_for(points_key, lat, lng)
+    forecast_resp = None
+    if forecast_url != None:
+        # Forecast updates roughly hourly; cache that long.
+        forecast_resp = http.get(forecast_url, headers = NWS_HEADERS, ttl_seconds = 3600)
+        if forecast_resp.status_code == 404:
+            # The grid moved; resolve it again on the next render.
+            cache.set(points_key, "", ttl_seconds = 1)
+
+    if forecast_resp == None or forecast_resp.status_code != 200:
+        # Niblet: a transient NWS error (5xx, 429) shows the last good forecast
+        # instead of failing the render.
+        if forecast_resp != None:
+            print("NWS forecast request failed with status %d" % forecast_resp.status_code)
+        cached = cache.get(last_good_key)
+        return json.decode(cached) if cached else None
 
     periods = forecast_resp.json()["properties"]["periods"]
+    cache.set(last_good_key, json.encode([
+        {k: p.get(k) for k in LAST_GOOD_FIELDS}
+        for p in periods
+    ]), ttl_seconds = LAST_GOOD_CACHE_SECONDS)
+    return periods
+
+def fetch_forecasts(location, display_celsius):
+    periods = fetch_periods(round_coordinate(location["lat"]), round_coordinate(location["lng"]))
+    if periods == None:
+        return None
+
     timezone = location.get("timezone", "America/Los_Angeles")
 
     # Group periods by local calendar date. NWS day periods run ~6am-6pm and
@@ -195,6 +249,10 @@ def main(config):
     if location_raw:
         location = json.decode(location_raw)
         forecasts = fetch_forecasts(location, display_celsius)
+        if forecasts == None:
+            # Niblet: NWS is unavailable and no recent forecast is cached; skip
+            # this render so the display keeps its previous image.
+            return []
         is_sample = False
     else:
         forecasts = sample_forecasts(display_celsius)

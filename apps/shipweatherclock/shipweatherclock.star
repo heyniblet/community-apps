@@ -1,3 +1,6 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
+
 """
 Applet: ShipWeatherClock
 Summary: Ship scene w time/weather
@@ -31,6 +34,7 @@ load("images/whale5.png", WHALE5_ASSET = "file")
 load("images/whale6.png", WHALE6_ASSET = "file")
 load("images/whale7.png", WHALE7_ASSET = "file")
 load("images/whale8.png", WHALE8_ASSET = "file")
+load("math.star", "math")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
@@ -69,6 +73,28 @@ DEFAULT_LOCATION = {
     "timezone": "America/Los_Angeles",
 }
 
+def round_coordinate(value):
+    # Niblet: two decimals (~1 km) are finer than Open-Meteo's ~2 km model
+    # grids, and let nearby installs send byte-identical requests that the
+    # shared response cache can serve. Values can differ by a few tenths of a
+    # degree from the unrounded request (elevation is interpolated for the
+    # exact point). Adding 0.0 turns -0.0 into 0.0.
+    return str(math.round(float(value) * 100) / 100 + 0.0)
+
+def fallback_weather(now, timezone):
+    # Niblet: shown when Open-Meteo is unavailable, instead of failing the
+    # render: a clear sky with 06:00 sunrise and 18:00 sunset, no temperatures.
+    midnight = time.time(year = now.year, month = now.month, day = now.day, location = timezone)
+    return {
+        "daily": {
+            "sunrise": [midnight.unix + 6 * 60 * 60],
+            "sunset": [midnight.unix + 18 * 60 * 60],
+            "temperature_2m_min": [0],
+            "temperature_2m_max": [0],
+        },
+        "current": {"temperature_2m": 0, "wind_speed_10m": 0, "weather_code": 0},
+    }
+
 # define custom pixel art
 
 def main(config):
@@ -76,10 +102,10 @@ def main(config):
     location = config.get("location")
     loc = json.decode(location) if location else json.decode(str(DEFAULT_LOCATION))
     timezone = loc["timezone"]
-    lat = loc["lat"]
-    lng = loc["lng"]
+    lat = round_coordinate(loc["lat"])
+    lng = round_coordinate(loc["lng"])
     now = time.now().in_location(timezone)
-    now_unix = time.now().unix
+    now_unix = now.unix
 
     # get 24 vs. 12 hour clock selection
     clock24_bool = config.bool("24hour", False)
@@ -100,10 +126,14 @@ def main(config):
     wind_heavy_threshold_mps = 10 * 0.44704  # [mph] to [m/s]
 
     # pull weather data from API or cache
-    weather_url = "https://api.open-meteo.com/v1/forecast?latitude=" + str(lat) + "&longitude=" + str(lng) + "&current=temperature_2m,weather_code,cloud_cover,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&timeformat=unixtime&timezone=" + timezone
+    weather_url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lng + "&current=temperature_2m,weather_code,cloud_cover,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset&timeformat=unixtime&timezone=" + timezone
     res = http.get(url = weather_url, ttl_seconds = TTL_SECONDS)
-    if res.status_code != 200:
-        fail("request to %s failed with status code: %d - %s" % (weather_url, res.status_code, res.body()))
+    have_weather = res.status_code == 200
+    if have_weather:
+        data = res.json()
+    else:
+        print("request to %s failed with status code: %d" % (weather_url, res.status_code))
+        data = fallback_weather(now, timezone)
 
     # DEVELOPMENT: check if result was served from API pull or cache
     if res.headers.get("Tidbyt-Cache-Status") == "HIT":
@@ -112,13 +142,14 @@ def main(config):
         print("Calling Open Meteo API.")
 
     # get data values of interest from pulled data
-    sunrise = res.json()["daily"]["sunrise"][0]
-    sunset = res.json()["daily"]["sunset"][0]
-    low_temp_C = res.json()["daily"]["temperature_2m_min"][0]
-    now_temp_C = res.json()["current"]["temperature_2m"]
-    high_temp_C = res.json()["daily"]["temperature_2m_max"][0]
-    windspeed_kmph = res.json()["current"]["wind_speed_10m"]
-    weather_code = res.json()["current"]["weather_code"]
+    # Niblet: decode the response once instead of once per field.
+    sunrise = data["daily"]["sunrise"][0]
+    sunset = data["daily"]["sunset"][0]
+    low_temp_C = data["daily"]["temperature_2m_min"][0]
+    now_temp_C = data["current"]["temperature_2m"]
+    high_temp_C = data["daily"]["temperature_2m_max"][0]
+    windspeed_kmph = data["current"]["wind_speed_10m"]
+    weather_code = data["current"]["weather_code"]
 
     # convert times to unix and windspeed to m/s
     sunrise_unix = int(sunrise)
@@ -240,9 +271,9 @@ def main(config):
     stream4_1 = draw_stream(day, wind, 5, 30, 20, 0)
     stream4_2 = draw_stream(day, wind, 5, 30, 20, offset)
     text_time = print_time(day, now, clock_format)
-    text_low_temp = print_temp(day, str(low_temp), 50, 6)
-    text_high_temp = print_temp(day, str(high_temp), 64, 6)
-    text_now_temp = print_temp(day, str(now_temp) + " " + unit_temp, 64, 12)
+    text_low_temp = print_temp(day, str(low_temp) if have_weather else "--", 50, 6)
+    text_high_temp = print_temp(day, str(high_temp) if have_weather else "--", 64, 6)
+    text_now_temp = print_temp(day, (str(now_temp) if have_weather else "--") + " " + unit_temp, 64, 12)
     deg = draw_deg(day, 57, 12)
     stars = draw_stars(day, cloud_scale)
     clouds_heavy = draw_clouds(day, cloud_scale, 1, CLOUDS_HEAVY_DAY, CLOUDS_HEAVY_NIGHT)
