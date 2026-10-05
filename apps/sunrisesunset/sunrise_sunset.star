@@ -1,3 +1,6 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
+
 """
 Applet: Sunrise Sunset
 Summary: Shows sunrise and set times
@@ -54,6 +57,11 @@ DEFAULT_24_HOUR = False
 DEFAULT_ITEMS_TO_DISPLAY = "both"
 
 # Images
+# Niblet: read once at module load instead of on every use in main().
+SUNRISEIMAGE = SUNRISEIMAGE_ASSET.readall()
+SUNRISEIMAGE_2X = SUNRISEIMAGE_2X_ASSET.readall()
+SUNSETIMAGE = SUNSETIMAGE_ASSET.readall()
+SUNSETIMAGE_2X = SUNSETIMAGE_2X_ASSET.readall()
 
 def main(config):
     scale = 2 if canvas.is2x() else 1
@@ -97,7 +105,7 @@ def main(config):
                 cross_align = "center",
                 children = [
                     render.Image(
-                        src = (SUNRISEIMAGE_2X_ASSET if scale == 2 else SUNRISEIMAGE_ASSET).readall(),
+                        src = (SUNRISEIMAGE_2X if scale == 2 else SUNRISEIMAGE),
                         width = 29 * scale,
                         height = 14 * scale,
                     ),
@@ -117,7 +125,7 @@ def main(config):
             cross_align = "center",
             children = [
                 render.Image(
-                    src = (SUNSETIMAGE_2X_ASSET if scale == 2 else SUNSETIMAGE_ASSET).readall(),
+                    src = (SUNSETIMAGE_2X if scale == 2 else SUNSETIMAGE),
                     width = 29 * scale,
                     height = 14 * scale,
                 ),
@@ -129,12 +137,12 @@ def main(config):
         if itemsToDisplay == "sunrise":
             title = "Sunrise"
             text = sunriseText
-            image = (SUNRISEIMAGE_2X_ASSET if scale == 2 else SUNRISEIMAGE_ASSET).readall()
+            image = (SUNRISEIMAGE_2X if scale == 2 else SUNRISEIMAGE)
 
         else:
             title = "Sunset"
             text = sunsetText
-            image = (SUNSETIMAGE_2X_ASSET if scale == 2 else SUNSETIMAGE_ASSET).readall()
+            image = (SUNSETIMAGE_2X if scale == 2 else SUNSETIMAGE)
 
         top = render.Padding(
             pad = (0, 2 * scale, 0, 4 * scale),

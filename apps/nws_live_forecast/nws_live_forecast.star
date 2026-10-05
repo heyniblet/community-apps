@@ -9,6 +9,7 @@ Description:  National Weather Service data showing the current temperature and 
 Author: Andrey Goder
 """
 
+load("cache.star", "cache")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("humanize.star", "humanize")
@@ -66,28 +67,82 @@ DAY_LABELS = [
     "Sun",
 ]
 
-def main(config):
-    # Config
-    location = json.decode(config.get("location") or DEFAULT_LOCATION)
-    units = config.get("units") or DEFAULT_UNITS
+# Niblet: the /points lookup (grid -> forecastHourly URL) is effectively static
+# for a location, so it is remembered for 30 days instead of being requested on
+# every render. A hard failure invalidates it.
+POINTS_CACHE_SECONDS = 30 * 24 * 60 * 60
+
+# Niblet: last good forecast periods, used when NWS has a transient error.
+LAST_GOOD_CACHE_SECONDS = 6 * 60 * 60
+
+def round_coordinate(value):
+    # Niblet: NWS grid cells are ~2.5 km, so three decimals (~110 m) select
+    # the same forecast while letting nearby installs send byte-identical
+    # requests that the shared response cache can serve. Adding 0.0 turns
+    # -0.0 into 0.0.
+    return str(math.round(float(value) * 1000) / 1000 + 0.0)
+
+def forecast_hourly_url(points_key, lat, lng):
+    cached = cache.get(points_key)
+    if cached:
+        return cached
 
     response = http.get(
-        WEATHER_URL + str(location["lat"]) + "," + str(location["lng"]),
+        WEATHER_URL + lat + "," + lng,
         headers = NWS_HEADERS,
         ttl_seconds = 300,
     )
     if response.status_code != 200:
-        fail("failed to fetch weather %d", response.status_code)
+        print("failed to fetch weather %d" % response.status_code)
+        return None
+
+    url = response.json()["properties"]["forecastHourly"]
+    cache.set(points_key, url, ttl_seconds = POINTS_CACHE_SECONDS)
+    return url
+
+def fetch_periods(lat, lng):
+    points_key = "points:%s,%s" % (lat, lng)
+    url = forecast_hourly_url(points_key, lat, lng)
+    if url == None:
+        return None
 
     forecast = http.get(
-        response.json()["properties"]["forecastHourly"],
+        url,
         headers = NWS_HEADERS,
         ttl_seconds = 300,
     )
     if forecast.status_code != 200:
-        fail("failed to fetch forecast %d", forecast.status_code)
+        print("failed to fetch forecast %d" % forecast.status_code)
+        if forecast.status_code == 404:
+            # The grid moved; resolve it again on the next render.
+            cache.set(points_key, "", ttl_seconds = 1)
+        return None
 
-    periods = forecast.json()["properties"]["periods"]
+    return forecast.json()["properties"]["periods"]
+
+def main(config):
+    # Config
+    location = json.decode(config.get("location") or DEFAULT_LOCATION)
+    units = config.get("units") or DEFAULT_UNITS
+    lat = round_coordinate(location["lat"])
+    lng = round_coordinate(location["lng"])
+    last_good_key = "periods:%s,%s" % (lat, lng)
+
+    periods = fetch_periods(lat, lng)
+    if periods == None:
+        # Niblet: a transient NWS error shows the last good forecast instead of
+        # failing the render; with none cached the render is skipped and the
+        # display keeps its previous image.
+        cached = cache.get(last_good_key)
+        if not cached:
+            return []
+        periods = json.decode(cached)
+    else:
+        cache.set(last_good_key, json.encode([
+            {k: p[k] for k in ["startTime", "endTime", "temperature", "shortForecast"]}
+            for p in periods
+        ]), ttl_seconds = LAST_GOOD_CACHE_SECONDS)
+
     now = time.now()
 
     days = []
