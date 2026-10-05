@@ -1,6 +1,11 @@
 # Modified in this community-maintained version; see Git history for contributors.
 # Original author and license notices are retained below.
 # See README.md for maintenance and compatibility notes.
+#
+# Niblet downstream modification (2026-10-05): pick the city and stars with a
+# deterministic generator seeded from the five-minute time slot, and paint
+# finished columns as vertical runs instead of one widget per pixel. The
+# drawing, timing and colors are unchanged.
 
 """
 Applet: Skylines
@@ -37,10 +42,20 @@ text_display_choices = [
     schema.Option(display = "Display Custom Text", value = "Custom"),
 ]
 
-def randomize(min, max):
-    now = time.now()
-    base = now.unix * 1000000000 + now.nanosecond + canvas.width() * canvas.height()
-    rand = ((base ^ (base >> 11)) % 1000) / 1000.0
+# Niblet: a small linear congruential generator seeded once per render from
+# the five-minute slot (the app's refresh interval) and the canvas size, so
+# renders within a slot are identical. rng is a one-element list holding the
+# generator state.
+RNG_MODULUS = 2147483648
+RNG_SLOT_SECONDS = 300
+
+def new_rng():
+    seed = str(time.now().unix // RNG_SLOT_SECONDS) + "|" + str(canvas.width() * canvas.height())
+    return [hash(seed) % RNG_MODULUS]
+
+def randomize(rng, min, max):
+    rng[0] = (rng[0] * 1103515245 + 12345) % RNG_MODULUS
+    rand = ((rng[0] >> 8) % 1000) / 1000.0
     return int(rand * (max + 1 - min) + min)
 
 def add_padding_to_child_element(element, left = 0, top = 0, right = 0, bottom = 0):
@@ -51,15 +66,34 @@ def add_padding_to_child_element(element, left = 0, top = 0, right = 0, bottom =
 
     return padded_element
 
-def create_dot(x, y, color = "#fff"):
+def create_dot(x, y, color = "#fff", length = 1):
     return render.Padding(
         pad = (x * SCALE, y * SCALE, 0, 0),
         child = render.Box(
             width = SCALE,
-            height = SCALE,
+            height = SCALE * length,
             color = color,
         ),
     )
+
+def column_runs(column_pixels):
+    """Niblet: merges a finished column's pixels into vertical runs of one
+    color, painting exactly the same pixels with fewer widgets."""
+    by_y = sorted(column_pixels, key = lambda p: p[1])
+    runs = []
+    start = None
+    length = 0
+    for p in by_y:
+        if start != None and p[1] == start[1] + length and p[2] == start[2]:
+            length += 1
+            continue
+        if start != None:
+            runs.append(create_dot(start[0], start[1], start[2], length))
+        start = p
+        length = 1
+    if start != None:
+        runs.append(create_dot(start[0], start[1], start[2], length))
+    return runs
 
 def start_from_top(y_top, y_bottom, current_pen_y):
     """
@@ -103,7 +137,7 @@ def get_column_bounds(screen, x, height):
 
     return (y_top, y_bottom)
 
-def draw_skyline(data, show_stars, colors):
+def draw_skyline(data, show_stars, colors, rng):
     animation_frames = []
     stacked_dots = []
     star_locations = []
@@ -134,13 +168,25 @@ def draw_skyline(data, show_stars, colors):
             if (i > 0 and i < len(visible_sky) - 1):
                 if (visible_sky[i - 1] >= visible_sky[i] and visible_sky[i + 1] >= visible_sky[i]):
                     sky = max(0, visible_sky[i] - 1)
-                    potential_star_locations.append((i, randomize(0, sky)))
-        star_locations = pick_stars(potential_star_locations, NUMBER_OF_STARS, randomize(0, 1000), 4 * SCALE)
+                    potential_star_locations.append((i, randomize(rng, 0, sky)))
+        star_locations = pick_stars(potential_star_locations, NUMBER_OF_STARS, randomize(rng, 0, 1000), 4 * SCALE)
 
+    # Niblet: each frame adds one pixel, as before, but columns that are
+    # already finished are painted as merged runs rather than pixel by pixel.
+    finished = []  # run widgets for completed columns
+    column = []  # pixels of the column being drawn
+    column_dots = []
     for pixel in pixels:
         x, y, color = pixel
-        stacked_dots.append(create_dot(x, y, color))
-        animation_frames.append(render.Stack(children = list(stacked_dots)))
+        if len(column) > 0 and column[0][0] != x:
+            finished.extend(column_runs(column))
+            column = []
+            column_dots = []
+        column.append(pixel)
+        column_dots.append(create_dot(x, y, color))
+        animation_frames.append(render.Stack(children = finished + column_dots))
+    finished.extend(column_runs(column))
+    stacked_dots = finished
 
     # We increase the range to 100 so the "hold" lasts longer
     for frame_idx in range(100):
@@ -209,8 +255,10 @@ def main(config):
     selected_city_dataset = None
     selected_city = None
 
+    rng = new_rng()
+
     if display == "Random":
-        selected_city = city_names[randomize(0, len(city_names) - 1)]
+        selected_city = city_names[randomize(rng, 0, len(city_names) - 1)]
 
     else:
         chosen = []
@@ -222,9 +270,9 @@ def main(config):
 
         if len(chosen) == 0:
             # fallback if nothing selected
-            selected_city = city_names[randomize(0, len(city_names) - 1)]
+            selected_city = city_names[randomize(rng, 0, len(city_names) - 1)]
         else:
-            selected_city = chosen[randomize(0, len(chosen) - 1)]
+            selected_city = chosen[randomize(rng, 0, len(chosen) - 1)]
 
     selected_city_dataset = CITIES_BY_NAME[selected_city]["dataset"]
 
@@ -238,7 +286,7 @@ def main(config):
             text_to_display = selected_city
 
     show_stars = config.bool("stars", True)
-    animation_frames = draw_skyline(selected_city_dataset, show_stars, [skyline_color, DEFAULT_COLORS[1], DEFAULT_COLORS[2]])
+    animation_frames = draw_skyline(selected_city_dataset, show_stars, [skyline_color, DEFAULT_COLORS[1], DEFAULT_COLORS[2]], rng)
     last_frame = animation_frames[-1]
 
     if (len(text_to_display) > 0):

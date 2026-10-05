@@ -17,3 +17,22 @@ Displays in the style of the Frasier TV show intro
 You can add your name or the city name in the style of the Frasier Show
 
 ![screenshot](Frasier.webp)
+
+## Niblet downstream changes (2026-10-05)
+
+- The city (when random) and star positions are picked by a small deterministic
+  generator seeded from the current five-minute slot (the app's refresh
+  interval) and the canvas size, instead of the clock's nanoseconds. Renders in
+  the same slot are identical; the next slot gets a new city and stars.
+- Finished columns of the skyline are painted as merged vertical runs instead
+  of one widget per pixel. The drawing order, speed, hold, and text are
+  unchanged; this only reduces render time (about 35 to 60 percent less CPU in
+  local tests).
+
+No settings keys or saved values changed.
+
+Validation (Niblet CLI v0.55.1): with the original city and star picker, the
+run painting produced byte-identical output for four different times (different
+cities), with and without stars and text, at 20 ms and default speeds, and at
+2x. Renders within one five-minute slot are byte-identical. Physical devices
+were not tested with this change.
