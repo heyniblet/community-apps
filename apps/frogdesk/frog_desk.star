@@ -1,3 +1,6 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
+
 load("encoding/base64.star", "base64")
 load("random.star", "random")
 load("render.star", "render")
@@ -3761,7 +3764,10 @@ def _append_timed(children, frames, timed):
     for item in timed:
         idx = item[0]
         ms = item[1]
-        repeats = int(ms / 5)
+
+        # Niblet: the runtime requires frame delays of at least 20 ms, so hold
+        # each frame for its duration rounded to the nearest 20 ms.
+        repeats = max(1, int((ms + 10) / 20))
         for _ in range(repeats):
             children.append(render.Image(src = frames[idx]))
 
@@ -3864,7 +3870,7 @@ def main(config):
         _append_scene(children, name)
     return render.Root(
         child = render.Animation(children = children),
-        delay = 5,
+        delay = 20,
         show_full_animation = config.bool("finish_animation", True),
         max_age = 300,
     )
