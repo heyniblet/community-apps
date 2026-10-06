@@ -27,3 +27,26 @@ Live score replacement between cards is enabled with League Name or Game Info he
 Timezone is now a searchable IANA timezone setting. Leave it blank to follow the display timezone. Existing installations retain their previous effective timezone through the reviewed Cloud migration.
 
 Downstream change, original authorship retained. Requires the Niblet runtime with timezone Text metadata. All changed schemas were evaluated with networking denied. Migration and rendering evidence is recorded in the timezone release audit; schema checks alone do not certify live provider behavior.
+
+### Bundled pre-resized team logos (October 2026)
+
+Downstream change, original authorship retained. Every team logo the app
+already drew from ESPN (and the transparent placeholder) is packaged in
+`images/logos/` at each size the layouts draw it (compact sizes, 30 and 32 pixels), produced by
+the runtime's own nearest-neighbour resize from the same source URLs;
+`logos.star` lists each source URL and its SHA-256. Regenerate or verify with
+`cd tools/lunchbox_logos && go run . -app xflscores [-check]`. An all-teams render
+now makes one request (the scoreboard, cached 60 seconds) instead of up to
+9. Team focus still requests each day of its calendar window separately (cached 60 seconds), as before, so its results stay complete. Retro and Stadium no longer download logos they never
+draw, and the clock is read only for team focus, the Current Time header, or
+when a pre-game card compares its kickoff date with today. A logo URL or size
+missing from the bundle is still fetched from ESPN as before. Settings,
+ordering, timing and artwork are unchanged; a logo ESPN later redraws at the
+same URL stays at the bundled version until the bundle is regenerated.
+
+Validation: `tools/lunchbox_logos/parity.py` rendered the previous and new
+source from the same recorded responses (live feed and all teams from four 2023 dates) across every layout,
+header, pre-game mode, team focus sample and timezone at three pinned times:
+222 of 222 WebP outputs were byte-identical, with no request outside the
+recording. The sports playback, timezone and sequence tests also pass.
+Physical-screen playback is not covered by these checks.
