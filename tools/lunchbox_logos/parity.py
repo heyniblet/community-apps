@@ -165,8 +165,11 @@ def record(runtime, base_main, app, directory, configs):
             snap.add(feed, 200, merged_feed(cfg["league"], dates))
         for _ in range(6):
             missing = set()
-            for config in configs[:: max(1, len(configs) // 12)] + [c for c in configs if "selectedTeam" in c]:
-                meta, err = render(runtime, base_main, directory / "probe.webp", config, NOWS[0], 1, snap.dir if snap.entries else None, directory / "probe.json")
+            # Team focus requests calendar windows, so discover them at every pinned time.
+            probes = [(c, NOWS[0]) for c in configs[:: max(1, len(configs) // 12)]]
+            probes += [(c, now) for c in configs if "selectedTeam" in c for now in NOWS]
+            for config, now in probes:
+                meta, err = render(runtime, base_main, directory / "probe.webp", config, now, 1, snap.dir if snap.entries else None, directory / "probe.json")
                 if meta is None:
                     print(f"{app}/{name}: record render failed {config}: {err}", file=sys.stderr)
                     continue
