@@ -1,3 +1,6 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
+
 """
 Applet: Tennis Season
 Summary: Tennis all year round
@@ -592,12 +595,16 @@ def main(config):
     who = ""
     if follow != None and follow != "":
         parsed = json.decode(follow, None)
-        if parsed != None:
-            raw = parsed.get("value", "")
-            bits = raw.split("|")
-            if len(bits) >= 2:
-                guid = bits[0]
-                who = surname(bits[1])
+        raw = parsed.get("value", "") if type(parsed) == "dict" else ""
+        if raw == "":
+            # Niblet: Cloud has no typeahead fields, so a typed name is
+            # matched against the rankings the old typeahead searched.
+            matches = search_player(follow)
+            raw = matches[0].value if matches else ""
+        bits = raw.split("|")
+        if len(bits) >= 2:
+            guid = bits[0]
+            who = surname(bits[1])
 
     # --- a followed player takes priority over everything else
     if guid != "" and len(running) > 0:
@@ -707,12 +714,12 @@ def get_schema():
                 icon = "trophy",
                 default = False,
             ),
-            schema.Typeahead(
+            schema.Text(
                 id = "player",
                 name = "Follow a player",
-                desc = "Their match takes over the screen. Leave empty to follow the whole tournament.",
+                desc = "Name of a ranked ATP or WTA player. Their match takes over the screen. Leave empty to follow the whole tournament.",
                 icon = "user",
-                handler = search_player,
+                default = "",
             ),
             schema.Dropdown(
                 id = "whenout",
