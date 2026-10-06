@@ -154,7 +154,7 @@ def matrix(runtime, main, app):
         configs.append({"divisionType": division, "teamsOptions": rows[i % len(rows)] if rows else None,
                         "displayTop": tops[i % len(tops)] if tops else None})
     for i, tz in enumerate(TIMEZONES[1:]):
-        configs.append({"timezone": tz, "displayTop": "time" if "time" in tops else None, "displayType": (display_types or [None])[i]})
+        configs.append({"timezone": tz, "displayTop": "time" if "time" in tops else None, "displayType": (display_types or [None, None])[i]})
     return [{k: v for k, v in c.items() if v is not None} for c in configs]
 
 
