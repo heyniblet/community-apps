@@ -17,6 +17,6 @@ jobs:
         run: python3 tests/timezone_source_equivalence.py
       - name: Evaluate timezone and sports contracts with networking denied
         run: |
-          for test in standard_timezones sports_timezones sports_score_dates ncaaf_score_dates scoreboard_sequences sports_playback nfl_logo_assets content_playback; do
+          for test in standard_timezones sports_timezones sports_score_dates ncaaf_score_dates scoreboard_sequences sports_playback nfl_logo_assets college_logo_bundles content_playback; do
             sudo unshare --net python3 "tests/$test.py" /usr/local/bin/niblet
           done
