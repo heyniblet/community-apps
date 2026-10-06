@@ -296,6 +296,7 @@
   {
     "app_id": "mhky-scores",
     "source_path": "apps/mhkyscores/mhky_scores.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "ed585e1d56f9bc1f279ea41dd6376c5e149672a79ec861871affbc60d5d3d874",
     "location_field": "location",
     "kind": "timezone-only"
@@ -303,6 +304,7 @@
   {
     "app_id": "mlb-standings",
     "source_path": "apps/mlbstandings/mlb_standings.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "39cdb7f61d5b535c15500fd99d95fbef28a87b072272277421b33a476c4aab10",
     "location_field": "location",
     "kind": "timezone-only"
@@ -310,6 +312,7 @@
   {
     "app_id": "nba-standings",
     "source_path": "apps/nbastandings/nba_standings.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "33f2e2f980db882bf9492a9581d9484c3e4d398010de64775faa7c1d57513b13",
     "location_field": "location",
     "kind": "timezone-only"
@@ -332,6 +335,7 @@
   {
     "app_id": "nfl-standings",
     "source_path": "apps/nflstandings/nfl_standings.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "524857813477a0a5ce84db4a3efac5157f271122dd4eff5670d9fa0f1e08bf1b",
     "location_field": "location",
     "kind": "timezone-only"
@@ -346,6 +350,7 @@
   {
     "app_id": "nhl-standings",
     "source_path": "apps/nhlstandings/nhl_standings.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "3bbb7374d364d27f1c6debafd35dd87eb84b129edefab96fd7656a8325a23413",
     "location_field": "location",
     "kind": "timezone-only"
@@ -501,6 +506,7 @@
   {
     "app_id": "ufl-scores",
     "source_path": "apps/uflscores/ufl_scores.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "72bcbdc49415017c1589575af971e5b1338135879851e6ea4cf970f275c0e217",
     "location_field": "location",
     "kind": "timezone-only"
@@ -529,6 +535,7 @@
   {
     "app_id": "wbc-scores",
     "source_path": "apps/wbcscores/wbc_scores.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "ba8f0977d0e9295b2f6d26e2eb748da3bc1d1309a7dd43fa455b6234a47ee404",
     "location_field": "location",
     "kind": "timezone-only"
@@ -550,6 +557,7 @@
   {
     "app_id": "xfl-scores",
     "source_path": "apps/xflscores/xfl_scores.star",
+    "equivalence_ref": "3081aa57c",
     "previous_sha256": "1e7a64fe83fbe51dbb8a3b0ba695b5cd0f50139ce31afb78cf1ecfd55fcecefd",
     "location_field": "location",
     "kind": "timezone-only"

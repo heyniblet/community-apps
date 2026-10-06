@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 from pathlib import Path
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -65,6 +66,11 @@ def main(config):
     return [render.Root(child = render.Text("OK"))]
 '''
             path = Path(temporary) / f"{league}.star"
+            app_dir = root / f"apps/{league}scores"
+            if (app_dir / "logos.star").exists():
+                shutil.copy(app_dir / "logos.star", Path(temporary) / "logos.star")
+            if (app_dir / "images").exists():
+                shutil.copytree(app_dir / "images", Path(temporary) / "images", dirs_exist_ok=True)
             path.write_text(source + checks)
             subprocess.run([runtime, "render", str(path), "--output", str(Path(temporary) / "test.webp"), "--silent"], check=True)
 print("MLB/NBA/WNBA: daily queries, team selection, empty results, year rollover and DST passed")
