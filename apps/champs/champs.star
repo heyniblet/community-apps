@@ -1,3 +1,5 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
 """
 Applet: Champs
 Summary: Random past championships
@@ -15,7 +17,6 @@ load("time.star", "time")
 LOGO_URL = "https://a.espncdn.com/combiner/i?img=/i/teamlogos/%s/500/%s.png&h=%d&w=%d"
 LOGO_SIZE = 12
 LOGO_TTL = 60 * 60 * 24 * 30
-DATA_TTL = 60 * 60 * 24
 
 LEAGUE_COLORS = {
     "NFL": "#013369",
@@ -439,10 +440,9 @@ def parse_int(val, default):
 
 def main(config):
     league = config.str("league", "ALL")
-    data_url = config.str("data_url", "")
     recent_years = parse_int(config.str("recent_years", "10"), DEFAULT_RECENT_YEARS)
 
-    champs = load_data(data_url)
+    champs = load_data()
     if league != "ALL":
         champs = [c for c in champs if c["league"] == league]
     if len(champs) == 0:
@@ -476,11 +476,7 @@ def main(config):
         ),
     )
 
-def load_data(data_url):
-    if data_url:
-        res = http.get(url = data_url, ttl_seconds = DATA_TTL)
-        if res.status_code == 200:
-            return res.json()
+def load_data():
     return json.decode(DATA_JSON)
 
 def short_title(champ):
@@ -589,13 +585,6 @@ def get_schema():
                 desc = "Years back to prioritize (50% chance). Set to 0 for all years equally.",
                 icon = "clock",
                 default = "10",
-            ),
-            schema.Text(
-                id = "data_url",
-                name = "Data URL",
-                desc = "Optional URL to a champs.json file (e.g. on S3) that overrides the built-in list.",
-                icon = "link",
-                default = "",
             ),
         ],
     )
