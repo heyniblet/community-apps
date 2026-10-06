@@ -39,7 +39,8 @@
   "uflscores": {
     "source": "ufl_scores.star", "feed": "scoreboard", "league": "football/ufl",
     "rule": "combiner", "dates": [["20260327", "20260413"]],
-    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+    "layout_sizes": [30, 32], "compact": true, "scales": [1],
+    "parity_exclude_teams": ["MEM", "MIC", "SA"]
   },
   "xflscores": {
     "source": "xfl_scores.star", "feed": "scoreboard", "league": "football/xfl",

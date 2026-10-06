@@ -84,7 +84,7 @@ def fetch(url):
         return error.code, error.read()
 
 
-def merged_feed(league, dates):
+def merged_feed(league, dates, exclude=()):
     events, seen = [], set()
     doc = None
     for day in dates:
@@ -92,7 +92,9 @@ def merged_feed(league, dates):
         assert status == 200, (league, day, status)
         doc = json.loads(body)
         for event in doc.get("events", []):
-            if event["id"] not in seen:
+            teams = {c["team"].get("abbreviation") for c in event["competitions"][0]["competitors"]}
+            # Teams without an ESPN logo make both versions fail the render; skip them.
+            if event["id"] not in seen and not teams & set(exclude):
                 seen.add(event["id"])
                 events.append(event)
     doc["events"] = events
@@ -132,7 +134,7 @@ def matrix(runtime, main, app):
     display_types = options(runtime, main, "displayType")
     tops = options(runtime, main, "displayTop")
     pregame = options(runtime, main, "pregameDisplay")
-    teams = options(runtime, main, "selectedTeam") or options(runtime, main, "teamsOptions")
+    teams = options(runtime, main, "selectedTeam")
     configs = []
     # Every layout with every header.
     for display_type, top in itertools.product(display_types or [None], tops or [None]):
@@ -145,6 +147,12 @@ def matrix(runtime, main, app):
     for i, team in enumerate(focus[:: max(1, len(focus) // 6)] + [t for t in ("IND", "LAR", "CAR", "NYG") if t in focus]):
         configs.append({"selectedTeam": team, "displayType": (display_types or [None])[i % max(1, len(display_types))],
                         "timezone": TIMEZONES[i % 3], "rotationSpeed": str(3 + i % 5)})
+    # Standings: every division grouping, cycling the rows per card and headers.
+    divisions = options(runtime, main, "divisionType")
+    rows = options(runtime, main, "teamsOptions")
+    for i, division in enumerate(divisions):
+        configs.append({"divisionType": division, "teamsOptions": rows[i % len(rows)] if rows else None,
+                        "displayTop": tops[i % len(tops)] if tops else None})
     for i, tz in enumerate(TIMEZONES[1:]):
         configs.append({"timezone": tz, "displayTop": "time" if "time" in tops else None, "displayType": (display_types or [None])[i]})
     return [{k: v for k, v in c.items() if v is not None} for c in configs]
@@ -162,7 +170,7 @@ def record(runtime, base_main, app, directory, configs):
             meta, err = render(runtime, base_main, directory / "probe.webp", {}, NOWS[0], 1, None, directory / "probe.json")
             assert meta, err
             feed = next(i["url"] for i in meta["inputs"] if "/scoreboard" in i["url"] and "dates=" not in i["url"])
-            snap.add(feed, 200, merged_feed(cfg["league"], dates))
+            snap.add(feed, 200, merged_feed(cfg["league"], dates, cfg.get("parity_exclude_teams", ())))
         for _ in range(6):
             missing = set()
             # Team focus requests calendar windows, so discover them at every pinned time.
