@@ -1,3 +1,6 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
+
 """
 Applet: Chroma Clock
 Summary: Stylish animated clock
@@ -1958,21 +1961,8 @@ STYLES = [
     ("Pac-Man", "pacman"),
 ]
 
-def random_style_options(style):
-    # When Random is picked, show one toggle per style to choose what to cycle through
-    if style != "random":
-        return []
-    return [
-        schema.Toggle(
-            id = "random_" + v,
-            name = d,
-            desc = "Include " + d + " in the random rotation.",
-            icon = "shuffle",
-            default = True,
-        )
-        for (d, v) in STYLES
-    ]
-
+# Niblet: Cloud has no generated schema fields, so Random cycles every style
+# unless a saved per-style toggle from another host excludes it.
 def pick_random_style(config):
     enabled = [v for (_, v) in STYLES if config.bool("random_" + v, True)]
     if not enabled:
@@ -1993,11 +1983,6 @@ def get_schema():
                     schema.Option(display = d, value = v)
                     for (d, v) in STYLES
                 ],
-            ),
-            schema.Generated(
-                id = "random_styles",
-                source = "style",
-                handler = random_style_options,
             ),
             schema.Toggle(
                 id = "use_24h",
