@@ -56,7 +56,7 @@ def fetch_earthquakes(*args):
 """, [], None),
     "universalical": ("""
 def main(config):
-    return render_calendar_base_object([], get_calendar_bottom({"hasEvent": True, "summary": "An event title that requires a complete scrolling pass", "copy": "Tomorrow afternoon", "textColor": "#ffffff", "shouldAnimateText": True}))
+    return render_calendar_base_object([], get_calendar_bottom({"hasEvent": True, "summary": "An event title that requires a complete scrolling pass", "copy": "Tomorrow afternoon", "textColor": "#ffffff", "shouldAnimateText": True}), DEFAULT_FRAME_BG_COLOR)
 """, [], None),
     "ouraring": ("", [], 6000),
     "solaredgesummary": ("", [], 15000),

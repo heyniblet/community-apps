@@ -44,6 +44,7 @@
   {
     "app_id": "calendar-visualizer",
     "source_path": "apps/calendar_visualizer/calendar_visualizer.star",
+    "equivalence_ref": "45121bb7",
     "previous_sha256": "f0be2f602771f148f602bc629325d3e9e781f3f12b3b30d30551a4039917b3b6",
     "location_field": "location",
     "kind": "timezone-only"
@@ -328,6 +329,7 @@
   {
     "app_id": "next-event",
     "source_path": "apps/nextevent/next_event.star",
+    "equivalence_ref": "45121bb7",
     "previous_sha256": "94889d42ea24196ea28a3605e1b8f518cee00597d8ad79a197396fa44531488a",
     "location_field": "loc",
     "kind": "timezone-only"
@@ -521,6 +523,7 @@
   {
     "app_id": "universal-ical",
     "source_path": "apps/universalical/universal_ical.star",
+    "equivalence_ref": "45121bb7",
     "previous_sha256": "24fc68934d65c5b637cf57b6226b23fe2d06650d50328782f7f34cf86a6d811e",
     "location_field": "location",
     "kind": "timezone-only"

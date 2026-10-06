@@ -399,7 +399,7 @@ def get_current_leagues(username):
 
     user_id_cached = cache.get(username + "_user_id")
     if user_id_cached != None:
-        print("    Cache Hit! Used cached used id")
+        print("    Cache Hit! Used cached used id (" + user_id_cached + ")")
         user_id = user_id_cached
     else:
         user_url = SLEEPER_API_BASE_URL + "/user/" + username

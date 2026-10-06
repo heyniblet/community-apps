@@ -5,121 +5,249 @@
 """
 Applet: GC Daily Pick
 Summary: Guitar Center daily pick
-Description: Shows the daily pick deal from Guitar Center.
+Description: Shows the daily pick deal from Guitar Center or Musicians Friend.
 Author: Bennett Schoonerman
 """
 
 load("animation.star", "animation")
 load("http.star", "http")
-load("images/guitar_center_logo.png", GUITAR_CENTER_LOGO_ASSET = "file")
-load("render.star", "render")
+load("images/guitarCenter.png", GUITAR_CENTER_LOGO_ASSET = "file")
+load("images/musiciansFriend.png", MUSICIANS_FRIEND_LOGO_ASSET = "file")
+load("render.star", "canvas", "render")
 load("schema.star", "schema")
 
-GUITAR_CENTER_LOGO = GUITAR_CENTER_LOGO_ASSET.readall()
-DAILY_PICK_READER_URL = "https://r.jina.ai/https://www.guitarcenter.com/Daily-Pick.gc"
-IMAGE_PREFIX = "https://media.guitarcenter.com/"
+# only changes once per day but we will refetch on the hour to be safe
+CACHE_TTL = 3600
+SCALE = 2 if canvas.is2x() else 1
+TRANSFORM_DURATION = 250
 
-def get_daily_pick():
-    response = http.get(DAILY_PICK_READER_URL)
-    body = response.body()
-    if response.status_code != 200 or len(body) > 512 * 1024:
-        return None
+# Niblet: gviz serves the CSV directly; /export redirects to a variable googleusercontent.com host.
+GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1z4UprVH5z79gc85e_inF0NDzAD7pmmExNme1V17Ne-c/gviz/tq?tqx=out:csv&"
+IMAGE_PREFIXES = ["https://media.guitarcenter.com/", "https://media.musiciansfriend.com/"]
+MAX_BYTES = 512 * 1024
+SOURCE_SHEETS = {
+    "guitar_center": "gid=1900080353",
+    "musicians_friend": "gid=1879148122",
+}
 
-    deal = parse_deal(body)
-    if not deal:
-        return None
+SOURCE_OPTIONS = [
+    schema.Option(
+        display = "Guitar Center",
+        value = "guitar_center",
+    ),
+    schema.Option(
+        display = "Musician's Friend",
+        value = "musicians_friend",
+    ),
+]
 
-    image_url = deal.get("image_url")
-    if type(image_url) == "string" and image_url.startswith(IMAGE_PREFIX) and len(image_url) <= 2048:
-        image_response = http.get(image_url)
-        if image_response.status_code == 200 and len(image_response.body()) <= 1024 * 1024:
-            deal["image"] = image_response.body()
-    return deal
+def splitCsvLine(line):
+    cells = []
+    current = ""
+    in_quotes = False
 
-def parse_deal(body):
-    lines = body.split("\n")
-    start = -1
-    for index in range(len(lines)):
-        if lines[index].strip() == "# Daily Pick":
-            start = index
-            break
-    if start < 0:
-        return None
+    i = 0
+    for i in range(len(line)):
+        char = line[i]
+        if char == '"':
+            if in_quotes and i + 1 < len(line) and line[i + 1] == '"':
+                current += '"'
+                i = i + 1
+            else:
+                in_quotes = not in_quotes
+        elif char == "," and not in_quotes:
+            cells.append(current)
+            current = ""
+        else:
+            current += char
 
-    deal = {"image": GUITAR_CENTER_LOGO, "image_url": "", "name": "", "original": "", "savings": "", "price": ""}
-    for line in lines[start + 1:min(start + 80, len(lines))]:
-        line = line.strip()
-        link_at = line.find("](")
-        if line.startswith("![") and link_at > 2 and line.endswith(")") and not deal["image_url"]:
-            deal["image_url"] = line[link_at + 2:-1]
-            alt = line[2:link_at]
-            deal["name"] = alt.split(": ")[-1][:160]
-        elif line.startswith("## [") and link_at > 4:
-            deal["name"] = line[4:link_at][:160]
-        elif line.startswith("Save "):
-            deal["savings"] = line[5:40]
-        elif line.startswith("Regular Price:"):
-            deal["original"] = line[14:].strip()[:24]
-        elif line.startswith("$") and not deal["price"]:
-            deal["price"] = line[:24]
+    cells.append(current)
+    return cells
 
-    if not deal["name"] or not deal["price"]:
-        return None
-    return deal
+def fetchDealImage(image_url):
+    if image_url == "":
+        return GUITAR_CENTER_LOGO_ASSET.readall()
+
+    # The sheet is third-party data: only fetch images from the retailers' own CDNs.
+    allowed = len(image_url) <= 2048 and any([image_url.startswith(prefix) for prefix in IMAGE_PREFIXES])
+    if not allowed:
+        return GUITAR_CENTER_LOGO_ASSET.readall()
+
+    resp = http.get(url = image_url, ttl_seconds = CACHE_TTL)
+    if resp.status_code != 200 or len(resp.body()) > 1024 * 1024:
+        return GUITAR_CENTER_LOGO_ASSET.readall()
+    return resp.body()
+
+def parseDealRow(raw_csv):
+    lines = raw_csv.split("\n")
+    if len(lines) < 2:
+        return {}
+
+    header = splitCsvLine(lines[0])
+    latest_row = {}
+    latest_timestamp = ""
+
+    for i in range(1, len(lines)):
+        row_text = lines[i]
+        if row_text == "":
+            continue
+
+        values = splitCsvLine(row_text)
+        if len(values) < len(header):
+            continue
+
+        row = {}
+        for j in range(len(header)):
+            key = header[j].strip()
+            row[key] = values[j].strip()
+
+        row_timestamp = row.get("scrapedAt", "")
+        if row_timestamp > latest_timestamp:
+            latest_row = row
+            latest_timestamp = row_timestamp
+
+    return latest_row
+
+def getDailyPick(source_name):
+    selected_sheet = SOURCE_SHEETS.get(source_name, SOURCE_SHEETS["guitar_center"])
+    sheet_url = GOOGLE_SHEET_CSV_URL + selected_sheet
+    resp = http.get(url = sheet_url, ttl_seconds = CACHE_TTL)
+    row = parseDealRow(resp.body()) if resp.status_code == 200 and len(resp.body()) <= MAX_BYTES else {}
+
+    if row == {}:
+        return {
+            "itemName": "Daily Pick",
+            "originalPrice": "$0.00",
+            "savings": "$0.00",
+            "price": "$0.00",
+            "dealImage": GUITAR_CENTER_LOGO_ASSET.readall(),
+        }
+
+    discount = row.get("discount", "$0.00")
+    if discount == "":
+        discount = "$0.00"
+
+    return {
+        "itemName": row.get("title", "Daily Pick"),
+        "originalPrice": row.get("originalPrice", "$0.00"),
+        "savings": discount,
+        "price": row.get("price", discount),
+        "dealImage": fetchDealImage(row.get("image", "")),
+    }
+
+def getBrandLabel(source_name):
+    if source_name == "musicians_friend":
+        return "MF"
+    return "GC"
+
+def getBrandLogo(source_name):
+    if source_name == "musicians_friend":
+        return MUSICIANS_FRIEND_LOGO_ASSET.readall()
+    return GUITAR_CENTER_LOGO_ASSET.readall()
 
 def main(config):
-    # ponytail: opt-in isolates the slow reader; replace it if Guitar Center offers a stable feed.
+    source_name = config.get("source", "guitar_center")
+    if source_name not in SOURCE_SHEETS:
+        source_name = "guitar_center"
+
+    # Opt-in: the deal comes from a community-run Google Sheet, not from the retailer.
     if not config.bool("live", False):
         return render.Root(
             child = render.Row(
                 expanded = True,
                 main_align = "space_evenly",
                 cross_align = "center",
-                children = [render.Image(src = GUITAR_CENTER_LOGO, width = 32), render.WrappedText("Enable live deal", width = 30)],
+                children = [render.Image(src = getBrandLogo(source_name), width = 32 * SCALE), render.WrappedText("Enable live deal", width = 30 * SCALE)],
             ),
         )
-    deal = get_daily_pick()
-    if not deal:
-        return render.Root(child = render.WrappedText("Daily Pick unavailable", color = "#ffcc66"))
 
-    details = render.Column(
-        children = [
-            render.Marquee(width = 64, child = render.Text(deal["name"]), offset_start = 5, offset_end = 32),
-            render.Row(
-                children = [
-                    render.Column(
-                        children = [
-                            render.Box(width = 40, height = 8, child = render.Text(deal["original"])),
-                            render.Box(width = 40, height = 8, child = render.Text("-" + deal["savings"], color = "#EA202E")),
-                            render.Box(width = 40, height = 1, child = render.Box(width = 30, height = 1, color = "#ccc")),
-                            render.Box(width = 40, height = 8, child = render.Text(deal["price"], color = "#85BB65")),
-                        ],
-                    ),
-                    render.Image(width = 24, height = 24, src = deal["image"]),
-                ],
-            ),
-        ],
+    data = getDailyPick(source_name)
+    brand_label = getBrandLabel(source_name)
+    brand_logo = getBrandLogo(source_name)
+    deal_image = render.Box(
+        width = 24 * SCALE,
+        height = 24 * SCALE,
+        color = "#111111",
+        child = render.Text(brand_label, color = "#FFFFFF", font = "tb-8"),
     )
+    if data["dealImage"] != "":
+        deal_image = render.Image(width = 24 * SCALE, height = 24 * SCALE, src = data["dealImage"])
+
+    # print(data)
     return render.Root(
         child = render.Stack(
             children = [
                 animation.Transformation(
-                    duration = 450,
-                    child = render.Image(src = GUITAR_CENTER_LOGO, width = 64, height = 32),
+                    duration = TRANSFORM_DURATION,
+                    child = render.Box(
+                        width = 64 * SCALE,
+                        height = 32 * SCALE,
+                        color = "#020202",
+                        child = render.Image(brand_logo, width = 64 * SCALE, height = 32 * SCALE),
+                    ),
                     keyframes = [
-                        animation.Keyframe(percentage = 0, transforms = [animation.Translate(0, 0)]),
-                        animation.Keyframe(percentage = 0.1, transforms = [animation.Translate(0, 0)]),
-                        animation.Keyframe(percentage = 0.2, transforms = [animation.Translate(0, -64)]),
-                        animation.Keyframe(percentage = 1, transforms = [animation.Translate(0, -64)], curve = "ease_in"),
+                        #slide GC logo up
+                        animation.Keyframe(
+                            percentage = 0,
+                            transforms = [animation.Translate(0, 0)],
+                        ),
+                        animation.Keyframe(
+                            percentage = 0.1,
+                            transforms = [animation.Translate(0, 0)],
+                        ),
+                        animation.Keyframe(
+                            percentage = 0.2,
+                            transforms = [animation.Translate(0, -64 * SCALE)],
+                        ),
+                        animation.Keyframe(
+                            percentage = 1,
+                            transforms = [animation.Translate(0, -64 * SCALE)],
+                            curve = "ease_in",
+                        ),
                     ],
                 ),
                 animation.Transformation(
-                    duration = 450,
-                    child = details,
+                    duration = TRANSFORM_DURATION,
+                    child = render.Column(
+                        children = [
+                            render.Marquee(
+                                width = 64 * SCALE,
+                                child = render.Text(data["itemName"], ""),
+                                offset_start = 4 * SCALE,
+                                offset_end = 64 * SCALE,
+                                delay = 50,
+                            ),
+                            render.Row(
+                                children = [
+                                    render.Column(
+                                        children = [
+                                            render.Box(width = 40 * SCALE, height = 8 * SCALE, child = render.Row(children = [render.Text(content = data["originalPrice"])])),
+                                            render.Box(width = 40 * SCALE, height = 8 * SCALE, child = render.Text(content = "-" + data["savings"], color = "#EA202E")),
+                                            render.Box(width = 40 * SCALE, height = 1 * SCALE, child = render.Row(children = [render.Box(width = 30 * SCALE, height = 1 * SCALE, color = "#ccc")])),
+                                            render.Box(width = 40 * SCALE, height = 8 * SCALE, child = render.Text(content = data["price"], color = "#85BB65")),
+                                        ],
+                                    ),
+                                    deal_image,
+                                ],
+                            ),
+                        ],
+                    ),
                     keyframes = [
-                        animation.Keyframe(percentage = 0, transforms = [animation.Translate(0, 64)], curve = "ease_out"),
-                        animation.Keyframe(percentage = 0.1, transforms = [animation.Translate(0, 64)], curve = "ease_out"),
-                        animation.Keyframe(percentage = 0.2, transforms = [animation.Translate(0, 0)]),
+                        #slide GC logo up
+                        animation.Keyframe(
+                            percentage = 0,
+                            transforms = [animation.Translate(0, 64 * SCALE)],
+                            curve = "ease_out",
+                        ),
+                        animation.Keyframe(
+                            percentage = 0.1,
+                            transforms = [animation.Translate(0, 64 * SCALE)],
+                            curve = "ease_out",
+                        ),
+                        animation.Keyframe(
+                            percentage = 0.20,
+                            transforms = [animation.Translate(0, 0)],
+                        ),
                     ],
                 ),
             ],
@@ -133,9 +261,17 @@ def get_schema():
             schema.Toggle(
                 id = "live",
                 name = "Live Daily Pick",
-                desc = "Fetch today's deal through the public Jina Reader fallback because Guitar Center blocks direct app requests.",
+                desc = "Fetch today's deal from a community-maintained Google Sheet, because Guitar Center and Musician's Friend block direct app requests.",
                 icon = "music",
                 default = False,
+            ),
+            schema.Dropdown(
+                id = "source",
+                name = "Source",
+                desc = "Choose where to pull the daily pick from.",
+                icon = "guitar",
+                options = SOURCE_OPTIONS,
+                default = "guitar_center",
             ),
         ],
     )

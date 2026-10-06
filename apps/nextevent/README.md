@@ -15,3 +15,7 @@ See [known compatibility differences](../../docs/COMPATIBILITY.md) and [maintena
 Timezone is now a searchable IANA timezone setting. Leave it blank to follow the display timezone. Existing installations retain their previous effective timezone through the reviewed Cloud migration.
 
 Downstream change, original authorship retained. Requires the Niblet runtime with timezone Text metadata. All changed schemas were evaluated with networking denied. Migration and rendering evidence is recorded in the timezone release audit; schema checks alone do not certify live provider behavior.
+
+## Recurring events (October 2026)
+
+The calendar is parsed entirely inside the app, with no external adapter. Recurring events (RRULE, RDATE, EXDATE, and moved or cancelled instances), TZID time zones, and VTIMEZONE definitions are supported. Adapted from tronbyt/apps eb488858 (#798). Only HTTPS URLs on Google, Outlook, and calendarlabs hosts are fetched, `webcal://` links are accepted, and feeds over 1 MiB are rejected. The `url`, `title`, and legacy `loc` settings keep their meaning; saved configurations continue to work.

@@ -5,13 +5,22 @@
 """
 Applet: No Laying Up
 Summary: Lists NLU content
-Description: No Laying Up produces golf and golf adjacent media content. This app displays the last 6 items posted to the No Laying Up RSS feed. Orange for NLU podcasts, green for Trap Draw podcasts, blue for blogs entries and red for video content. 
+Description: No Laying Up produces golf and golf adjacent media content. This app displays the last 6 items posted to the No Laying Up RSS feed. Orange for NLU podcasts, green for Trap Draw podcasts, blue for Nest podcasts, yellow for blogs and red for video content. 
 Author: M0ntyP
 
 Very niche app for the true NLU sickos out there
 
 v1.1
 Updated to reflect change in titles in RSS feed
+
+v1.2
+Distinguish Nest podcast episodes from the other podcasts with blue color
+Changed blog color to yellow
+
+v1.2.1
+Changed Nest color to lighter blue, previous color was too dark
+Stripped "Episode" from the title of Nest pods to align with other pod title format, "<Episode Number>: <Title>"
+Updated app description to reflect new colors
 """
 
 load("http.star", "http")
@@ -37,7 +46,14 @@ def main():
     for i in range(0, item_count, 1):
         desc = channel[i]
         article_link = link[i]
-        nlu_podcast = "/trap-draw/" not in article_link
+        if "/trap-draw" in article_link:
+            nlu_podcast = "Trap"
+        elif "/nest-podcast" in article_link:
+            nlu_podcast = "Nest"
+            if desc.startswith("Episode "):
+                desc = desc[8:]
+        else:
+            nlu_podcast = "NLU"
         content = "pod" if "/podcast" in article_link else "vid" if "/video" in article_link else "blo"
 
         description.append(desc)
@@ -76,14 +92,16 @@ def articles(description, content_type, pod_type):
 
     for i in range(0, len(description), 1):
         if content_type[i] == "pod":
-            if pod_type[i] == True:
+            if pod_type[i] == "NLU":
                 content_color = "#eb9b34"
-            else:
+            elif pod_type[i] == "Trap":
                 content_color = "#019b5b"
+            else:
+                content_color = "#88ccff"
         elif content_type[i] == "vid":
             content_color = "#eb3449"
         elif content_type[i] == "blo":
-            content_color = "#3440eb"
+            content_color = "#ebe534"
 
         articles.append(render.WrappedText(content = description[i], color = content_color, font = "CG-pixel-3x5-mono", linespacing = 1))
         articles.append(render.Box(width = 64, height = 3, color = "#000"))
