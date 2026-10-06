@@ -22,7 +22,7 @@ events += [dict(events[0], updated=True)]
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
     for name in names:
-        source = next((root/'apps'/name).glob('*.star')).read_text()
+        source = next(p for p in (root/'apps'/name).glob('*.star') if p.name != 'logos.star').read_text()
         assets = root / 'apps' / name / 'images'
         if assets.exists():
             shutil.copytree(assets, tmp / 'images', dirs_exist_ok=True)
@@ -30,6 +30,8 @@ with tempfile.TemporaryDirectory() as directory:
         logos = root / 'apps' / name / 'logos'
         if logos.exists():
             shutil.copytree(logos, tmp / 'logos', dirs_exist_ok=True)
+        if (root / 'apps' / name / 'logos.star').exists():
+            shutil.copy(root / 'apps' / name / 'logos.star', tmp / 'logos.star')
         assert 'page_size =' not in source and '60 // len(scores)' not in source, name
         source = source.replace('def get_schema(', 'def original_get_schema(', 1)
         source = source.replace('def main(', 'def app_main(', 1).replace('def get_cachable_data(', 'def original_get_cachable_data(',1)

@@ -20,7 +20,7 @@ cases = [
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
     for app in apps:
-        path = next((root / "apps" / app).glob("*.star"))
+        path = next(p for p in (root / "apps" / app).glob("*.star") if p.name != "logos.star")
         schema = json.loads(subprocess.check_output([runtime, "schema", str(path)]))
         fields = {f["id"]: f for f in schema["schema"]}
         assert "location" not in fields and fields["timezone"]["type"] == "text", app
@@ -32,6 +32,8 @@ with tempfile.TemporaryDirectory() as directory:
         logos = path.parent / 'logos'
         if logos.exists():
             shutil.copytree(logos, tmp / 'logos', dirs_exist_ok=True)
+        if (path.parent / 'logos.star').exists():
+            shutil.copy(path.parent / 'logos.star', tmp / 'logos.star')
         source += '\nTEST_CASES = json.decode(' + repr(json.dumps(cases)) + ')\n'
         source += '''
 def main(config):

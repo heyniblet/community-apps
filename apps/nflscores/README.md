@@ -63,3 +63,27 @@ Validation: `tests/nfl_logo_assets.py` compares original image hashes and exact
 rendered bytes at 64x32 and 128x64 with networking denied. Full sports playback,
 timezone and ordering tests are also required. Physical-screen playback is not
 covered by these checks.
+
+### Bundled pre-resized team logos (October 2026)
+
+Downstream change, original authorship retained. Every team logo the app
+already drew from ESPN (and the AFC/NFC, Colts, Rams and placeholder artwork)
+is packaged in `images/logos/` at each size the layouts draw it (16/14/18/20,
+30 and 32 pixels), produced by the runtime's own nearest-neighbour resize from
+the same source URLs; `logos.star` lists each source URL and its SHA-256.
+Regenerate or verify with `cd tools/lunchbox_logos && go run . -app nflscores
+[-check]`. Renders now make one request (the scoreboard, cached 60 seconds)
+instead of about 30, Retro and Stadium no longer download logos they never
+draw, and the clock is read only for the Current Time header or when a
+pre-game card compares its kickoff date with today. A logo URL or size missing
+from the bundle is still fetched from ESPN as before. Settings, ordering,
+timing and artwork are unchanged; a logo ESPN later redraws at the same URL
+stays at the bundled version until the bundle is regenerated.
+
+Validation: `tools/lunchbox_logos/parity.py` rendered the previous and new
+source from the same recorded responses (live feed, all 32 teams, and a
+pre-game slate with odds) across every layout, header, pre-game mode, team
+focus and timezone at three pinned times: 360 of 360 WebP outputs were
+byte-identical, with no request outside the recording. The sports playback,
+timezone, sequence and NFL logo tests also pass. Physical-screen playback is
+not covered by these checks.

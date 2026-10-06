@@ -1,0 +1,75 @@
+{
+  "nflscores": {
+    "source": "nfl_scores.star", "feed": "scoreboard", "league": "football/nfl",
+    "rule": "dark_scoreboard_fallback", "dates": [["20250904", "20250908"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1],
+    "local": {"IND": "images/colts.png", "LAR": "images/lar.png"}
+  },
+  "nhlscores": {
+    "source": "nhl_scores.star", "feed": "scoreboard", "league": "hockey/nhl",
+    "rule": "combiner_fallback", "dates": [["20260301", "20260307"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "mlbscores": {
+    "source": "mlb_scores.star", "feed": "scoreboard", "league": "baseball/mlb",
+    "rule": "combiner_fallback", "dates": [["20260801", "20260803"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "nbascores": {
+    "source": "nba_scores.star", "feed": "scoreboard", "league": "basketball/nba",
+    "rule": "combiner_fallback", "dates": [["20260301", "20260305"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1, 2]
+  },
+  "wnbascores": {
+    "source": "wnba_scores.star", "feed": "scoreboard", "league": "basketball/wnba",
+    "rule": "wnba_combiner_fallback", "dates": [["20260701", "20260707"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "cflscores": {
+    "source": "cfl_scores.star", "feed": "scoreboard", "league": "football/cfl",
+    "rule": "combiner", "dates": [["20220804", "20220813"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1],
+    "parity_exclude_teams": ["EES"]
+  },
+  "mlsscores": {
+    "source": "mls_scores.star", "feed": "scoreboard", "league": "soccer/usa.1",
+    "rule": "combiner", "dates": [["20260801", "20260816"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "uflscores": {
+    "source": "ufl_scores.star", "feed": "scoreboard", "league": "football/ufl",
+    "rule": "combiner", "dates": [["20260327", "20260413"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "xflscores": {
+    "source": "xfl_scores.star", "feed": "scoreboard", "league": "football/xfl",
+    "rule": "xfl_combiner", "dates": [["20230218", "20230306"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "wbcscores": {
+    "source": "wbc_scores.star", "feed": "scoreboard", "league": "baseball/world-baseball-classic",
+    "rule": "combiner", "dates": [["20260305", "20260317"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "mhkyscores": {
+    "source": "mhky_scores.star", "feed": "scoreboard", "league": "hockey/mens-college-hockey",
+    "rule": "dark_500", "dates": [["20260109", "20260118"]],
+    "layout_sizes": [30, 32], "compact": true, "scales": [1]
+  },
+  "nflstandings": {
+    "source": "nfl_standings.star", "feed": "standings", "league": "football/nfl",
+    "rule": "combiner", "layout_sizes": [10], "scales": [1]
+  },
+  "nhlstandings": {
+    "source": "nhl_standings.star", "feed": "standings", "league": "hockey/nhl",
+    "rule": "combiner", "layout_sizes": [10], "scales": [1]
+  },
+  "mlbstandings": {
+    "source": "mlb_standings.star", "feed": "standings", "league": "baseball/mlb",
+    "rule": "combiner", "layout_sizes": [10], "scales": [1]
+  },
+  "nbastandings": {
+    "source": "nba_standings.star", "feed": "standings", "league": "basketball/nba",
+    "rule": "combiner", "layout_sizes": [10], "scales": [1]
+  }
+}

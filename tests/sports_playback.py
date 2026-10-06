@@ -24,7 +24,7 @@ def chunks(path):
 fixture = '''
 load("pixel.png", TEST_LOGO = "file")
 FIXTURE = json.decode(%s)
-def get_logoType(team, logo = None):
+def get_logoType(team, logo = None, size = None):
     return TEST_LOGO.readall()
 def get_cachable_data(url, ttl_seconds = CACHE_TTL_SECONDS):
     if "/scoreboard" not in url:
@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory() as directory:
             "uflscores", "xflscores", "soccermens", "soccerwomens",
         )),
     ):
-        source = next((root / 'apps' / app).glob('*.star')).read_text()
+        source = next(p for p in (root / 'apps' / app).glob('*.star') if p.name != 'logos.star').read_text()
         assets = root / 'apps' / app / 'images'
         if assets.exists():
             shutil.copytree(assets, tmp / 'images', dirs_exist_ok=True)
@@ -61,6 +61,8 @@ with tempfile.TemporaryDirectory() as directory:
         logos = root / 'apps' / app / 'logos'
         if logos.exists():
             shutil.copytree(logos, tmp / 'logos', dirs_exist_ok=True)
+        if (root / 'apps' / app / 'logos.star').exists():
+            shutil.copy(root / 'apps' / app / 'logos.star', tmp / 'logos.star')
         source = source.replace('def get_cachable_data(', 'def original_get_cachable_data(')
         source = source.replace('def get_logoType(', 'def original_get_logoType(')
         if app in ("soccermens", "soccerwomens"):

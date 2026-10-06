@@ -30,6 +30,7 @@ def main(config):
 with tempfile.TemporaryDirectory() as directory:
     tmp = Path(directory)
     shutil.copytree(app / 'images', tmp / 'images')
+    shutil.copy(app / 'logos.star', tmp / 'logos.star')
     for variant in ('bundled', 'original-bytes'):
         body = fixture
         if variant == 'original-bytes':
