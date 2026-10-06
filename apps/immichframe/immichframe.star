@@ -15,14 +15,17 @@ def main(config):
     URL = config.get("immich_url", "").strip().rstrip("/")
     API_KEY = config.get("immich_api_key", "")
 
-    # SHOW_FAVORITES = config.bool("show_favorites", False)
+    SHOW_FAVORITES = config.bool("show_favorites", False)
     ALBUM = config.get("immich_album_id", "invalid")
     STATUS_URL = "%s/api/server/ping" % (URL)
+    ABOUT_URL = "%s/api/server/about" % (URL)
     ALBUM_URL = "%s/api/albums/%s" % (URL, ALBUM)
+    ALBUM_SEARCH_URL = "%s/api/search/metadata" % (URL)
+    FAV_SEARCH_URL = "%s/api/search/random" % (URL)
     SHOW_DATE = config.bool("show_date", True)
     SHOW_LOCATION = config.bool("show_location", False)
 
-    if not valid_base_url(URL) or type(API_KEY) != "string" or not API_KEY or len(API_KEY) > 2048 or not valid_id(ALBUM):
+    if not valid_base_url(URL) or type(API_KEY) != "string" or not API_KEY or len(API_KEY) > 2048 or not (SHOW_FAVORITES or valid_id(ALBUM)):
         return message("Configure public HTTPS Immich")
 
     res = http.get(STATUS_URL)
@@ -33,12 +36,33 @@ def main(config):
         headers = {
             "x-api-key": API_KEY,
         }
-        res = http.get(ALBUM_URL, headers = headers)
-        body = res.body()
-        album = json.decode(body, {}) if res.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
-        assets = album.get("assets", []) if type(album) == "dict" else []
-        if type(assets) != "list":
-            return message("Album not accessible")
+        assets = []
+        if SHOW_FAVORITES:
+            res = http.post(FAV_SEARCH_URL, headers = headers, json_body = {"isFavorite": True, "type": "IMAGE", "size": 1})
+            body = res.body()
+            favorites = json.decode(body, []) if res.status_code in (200, 201) and body and len(body) <= 1024 * 1024 else []
+            assets = favorites if type(favorites) == "list" else []
+            if not assets:
+                return message("No favorites found")
+            assetCount = len(assets) - 1
+        else:
+            res = http.get(ABOUT_URL, headers = headers)
+            about = json.decode(res.body(), {}) if res.status_code == 200 and len(res.body()) <= 64 * 1024 else {}
+            version = about.get("version") if type(about) == "dict" else None
+            server_version = version.split(".")[0] if type(version) == "string" else ""
+            if server_version == "v3":
+                res = http.post(ALBUM_SEARCH_URL, headers = headers, json_body = {"albumIds": [ALBUM], "type": "IMAGE"})
+                body = res.body()
+                result = json.decode(body, {}) if res.status_code in (200, 201) and body and len(body) <= 1024 * 1024 else {}
+                found = result.get("assets", {}) if type(result) == "dict" else {}
+                assets = found.get("items", []) if type(found) == "dict" else []
+            else:
+                res = http.get(ALBUM_URL, headers = headers)
+                body = res.body()
+                album = json.decode(body, {}) if res.status_code == 200 and body and len(body) <= 1024 * 1024 else {}
+                assets = album.get("assets", []) if type(album) == "dict" else []
+            if type(assets) != "list":
+                return message("Album not accessible")
         assets = [asset for asset in assets[:1000] if type(asset) == "dict" and valid_id(asset.get("id"))]
         assetCount = len(assets) - 1
         if assetCount < 0:
@@ -163,7 +187,7 @@ def get_schema():
             schema.Toggle(
                 id = "show_favorites",
                 name = "Show Favorites",
-                desc = "(Does nothing right now) Show the images that you have added to your favorites. This will override any albums you have selected to be shown",
+                desc = "Show the images that you have added to your favorites. This will override any albums you have selected to be shown",
                 icon = "heart",
                 default = False,
             ),
