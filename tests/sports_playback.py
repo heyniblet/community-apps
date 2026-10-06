@@ -57,6 +57,10 @@ with tempfile.TemporaryDirectory() as directory:
         assets = root / 'apps' / app / 'images'
         if assets.exists():
             shutil.copytree(assets, tmp / 'images', dirs_exist_ok=True)
+        # Bundled college team logos are loaded at module level.
+        logos = root / 'apps' / app / 'logos'
+        if logos.exists():
+            shutil.copytree(logos, tmp / 'logos', dirs_exist_ok=True)
         source = source.replace('def get_cachable_data(', 'def original_get_cachable_data(')
         source = source.replace('def get_logoType(', 'def original_get_logoType(')
         if app in ("soccermens", "soccerwomens"):

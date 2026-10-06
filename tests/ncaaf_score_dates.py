@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 from pathlib import Path
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,8 @@ def event(identity, state, team="TEST"):
 with tempfile.TemporaryDirectory() as temporary:
     for league in ("ncaaf",):
         source = (root / f"apps/{league}scores/{league}_scores.star").read_text()
+        # Bundled team logos are loaded at module level.
+        shutil.copytree(root / f"apps/{league}scores/logos", Path(temporary) / "logos", dirs_exist_ok=True)
         source = source.replace("def main(config):", "def app_main(config):", 1)
         source = source.replace("def get_cachable_data(", "def original_get_cachable_data(", 1)
         # Replace only HTTP access; execute the actual app's date and selection logic.
@@ -57,7 +60,7 @@ def main(config):
         ("TEST", {json.dumps(expected)}), ("HISTORY", {json.dumps(history)}),
         ("LIVE", ["live"]), ("LATE", ["late"]), ("MISSING", []),
     ]:
-        actual = [score["id"] for score in get_scores(API + "?limit=300&groups=80", now, team)]
+        actual = [score["id"] for score in get_scores(API + "?limit=300&groups=80", {{"now": now}}, team)]
         if actual != expected:
             fail("%s: expected %s, got %s" % (team, expected, actual))
     return [render.Root(child = render.Text("OK"))]

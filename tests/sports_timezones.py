@@ -28,6 +28,10 @@ with tempfile.TemporaryDirectory() as directory:
         assets = path.parent / 'images'
         if assets.exists():
             shutil.copytree(assets, tmp / 'images', dirs_exist_ok=True)
+        # Bundled college team logos are loaded at module level.
+        logos = path.parent / 'logos'
+        if logos.exists():
+            shutil.copytree(logos, tmp / 'logos', dirs_exist_ok=True)
         source += '\nTEST_CASES = json.decode(' + repr(json.dumps(cases)) + ')\n'
         source += '''
 def main(config):

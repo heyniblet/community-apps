@@ -26,6 +26,10 @@ with tempfile.TemporaryDirectory() as directory:
         assets = root / 'apps' / name / 'images'
         if assets.exists():
             shutil.copytree(assets, tmp / 'images', dirs_exist_ok=True)
+        # Bundled college team logos are loaded at module level.
+        logos = root / 'apps' / name / 'logos'
+        if logos.exists():
+            shutil.copytree(logos, tmp / 'logos', dirs_exist_ok=True)
         assert 'page_size =' not in source and '60 // len(scores)' not in source, name
         source = source.replace('def get_schema(', 'def original_get_schema(', 1)
         source = source.replace('def main(', 'def app_main(', 1).replace('def get_cachable_data(', 'def original_get_cachable_data(',1)
@@ -34,7 +38,7 @@ with tempfile.TemporaryDirectory() as directory:
             invocation = 'get_scores(time.now(), "all")'
             calendar = ''
         elif name == 'ncaafscores':
-            invocation = 'get_scores("https://example.com/scoreboard?limit=300", time.now(), "all")'
+            invocation = 'get_scores("https://example.com/scoreboard?limit=300", {"now": time.now()}, "all")'
             calendar = ''
         else:
             invocation = 'get_scores({"league": "https://example.com/scoreboard?dates=20260920-20260927"}'+(')' if name in ['soccermens','soccerwomens'] else ', "all")')
