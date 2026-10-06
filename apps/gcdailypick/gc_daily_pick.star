@@ -21,7 +21,8 @@ CACHE_TTL = 3600
 SCALE = 2 if canvas.is2x() else 1
 TRANSFORM_DURATION = 250
 
-GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1z4UprVH5z79gc85e_inF0NDzAD7pmmExNme1V17Ne-c/export?format=csv&"
+# Niblet: gviz serves the CSV directly; /export redirects to a variable googleusercontent.com host.
+GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1z4UprVH5z79gc85e_inF0NDzAD7pmmExNme1V17Ne-c/gviz/tq?tqx=out:csv&"
 IMAGE_PREFIXES = ["https://media.guitarcenter.com/", "https://media.musiciansfriend.com/"]
 MAX_BYTES = 512 * 1024
 SOURCE_SHEETS = {
