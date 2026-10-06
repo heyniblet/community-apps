@@ -1,3 +1,10 @@
+# Modified in this community-maintained version; see Git history for contributors.
+# Original author and license notices are retained below.
+# Downstream modification: common team logos are bundled pre-resized in logos/
+# (pixel-identical to the fetched and resized originals); other teams still use
+# the original cached request. Lookup tables are decoded once, and the clock is
+# read only when the time header shows it.
+
 """
 Applet: NCAAM Standings
 Summary: Displays NCAAM standings
@@ -7,6 +14,8 @@ Author: LunchBox8484
 
 load("encoding/json.star", "json")
 load("http.star", "http")
+load("logos/index.json", LOGO_INDEX_FILE = "file")
+load("logos/logos.bin", LOGO_PACK_FILE = "file")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
@@ -116,6 +125,14 @@ ALT_LOGO = """
 }
 """
 
+# Decoded once per load instead of on every lookup.
+ALT_COLOR_TABLE = json.decode(ALT_COLOR)
+ALT_LOGO_TABLE = json.decode(ALT_LOGO)
+
+# Bundled logos: URL -> drawn size -> [start, end) byte range of logos.bin.
+LOGO_INDEX = json.decode(LOGO_INDEX_FILE.readall())
+LOGO_PACK = LOGO_PACK_FILE.readall()
+
 def main(config):
     renderCategory = []
     rotationSpeed = config.get("rotationSpeed", "5")
@@ -126,7 +143,7 @@ def main(config):
     location = config.get("location", DEFAULT_LOCATION)
     loc = json.decode(location)
     timezone = loc["timezone"]
-    now = time.now().in_location(timezone)
+    clock = {"timezone": timezone}
     if conferenceType == "top25":
         apiURL = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/rankings"
     elif conferenceType == "0":
@@ -183,7 +200,7 @@ def main(config):
             delay = int(rotationSpeed) * 1000,
             show_full_animation = True,
             child = render.Column(
-                children = get_top_column(displayTop, now, timeColor, divisionName, renderCategory),
+                children = get_top_column(displayTop, clock, timeColor, divisionName, renderCategory),
             ),
         )
     else:
@@ -521,7 +538,7 @@ def get_team(x, s, entriesToDisplay, displayType):
                 stats = s[i + x]["stats"]
                 teamName = s[i + x]["team"]["abbreviation"]
                 teamColor = get_team_color(teamID)
-                teamLogo = get_logoType(teamName, s[i + x]["team"]["logos"][0]["href"])
+                teamLogo = get_logo_source(teamName, s[i + x]["team"]["logos"][0]["href"])
                 for _, k in enumerate(stats):
                     if k["name"] == "vs. Conf.":
                         teamRecord = k["displayValue"]
@@ -531,7 +548,7 @@ def get_team(x, s, entriesToDisplay, displayType):
                 team = render.Column(
                     children = [
                         render.Box(width = 64, height = containerHeight, color = teamColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
-                            render.Box(width = 8, height = containerHeight, child = render.Image(teamLogo, width = 10, height = 10)),
+                            render.Box(width = 8, height = containerHeight, child = render.Image(get_logo_image(teamLogo, 10), width = 10, height = 10)),
                             render.Box(width = 18, height = containerHeight, child = render.Text(content = teamName[:4], color = "#fff", font = mainFont)),
                             render.Box(width = 24, height = containerHeight, child = render.Text(content = teamRecord, color = "#fff", font = mainFont)),
                             render.Box(width = 14, height = containerHeight, child = render.Text(content = teamGB, color = "#fff", font = mainFont)),
@@ -543,14 +560,14 @@ def get_team(x, s, entriesToDisplay, displayType):
                 teamID = s[i + x]["team"]["id"]
                 teamName = s[i + x]["team"]["abbreviation"]
                 teamColor = get_team_color(teamID)
-                teamLogo = get_logoType(teamName, s[i + x]["team"]["logo"])
+                teamLogo = get_logo_source(teamName, s[i + x]["team"]["logo"])
                 teamRecord = s[i + x]["recordSummary"]
 
                 team = render.Column(
                     children = [
                         render.Box(width = 64, height = containerHeight, color = teamColor, child = render.Row(expanded = True, main_align = "start", cross_align = "center", children = [
                             render.Box(width = 14, height = containerHeight, child = render.Text(content = str(i + x + 1), color = "#fff", font = "CG-pixel-4x5-mono")),
-                            render.Box(width = 8, height = containerHeight, child = render.Image(teamLogo, width = 10, height = 10)),
+                            render.Box(width = 8, height = containerHeight, child = render.Image(get_logo_image(teamLogo, 10), width = 10, height = 10)),
                             render.Box(width = 20, height = containerHeight, child = render.Text(content = teamName[:4], color = "#fff", font = mainFont)),
                             render.Box(width = 22, height = containerHeight, child = render.Text(content = teamRecord, color = "#fff", font = mainFont)),
                         ])),
@@ -562,7 +579,7 @@ def get_team(x, s, entriesToDisplay, displayType):
     return output
 
 def get_background_color(team, color):
-    altcolors = json.decode(ALT_COLOR)
+    altcolors = ALT_COLOR_TABLE
     usealt = altcolors.get(team, "NO")
     if usealt != "NO":
         color = altcolors[team]
@@ -572,18 +589,30 @@ def get_background_color(team, color):
         color = "#222"
     return color
 
-def get_logoType(team, logo):
-    usealtlogo = json.decode(ALT_LOGO)
+# Returns the (url, ttl_seconds) the original app requested for this team's logo.
+def get_logo_source(team, logo):
+    usealtlogo = ALT_LOGO_TABLE
     usealt = usealtlogo.get(team, "NO")
     if usealt != "NO":
-        logo = get_cachable_data(usealt, 36000)
+        return (usealt, 36000)
     else:
         logo = logo.replace("500/scoreboard", "500-dark/scoreboard")
         logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=", 36000)
-        logo = get_cachable_data(logo + "&h=50&w=50")
-    return logo
+        return (logo + "&h=50&w=50", CACHE_TTL_SECONDS)
 
-def get_top_column(displayTop, now, timeColor, divisionName, renderCategory):
+# Bundled pre-resized bytes when available, else the original cached request.
+def get_logo_image(source, size):
+    span = LOGO_INDEX.get(source[0], {}).get(str(size))
+    if span:
+        return LOGO_PACK[span[0]:span[1]]
+    return get_cachable_data(source[0], source[1])
+
+def current_time(clock):
+    if "now" not in clock:
+        clock["now"] = time.now().in_location(clock["timezone"])
+    return clock["now"]
+
+def get_top_column(displayTop, clock, timeColor, divisionName, renderCategory):
     topColumn = []
     divisionName = divisionName.replace("AP ", "")
     if displayTop == "gameinfo":
@@ -604,7 +633,7 @@ def get_top_column(displayTop, now, timeColor, divisionName, renderCategory):
             timeBox += LEAGUE_DISPLAY_OFFSET
             statusBox -= LEAGUE_DISPLAY_OFFSET
         else:
-            theTime = now.format("3:04")
+            theTime = current_time(clock).format("3:04")
             if len(str(theTime)) > 4:
                 timeBox += 4
                 statusBox -= 4
