@@ -27,3 +27,12 @@ version shows the flavor and its image for the default Sauk City restaurant
 and a Chicago location at 1x and 2x. `web.culvers.com` also returned the
 flavor from a server in Finland. `check`, `format` and `lint` pass. The
 `web.culvers.com` host is not a documented API and may change.
+
+## Search radius fix (October 2026)
+
+The locator's `radius` parameter is in meters, not miles. The app sent
+`radius=100`, so it only found a restaurant within 100 m of the chosen
+location and showed "Restaurant not found" for a town or address a few
+blocks away. The app now searches 25 miles (40,233 m) and returns the nearest
+restaurant, and the empty result reads "No Culver's within 25 mi". Settings are
+unchanged.

@@ -37,6 +37,9 @@ FONTS = ["10x20", "6x10-rounded", "tb-8", "tom-thumb"]
 DEFAULT_RESTAURANT_LOCATION = "-89.729866027832,43.2706871032715"
 DEFAULT_BG_COLOR = WHITE
 
+# The locator's radius is in meters; 40,233 m is 25 miles.
+SEARCH_RADIUS_METERS = 40233
+
 def get_image(url):
     rep = http.get(url)
     if rep.status_code != 200 or len(rep.body()) > 2 * 1024 * 1024:
@@ -65,8 +68,8 @@ def get_flavor_info(restaurant_location):
     rep = http.get(
         (
             "https://web.culvers.com/api/locator/getLocations?lat=%s&long=%s&" +
-            "radius=100&limit=1"
-        ) % (lat, lng),
+            "radius=%d&limit=1"
+        ) % (lat, lng, SEARCH_RADIUS_METERS),
     )
     if rep.status_code != 200 or len(rep.body()) > 1024 * 1024:
         return {
@@ -80,7 +83,7 @@ def get_flavor_info(restaurant_location):
     restaurants = j["data"]["geofences"][:10]
     if not restaurants:
         return {
-            "error": "Restaurant not found",
+            "error": "No Culver's within 25 mi",
         }
 
     restaurant = restaurants[0]
