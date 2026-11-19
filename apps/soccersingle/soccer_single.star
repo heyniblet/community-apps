@@ -19,6 +19,7 @@ Author: jvivona
 # and thanks to @dinotash/@dinosaursrarr for making me think deep thoughts about connected schema fields
 # and of course - the original author of a bunch of this display code is @Lunchbox8484
 
+load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("logos.star", "BUNDLED_LOGO_RANGES", "LOGO_PACKS")
@@ -35,6 +36,7 @@ CACHE_TTL_SECONDS = 60
 
 DEFAULT_TIMEZONE = "America/New_York"
 MISSING_LOGO = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png?src=soccermens"
+BLANK_LOGO = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=")
 DEFAULT_TEAM = "203"
 API = "https://site.api.espn.com/apis/site/v2/sports/soccer/%s/teams/%s"
 TEAM_SEARCH_API = "https://tidbyt.apis.ajcomputers.com/soccer/api/search/%s"
@@ -70,7 +72,9 @@ def main(config):
 
     league = API % ("all", str(teamid))
     teamdata = get_scores(league)
-    scores = teamdata["nextEvent"]
+
+    # Niblet: ESPN omits nextEvent when the team has no scheduled game.
+    scores = teamdata.get("nextEvent", [])
 
     if len(scores) > 0:
         leagueAbbr = scores[0]["league"]["abbreviation"][0:6]
@@ -104,14 +108,14 @@ def main(config):
             homeColor = get_background_color(displayType, homePrimaryColor)
             awayColor = get_background_color(displayType, awayPrimaryColor)
 
-            homeLogoCheck = competition["competitors"][0]["team"].get("logos", "NO")
-            if homeLogoCheck == "NO":
+            homeLogoCheck = competition["competitors"][0]["team"].get("logos")
+            if not homeLogoCheck:
                 homeLogoURL = MISSING_LOGO
             else:
                 homeLogoURL = competition["competitors"][0]["team"]["logos"][0]["href"]
 
-            awayLogoCheck = competition["competitors"][1]["team"].get("logos", "NO")
-            if awayLogoCheck == "NO":
+            awayLogoCheck = competition["competitors"][1]["team"].get("logos")
+            if not awayLogoCheck:
                 awayLogoURL = MISSING_LOGO
             else:
                 awayLogoURL = competition["competitors"][1]["team"]["logos"][0]["href"]
@@ -686,6 +690,9 @@ def bundled_logo(key, size):
     return LOGO_PACKS[pack].readall()[start:end]
 
 def get_logoType(logo, size = None):
+    # Niblet: Wikimedia answers the placeholder with 403, so draw it locally.
+    if logo.startswith(MISSING_LOGO):
+        return BLANK_LOGO
     logo = logo.replace("500/scoreboard", "500-dark/scoreboard")
     logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=", 36000)
     logo = bundled_logo(logo + "&h=50&w=50", size) or get_cachable_data(logo + "&h=50&w=50")
