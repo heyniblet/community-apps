@@ -91,3 +91,16 @@ left blank in that case, as it already was when `items` was missing.
 Validation: `python3 tests/soccersingle_no_record.py pixlet` renders a
 recorded USA team response in all four layouts; it fails on the previous
 source with the production error. Physical-screen playback is not covered.
+
+### No scheduled game, or no crest (November 2026)
+
+Downstream change, original authorship retained. ESPN omits `nextEvent` when
+a team has no scheduled game (national teams between windows, clubs in the
+off-season); the app failed with `key "nextEvent" not in dict` instead of
+skipping. It now skips the render, as it already did for an empty list. A team
+without crests now draws an embedded transparent placeholder instead of
+fetching a Wikimedia image that returns 403, and an empty `logos` list is
+treated as missing. `tests/soccersingle_no_record.py` now also renders
+without crests (any request outside ESPN fails it) and without `nextEvent`
+(expects zero frames); the previous source fails the crest case. Production
+team IDs 476, 205, 21422 and 19995 now skip instead of failing.

@@ -60,6 +60,9 @@ def main(config):
     body = rep.body()
     payload = json.decode(body, None) if rep.status_code == 200 and body and len(body) <= MAX_RESPONSE_BYTES else None
     title = normalized_headlines(payload, sport)
+    if not title and type(payload) == "dict" and type(payload.get("headlines")) == "list":
+        # Niblet: a valid feed with no stories for this sport (off-season) skips the app.
+        return []
     if not title:
         fail("ESPN headlines unavailable for " + sport + " (HTTP " + str(rep.status_code) + ")")
     title += [""] * (3 - len(title))

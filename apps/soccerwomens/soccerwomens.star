@@ -16,6 +16,7 @@ Author: jvivona
 # 20240926 resolve issue where sometimes FT indicator from API is longer than can be displayed, override to show just FT
 #          reduce lists cache time for comps/abbr json to 12 hours
 
+load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
 load("http.star", "http")
 load("logos.star", "BUNDLED_LOGO_RANGES", "LOGO_PACKS")
@@ -30,6 +31,7 @@ DEFAULT_TIMEZONE = "America/New_York"
 SPORT = "soccer"
 
 MISSING_LOGO = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png?src=soccerwomens"
+BLANK_LOGO = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=")
 
 DEFAULT_LEAGUE = "eng.w.1"
 API = "https://site.api.espn.com/apis/site/v2/sports/" + SPORT + "/"
@@ -832,6 +834,9 @@ def bundled_logo(key, size):
     return LOGO_PACKS[pack].readall()[start:end]
 
 def get_logoType(logo, size = None):
+    # Niblet: Wikimedia answers the placeholder with 403, so draw it locally.
+    if logo.startswith(MISSING_LOGO):
+        return BLANK_LOGO
     logo = logo.replace("500/scoreboard", "500-dark/scoreboard")
     logo = logo.replace("https://a.espncdn.com/", "https://a.espncdn.com/combiner/i?img=", 36000)
     logo = bundled_logo(logo + "&h=50&w=50", size) or get_cachable_data(logo + "&h=50&w=50")

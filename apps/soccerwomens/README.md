@@ -117,3 +117,13 @@ recording. `tests/scoreboard_missing_records.py` renders the Central Baptist
 match, rewritten to pre-game, and a recorded shootout final in every layout;
 both crashed the previous version. Physical-screen playback is not covered by
 these checks.
+
+### Teams without a crest (November 2026)
+
+Downstream change, original authorship retained. A team ESPN lists without a
+logo was drawn from a Wikimedia 1x1 placeholder, which Wikimedia now answers
+with 403 ("Please set a user-agent"), so the render failed (eng.fa and
+afc.champions in production). The placeholder is now an embedded transparent
+1x1 PNG and is never fetched. Validation: production eng.fa and
+afc.champions settings render in every layout (wide layouts at 2x); the
+previous source failed with the 403. Physical playback is not covered.
