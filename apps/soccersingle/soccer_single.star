@@ -157,13 +157,13 @@ def main(config):
                 homeData = json.decode(get_cachable_data(API % (leagueSlug, str(competition["competitors"][0]["id"]))))
                 awayData = json.decode(get_cachable_data(API % (leagueSlug, str(competition["competitors"][1]["id"]))))
 
-                checkHomeTeamRecord = homeData["team"]["record"].get("items", "NO")
+                checkHomeTeamRecord = homeData["team"].get("record", {}).get("items", "NO")
                 if checkHomeTeamRecord == "NO":
                     homeScore = ""
                 else:
                     homeScore = checkHomeTeamRecord[0]["summary"]
 
-                checkAwayTeamRecord = awayData["team"]["record"].get("items", "NO")
+                checkAwayTeamRecord = awayData["team"].get("record", {}).get("items", "NO")
                 if checkAwayTeamRecord == "NO":
                     awayScore = ""
                 else:
@@ -196,13 +196,13 @@ def main(config):
                     awayData = json.decode(get_cachable_data(API % (leagueSlug, str(competition["competitors"][1]["id"]))))
 
                     #if game is PPD - show records instead of blanks
-                    checkHomeTeamRecord = homeData["team"]["record"].get("items", "NO")
+                    checkHomeTeamRecord = homeData["team"].get("record", {}).get("items", "NO")
                     if checkHomeTeamRecord == "NO":
                         homeScore = ""
                     else:
                         homeScore = checkHomeTeamRecord[0]["summary"]
 
-                    checkAwayTeamRecord = awayData["team"]["record"].get("items", "NO")
+                    checkAwayTeamRecord = awayData["team"].get("record", {}).get("items", "NO")
                     if checkAwayTeamRecord == "NO":
                         awayScore = ""
                     else:

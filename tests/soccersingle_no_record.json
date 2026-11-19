@@ -1,0 +1,138 @@
+{
+ "_about": "ESPN soccer/all/teams/660 (USA), recorded 19 November 2026: next event is a FIFA friendly, so the team has no \"record\". links, broadcasts, tickets and venue removed.",
+ "team": {
+  "id": "660",
+  "abbreviation": "USA",
+  "displayName": "United States",
+  "color": "213065",
+  "nextEvent": [
+   {
+    "competitions": [
+     {
+      "attendance": 0,
+      "boxscoreAvailable": true,
+      "competitors": [
+       {
+        "homeAway": "home",
+        "id": "660",
+        "order": 0,
+        "team": {
+         "abbreviation": "USA",
+         "displayName": "United States",
+         "id": "660",
+         "location": "United States",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/usa.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          },
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500-dark/usa.png",
+           "rel": [
+            "full",
+            "dark"
+           ],
+           "width": 500
+          }
+         ],
+         "shortDisplayName": "USA"
+        },
+        "type": "team",
+        "winner": false
+       },
+       {
+        "homeAway": "away",
+        "id": "1038",
+        "order": 1,
+        "team": {
+         "abbreviation": "JAM",
+         "displayName": "Jamaica",
+         "id": "1038",
+         "location": "Jamaica",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500/jam.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          },
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/countries/500-dark/jam.png",
+           "rel": [
+            "full",
+            "dark"
+           ],
+           "width": 500
+          }
+         ],
+         "shortDisplayName": "Jamaica"
+        },
+        "type": "team",
+        "winner": false
+       }
+      ],
+      "date": "2026-12-13T20:30Z",
+      "id": "401930977",
+      "neutralSite": false,
+      "status": {
+       "addedClock": 0.0,
+       "clock": 0.0,
+       "displayClock": "0'",
+       "period": 0,
+       "type": {
+        "completed": false,
+        "description": "Scheduled",
+        "detail": "Sun, December 13th at 3:30 PM EST",
+        "id": "1",
+        "name": "STATUS_SCHEDULED",
+        "shortDetail": "12/13 - 3:30 PM EST",
+        "state": "pre"
+       }
+      },
+      "ticketsAvailable": false,
+      "timeValid": true
+     }
+    ],
+    "date": "2026-12-13T20:30Z",
+    "id": "401930977",
+    "league": {
+     "abbreviation": "Men's International Friendly",
+     "alternateId": "53",
+     "id": "3922",
+     "isTournament": false,
+     "midsizeName": "FIFA.FRIENDLY",
+     "name": "International Friendly",
+     "shortName": "Men's International Friendly",
+     "slug": "fifa.friendly"
+    },
+    "name": "Jamaica at United States",
+    "season": {
+     "displayName": "2026 International Friendly",
+     "year": 2026
+    },
+    "seasonType": {
+     "abbreviation": "2026 Int. Friendly",
+     "id": "1",
+     "name": "2026 International Friendly",
+     "type": 13708
+    },
+    "shortName": "JAM @ USA",
+    "timeValid": true
+   }
+  ]
+ }
+}

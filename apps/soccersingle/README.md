@@ -77,3 +77,17 @@ recording. `tools/lunchbox_logos/verify.py` rendered all 3657 bundled URL and
 size pairs identically to the freshly downloaded originals. `niblet check`,
 format and lint also pass. Physical-screen playback is not covered by these
 checks.
+
+### Games without a league record (November 2026)
+
+Downstream change, original authorship retained. ESPN omits `record` from the
+team response for competitions without standings, such as FIFA friendlies and
+domestic cups. The pre-game and postponed cards read
+`team["record"]["items"]` and failed with `key "record" not in dict`, so a
+team whose next game was in such a competition stopped updating (reported for
+USA, team 660, before its 13 December 2026 friendly). The record line is now
+left blank in that case, as it already was when `items` was missing.
+
+Validation: `python3 tests/soccersingle_no_record.py pixlet` renders a
+recorded USA team response in all four layouts; it fails on the previous
+source with the production error. Physical-screen playback is not covered.
