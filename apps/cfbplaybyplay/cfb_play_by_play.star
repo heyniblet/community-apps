@@ -12,7 +12,8 @@ Four states:
             timeouts, score on team-color bands
   final   - FIN beside the score bands, ranked matchup tags underneath
 
-Data: ESPN's public college-football scoreboard + rankings JSON (no key).
+Data: ESPN's public college-football scoreboard, rankings and teams JSON (no key).
+Downstream maintenance: Niblet added FCS coverage and team discovery between games.
 Field notes from live probing (2026-09-01, week 1):
   - The plain scoreboard is the curated top-25 slate (~25 events, 350KB);
     ?groups=80 is all of FBS (~99 events, 1.5MB). We try the small one first
@@ -22,8 +23,8 @@ Field notes from live probing (2026-09-01, week 1):
   - competitors[].score is a STRING on some events and an INT on others in
     the same payload. Everything numeric goes through as_int/sc().
   - /teams/{abbrev} resolves to the WRONG team (OSU -> Ohio, not Ohio State);
-    only /teams/{numeric id} works, so ids are learned from scoreboard or
-    rankings sightings and cached for bye weeks.
+    only /teams/{numeric id} works, so ids are learned from the scoreboard,
+    rankings, or team directory and cached for bye weeks.
   - situation is the same family as NFL: absent pre/post, degenerate
     mid-stoppage (down -1, possession null, stale isRedZone). possession is a
     team ID. Halftime keeps state "in" (status name STATUS_HALFTIME).
@@ -55,8 +56,10 @@ load("time.star", "time")
 API_BASE = "https://site.api.espn.com"
 SB_PATH = "/apis/site/v2/sports/football/college-football/scoreboard"
 FBS_QS = "?groups=80"  # all FBS; the bare scoreboard is only the top-25 slate
+FCS_QS = "?groups=81&limit=1000"
 RANK_PATH = "/apis/site/v2/sports/football/college-football/rankings"
 TEAM_PATH = "/apis/site/v2/sports/football/college-football/teams/"
+TEAMS_PATH = "/apis/site/v2/sports/football/college-football/teams?limit=1000"
 
 FRESH_LIVE = 10  # live game: re-poll every 10s (ESPN serves max-age=2)
 FRESH_IDLE = 600  # no live game: every 10 min
@@ -64,6 +67,7 @@ RETRY_TTL = 60  # back off after a failure
 STALE_TTL = 21600  # serve last good extract up to 6h through an outage
 RANK_TTL = 21600  # AP poll moves weekly; 6h is generous
 ID_TTL = 2592000  # abbr -> ESPN team id, 30 days (survives a bye week)
+DIRECTORY_TTL = 86400
 LOGO_TTL = 86400
 
 WHITE = "#FFFFFF"
@@ -227,8 +231,8 @@ def try_fetch_json(url, ttl):
 
 def get_game(team, base, kp):
     """The focus team's event as a small dict, cached so an ESPN outage
-    serves the last good reading. Two-tier fetch under ONE gate: the curated
-    scoreboard first (350KB), all-FBS (?groups=80, 1.5MB) only on a miss."""
+    serves the last good reading. Search the curated, FBS and FCS scoreboards
+    in that order under one gate."""
     ck = kp + "g:" + team
     gate = ck + ":gate"
     if cache.get(gate) != None:
@@ -238,15 +242,14 @@ def get_game(team, base, kp):
     # The scoreboard's HTTP ttl matches the fastest re-poll (FRESH_LIVE):
     # during a live game the gate reopens every 10s and must reach ESPN,
     # not a 60s-old cached body. Idle cadence is enforced by the gate.
-    d = try_fetch_json(base + SB_PATH, FRESH_LIVE)
-    if d == None:
-        return cached_game(ck)
-    game = find_team(d, team)
-    if game == None:
-        d = try_fetch_json(base + SB_PATH + FBS_QS, FRESH_LIVE)
+    game = None
+    for query in ["", FBS_QS, FCS_QS]:
+        d = try_fetch_json(base + SB_PATH + query, FRESH_LIVE)
         if d == None:
             return cached_game(ck)
         game = find_team(d, team)
+        if game != None:
+            break
 
     if game == None:
         cache.set(ck, json.encode({"none": True}), ttl_seconds = STALE_TTL)
@@ -254,9 +257,7 @@ def get_game(team, base, kp):
         return None
     cache.set(ck, json.encode(game), ttl_seconds = STALE_TTL)
 
-    # Remember the ESPN team id: /teams/{abbrev} resolves to the WRONG
-    # school, so bye-week lookups need an id learned while the team was
-    # on a scoreboard.
+    # A scoreboard match is the strongest shortcut to the ESPN team ID.
     me = focus_side(game, team)
     if me["id"] != "":
         cache.set(kp + "id:" + team, me["id"], ttl_seconds = ID_TTL)
@@ -424,16 +425,37 @@ def get_rankings(base, kp):
     cache.set(ck, json.encode(out), ttl_seconds = RANK_TTL + STALE_TTL)
     return out
 
+def directory_team_id(team, base, kp):
+    ck = kp + "directory"
+    d = fetch_json(base + TEAMS_PATH, ck + ":gate", DIRECTORY_TTL)
+    if d != None:
+        ids = {}
+        for sport in as_list(d.get("sports")):
+            for league in as_list(as_dict(sport).get("leagues")):
+                for entry in as_list(as_dict(league).get("teams")):
+                    t = as_dict(as_dict(entry).get("team"))
+                    abbr = s_str(t.get("abbreviation")).upper()
+                    tid = s_str(t.get("id"))
+                    if abbr and to_int(tid) > 0 and t.get("isActive", True):
+                        # ESPN reuses some abbreviations. Leave those to scoreboard or ranking matches.
+                        ids[abbr] = tid if ids.get(abbr, tid) == tid else ""
+        if ids:
+            cache.set(ck, json.encode(ids), ttl_seconds = DIRECTORY_TTL * 7)
+            return ids.get(team)
+    raw = cache.get(ck)
+    return json.decode(raw).get(team) if raw != None else None
+
 def get_team_info(team, base, kp):
-    """Bye-week fallback via /teams/{id}: record, next game, standing. Needs
-    an id from a previous scoreboard sighting or the AP poll; without one
-    (unranked team, cold cache) the caller shows the not-found card."""
+    """Bye-week fallback via /teams/{id}: record, next game, standing."""
     tid = cache.get(kp + "id:" + team)
     if tid == None:
         ap = get_rankings(base, kp)
         if ap != None:
             tid = ap["ids"].get(team, None)
-    if tid == None:
+    from_directory = tid == None
+    if from_directory:
+        tid = directory_team_id(team, base, kp)
+    if not tid:
         return None
 
     ck = kp + "t:" + team
@@ -443,6 +465,12 @@ def get_team_info(team, base, kp):
         return json.decode(raw) if raw != None else None
 
     t = as_dict(d.get("team", None))
+    if from_directory:
+        # The directory includes schools outside the two Division I scoreboards.
+        groups = as_dict(t.get("groups"))
+        division = as_dict(groups.get("parent")).get("id", groups.get("id"))
+        if as_int(division, 0) not in [80, 81]:
+            return None
     rec = ""
     for it in as_list(as_dict(t.get("record", None)).get("items", None)):
         it = as_dict(it)
@@ -849,10 +877,8 @@ def idle_frame(me, line3, marq_next, base, kp):
     return render.Root(child = body, show_full_animation = True)
 
 def notfound_root(team):
-    """Nothing resolved for this abbreviation. Two different causes land here
-    - a typo'd team, or a total ESPN outage on a cold cache - so the copy
-    offers the fix without asserting the user got it wrong."""
-    marq = "No FBS game found for " + team[0:10] + " - check back soon, or set your ESPN abbreviation: OSU MICH BAMA TEX ND UGA ORE"
+    """No team or game data could be resolved for this abbreviation."""
+    marq = "No FBS or FCS data for " + team[0:10] + " - check back soon or check the ESPN team abbreviation"
     if is_square():
         return square_notfound_root(team, marq)
 
