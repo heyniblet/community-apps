@@ -18,11 +18,15 @@ load("schema.star", "schema")
 
 NASA_LOGO = NASA_LOGO_ASSET.readall()
 
-APOD_URL = "https://api.nasa.gov/planetary/apod"
-DEMO_API_KEY = "DEMO_KEY"
+# NASA moved APOD to science.nasa.gov; api.nasa.gov/planetary/apod now answers
+# 500 or a "NASA Science" logo placeholder. This endpoint needs no key and
+# lists the newest picture first.
+APOD_URL = "https://science.nasa.gov/wp-json/wp/v2/apod-basic"
 
-# DEMO_KEY is suitable for the shared hourly catalog cache; register a key if
-# the deployment needs more than NASA's evaluation quota: https://api.nasa.gov
+# NASA's image service resizes on request, so the display never downloads the
+# full-size picture. Twice the 32 pixel height keeps detail when scaled.
+IMAGE_HOST = "https://assets.science.nasa.gov/"
+IMAGE_SIZE = "?w=512&h=64&fit=clip"
 
 TTL_SECONDS = 3600
 
@@ -30,7 +34,6 @@ def main(config):
     display_info = config.bool("display_info")
     apod = get_apod(
         APOD_URL,
-        DEMO_API_KEY,
         TTL_SECONDS,
     )
     title = apod["title"]
@@ -105,19 +108,36 @@ def main(config):
         ),
     )
 
-def get_apod(url, api_key, ttl_seconds):
-    # Return astronomy picture of the day
-    params = {"api_key": api_key, "thumbs": "True"}
-    response = http.get(url = url, params = params, ttl_seconds = ttl_seconds)
-    if response.status_code != 200:
-        fail("status %d from %s: %s" % (response.status_code, url, response.body()))
-    apod = response.json()
-    image_url = apod.get("thumbnail_url") if apod.get("media_type") == "video" else apod.get("url")
-    if not image_url:
+def get_apod(url, ttl_seconds):
+    # Return the newest astronomy picture of the day
+    entries = get_entries(url, ttl_seconds)
+    if type(entries) != "list" or len(entries) == 0 or type(entries[0]) != "dict":
+        fail("NASA APOD response did not include a picture")
+    apod = entries[0]
+    image_url = small_image_url(apod.get("hdurl") or "")
+    if not image_url or not apod.get("title"):
         fail("NASA APOD response did not include a displayable image")
     apod["image_src"] = base64.encode(get_image_src(image_url, ttl_seconds))
 
     return apod
+
+def get_entries(url, ttl_seconds):
+    response = http.get(url = url, params = {"per_page": "1"}, ttl_seconds = ttl_seconds)
+    if response.status_code != 200:
+        fail("status %d from %s: %s" % (response.status_code, url, response.body()))
+    return response.json()
+
+def small_image_url(url):
+    # Video days carry a still in the same field. A few entries list only a
+    # 48 pixel rendition under content/dam; the image service has the original.
+    if not url.startswith(IMAGE_HOST):
+        return url
+    path = url[len(IMAGE_HOST):].split("?")[0].split("/jcr:content/")[0]
+    if path.startswith("content/dam/"):
+        path = "dynamicimage/assets/" + path[len("content/dam/"):]
+    if not path.startswith("dynamicimage/"):
+        return url
+    return IMAGE_HOST + path + IMAGE_SIZE
 
 def get_image_src(url, ttl_seconds):
     # Return and cache image data from url provided
